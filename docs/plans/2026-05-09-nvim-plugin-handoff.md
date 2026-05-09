@@ -94,8 +94,7 @@ lua/hyprpilot/
 ├── ui/
 │   ├── input.lua     -- composer (split / floating window)
 │   └── permissions.lua -- prompt for allow/deny on permission events
-├── utils.lua         -- pure helpers (debounce, throttle, etc.)
-└── meta.lua          -- shared types + LuaCATS aliases
+└── utils.lua         -- pure helpers (debounce, throttle, etc.)
 
 plugin/hyprpilot.lua    -- one-time at-load: vim.treesitter.language.register("markdown", "hyprpilot")
 ```
