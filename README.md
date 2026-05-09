@@ -18,7 +18,6 @@ daemon's Unix socket at `$XDG_RUNTIME_DIR/hyprpilot.sock`.
 ```lua
 return {
   "hyprpilot/hyprpilot.nvim",
-  dependencies = { "nvim-lua/plenary.nvim" },
   opts = {},
 }
 ```
@@ -38,8 +37,7 @@ require("hyprpilot").setup({
 :checkhealth hyprpilot
 ```
 
-Verifies `plenary.nvim` is loaded, Neovim version is supported, and the
-daemon socket is reachable.
+Verifies the Neovim version is supported and the daemon socket is reachable.
 
 ## License
 

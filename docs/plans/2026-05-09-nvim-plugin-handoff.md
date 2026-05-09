@@ -36,9 +36,10 @@ log,init}.lua` first to internalise the shape. Highlights to copy:
 - **LuaCATS everywhere** — `---@class hyprpilot.Config`, `---@field`,
   `---@type`. Helps the implementer (and future me) navigate without
   guessing shape.
-- **`plenary.nvim` is fair game** — `schema-companion` already pulls
-  `plenary.curl`; consumers expect it. Hard dep declared in
-  `:checkhealth`.
+- **No `plenary.nvim`** — deprecated. Stay on Neovim core APIs:
+  `vim.uv` for IO/sockets/timers, `vim.system` for processes,
+  `vim.json` for JSON, `vim.fs` for paths, `vim.ui.*` for prompts.
+  If a small primitive is missing, write it in `utils.lua`.
 
 ## Inspirations (not anchors)
 
@@ -79,7 +80,7 @@ lua/hyprpilot/
 ├── init.lua          -- public API + setup() chain
 ├── config.lua        -- defaults + setup pattern
 ├── log.lua           -- vlog-derived logger (verbatim from schema-companion)
-├── health.lua        -- :checkhealth (socket reachable, daemon version, plenary)
+├── health.lua        -- :checkhealth (socket reachable, nvim version)
 ├── client/
 │   ├── transport.lua -- vim.uv unix-socket NDJSON client
 │   ├── linebuffer.lua-- NDJSON framing primitive
@@ -102,7 +103,8 @@ plugin/hyprpilot.lua    -- one-time at-load: vim.treesitter.language.register("m
 ## Phases — bite-sized commits
 
 Each phase is one commit + tests where they make sense. The plugin runs
-in a separate repo; CI is `nvim --headless` + `plenary.busted` or similar.
+in a separate repo; CI is `nvim --headless` + `busted` (or `mini.test`)
+once tests land.
 
 ### Phase 1 — Transport + RPC envelope
 
@@ -302,8 +304,8 @@ to the bottom past `max_lines`.
 1. `:HyprpilotInstances` — picker over `instances/list`. Selecting one
    either focuses an existing buffer for that instance or creates a
    new one. Buffer name: `hyprpilot://<instance-id>` for cleanliness.
-2. `:checkhealth hyprpilot` — check socket reachable, daemon version
-   in supported range, plenary present.
+2. `:checkhealth hyprpilot` — check socket reachable and daemon version
+   in supported range.
 3. Auto-reconnect: on transport `disconnected`, `vim.defer_fn(reconnect,
    1000 * backoff)` with `1, 2, 5, 10, 30, 60` cap. Surface via a
    statusline component or virt_text "🔌 reconnecting…" at the buffer's
@@ -403,6 +405,6 @@ Pin these in the implementer's brain:
   to the module table.
 - **`:checkhealth` exists from day one** even as a stub. Captain
   expects it; it's the first thing they run when something's off.
-- **Reuse `plenary` where it pays** — async, paths, log fallbacks —
-  but don't reach for it for trivial stuff. The captain's plugin
-  uses it sparingly.
+- **Stay on Neovim core APIs** — `vim.uv`, `vim.system`, `vim.json`,
+  `vim.fs`, `vim.ui.*`. No `plenary.nvim` (deprecated). If a tiny
+  helper is missing, write it in `utils.lua`.

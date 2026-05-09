@@ -31,16 +31,6 @@ local function check_nvim_version()
   end
 end
 
-local function check_plenary()
-  local ok = pcall(require, "plenary")
-
-  if ok then
-    health.ok("`plenary.nvim` is installed")
-  else
-    health.error("`plenary.nvim` is not installed", { "Install `nvim-lua/plenary.nvim` and add it as a dependency." })
-  end
-end
-
 local function check_socket()
   local config = require("hyprpilot.config").options
   local socket = config.socket or default_socket_path()
@@ -70,7 +60,6 @@ function M.check()
   health.start("hyprpilot.nvim")
 
   check_nvim_version()
-  check_plenary()
   check_socket()
 end
 

@@ -13,8 +13,9 @@ restoration. All wire-protocol-driven; no daemon changes required.
 ## Stack & Structure
 
 - **Language:** Lua, Neovim 0.10+.
-- **Hard dependency:** `nvim-lua/plenary.nvim` (declared in
-  `:checkhealth`).
+- **No external runtime dependencies** — `plenary.nvim` is intentionally
+  avoided (deprecated). Stay on Neovim core APIs (`vim.uv`,
+  `vim.system`, `vim.json`, `vim.ui.*`, `vim.fs`, etc.).
 - **Tooling:** `stylua` (format), `selene` (lint), `Taskfile.yml`
   (`task format` / `task lint`), `mise.toml` pins versions.
 - **Layout:** flat `lua/hyprpilot/{init,config,log,health,utils,meta}.lua`.
@@ -45,9 +46,11 @@ restoration. All wire-protocol-driven; no daemon changes required.
   un-debuggable plugin.
 - **`:checkhealth` from day one** — even the bootstrap PR ships a real
   `health.lua`. The captain runs it first when something is off.
-- **`plenary.nvim` is fair game** — async, paths, log fallbacks. Do
-  not reach for it for trivial helpers; the captain's plugin habits
-  use it sparingly.
+- **No `plenary.nvim`** — deprecated. Use core APIs: `vim.uv` for IO
+  and async, `vim.system` for processes, `vim.fs` for paths,
+  `vim.json` for JSON, `vim.ui.*` for prompts. If a helper truly
+  doesn't exist, write the small primitive in `utils.lua` instead of
+  pulling a dependency.
 
 ## Decision Log
 
@@ -66,8 +69,8 @@ restoration. All wire-protocol-driven; no daemon changes required.
     so it respects user notify backends; two namespaces per level
     (`log.info` deep-inspects via `vim.inspect`, `log.p.info` is plain
     `string.format`).
-  - Rejected: `plenary.log` — heavier, file-based, less aligned with
-    the captain's existing logger ergonomics.
+  - Rejected: rolling our own from scratch — schema-companion's logger
+    is already battle-tested and matches the captain's other plugins.
 
 - **Transport (planned for Phase 1)**
   - Chose: `vim.uv.new_pipe()` + `pipe:connect(sockpath, cb)` for the
@@ -75,8 +78,8 @@ restoration. All wire-protocol-driven; no daemon changes required.
   - Why: native Neovim primitive, no external deps for the wire layer,
     full control over the `connecting → connected → disconnected`
     state machine and reconnect back-off.
-  - Rejected: `plenary.curl` — HTTP-shaped; the daemon speaks raw
-    JSON-RPC over a Unix socket, not HTTP.
+  - Rejected: HTTP client libraries — the daemon speaks raw JSON-RPC
+    over a Unix socket, not HTTP. `vim.uv` is the right primitive.
 
 - **CLAUDE.md vs AGENTS.md**
   - Chose: `CLAUDE.md` at the repo root.
@@ -107,6 +110,9 @@ dead ends here so no one repeats them.)
 
 ## Gotchas
 
+- **No `plenary.nvim`** — older Neovim plugin examples reach for
+  `plenary.curl`, `plenary.log`, `plenary.async`, `plenary.path`. Do
+  not. Use the core API equivalents listed under Conventions.
 - **Daemon socket path** — defaults to `$XDG_RUNTIME_DIR/hyprpilot.sock`.
   Override via `setup({ socket = "/path/to/sock" })`. `:checkhealth`
   warns when the socket is missing (daemon not running).
