@@ -1,0 +1,33 @@
+---
+# https://taskfile.dev
+
+version: "3"
+
+tasks:
+  install:
+    desc: Sync the uv environment.
+    cmds:
+      - uv sync --all-groups
+
+  format:
+    desc: Format the source tree with ruff.
+    cmds:
+      - uv run ruff format .
+      - uv run ruff check --fix .
+
+  lint:
+    desc: Lint and type-check the source tree.
+    cmds:
+      - uv run ruff format --check .
+      - uv run ruff check .
+      - uv run mypy
+
+  test:
+    desc: Run the test suite.
+    cmds:
+      - uv run pytest
+
+  build:
+    desc: Build wheel and sdist.
+    cmds:
+      - uv build

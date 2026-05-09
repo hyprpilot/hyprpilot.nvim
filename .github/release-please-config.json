@@ -1,7 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "release-type": "simple",
-  "include-component-in-tag": false,
+  "include-component-in-tag": true,
   "include-v-in-tag": true,
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
@@ -15,7 +14,12 @@
   ],
   "packages": {
     ".": {
-      "package-name": "hyprpilot.nvim"
+      "package-name": "hyprpilot.nvim",
+      "release-type": "simple"
+    },
+    "mcp": {
+      "package-name": "hyprpilot-nvim-mcp",
+      "release-type": "python"
     }
   }
 }

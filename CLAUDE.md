@@ -10,7 +10,25 @@ first-class second frontend alongside the desktop app: chat buffer,
 streaming output, permission prompts, mode/model switching, session
 restoration. All wire-protocol-driven; no daemon changes required.
 
-## Stack & Structure
+## Mono-repo Layout
+
+This repository ships **two packages** managed together:
+
+- **Lua plugin (root)** — `lua/hyprpilot/`, `plugin/hyprpilot.lua`. The
+  Neovim frontend itself.
+- **Python MCP bridge** — `mcp/` subdirectory. `uvx`-runnable MCP
+  server (`hyprpilot-nvim-mcp`) that bridges Neovim editor state into
+  the agent's tool surface via `pynvim`. See
+  [`mcp/CLAUDE.md`](mcp/CLAUDE.md) for Python-specific conventions and
+  [`docs/plans/2026-05-09-nvim-mcp-handoff.md`](docs/plans/2026-05-09-nvim-mcp-handoff.md)
+  for the implementation roadmap.
+
+`task lint` and `task test` at the root run both subprojects via
+`Taskfile.yml`'s `includes:` block (`mcp:` namespace). `release-please`
+is configured for both packages independently — tags are
+`hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
+
+## Stack & Structure (Lua plugin)
 
 - **Language:** Lua, Neovim 0.10+.
 - **No external runtime dependencies** — `plenary.nvim` is intentionally
@@ -18,7 +36,7 @@ restoration. All wire-protocol-driven; no daemon changes required.
   `vim.system`, `vim.json`, `vim.ui.*`, `vim.fs`, etc.).
 - **Tooling:** `stylua` (format), `selene` (lint), `Taskfile.yml`
   (`task format` / `task lint`), `mise.toml` pins versions.
-- **Layout:** flat `lua/hyprpilot/{init,config,log,health,utils,meta}.lua`.
+- **Layout:** flat `lua/hyprpilot/{init,config,log,health,utils}.lua`.
   Subdirectories are added only when a concern grows past ~3 files
   (planned: `client/` for transport + RPC, `chat/` for buffer +
   rendering + folds + pager, `ui/` for composer + permissions).
@@ -105,8 +123,11 @@ dead ends here so no one repeats them.)
   `latest`. CI installs via mise.
 - **`.luarc.json`** — declares `vim` as a global for
   `lua-language-server` so editor diagnostics align with `selene`.
-- **GitHub Actions** — `.github/workflows/lint.yml` runs `task lint`
-  on every PR and push to `main`.
+- **GitHub Actions** — `.github/workflows/lint.yml` runs three jobs on
+  every PR and push to `main`: `lint-lua` (stylua + selene), `lint-python`
+  (`task mcp:lint` — ruff + mypy), and `test-python` (`task mcp:test` —
+  pytest). `release-please.yml` opens release PRs per package on push to
+  `main`.
 
 ## Gotchas
 

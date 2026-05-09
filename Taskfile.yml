@@ -3,24 +3,31 @@
 
 version: "3"
 
-vars: {}
-
-env: {}
+includes:
+  mcp:
+    taskfile: ./mcp/Taskfile.yml
+    dir: ./mcp
 
 tasks:
+  install:
+    desc: Install dependencies for all subprojects.
+    cmds:
+      - task: mcp:install
+
   format:
-    desc: Format the repository.
+    desc: Format the entire repository.
     cmds:
       - stylua --config-path .stylua.toml . -v
-    sources:
-      - "lua/**/*.lua"
-      - "plugin/**/*.lua"
+      - task: mcp:format
 
   lint:
-    desc: Lint the repository.
+    desc: Lint the entire repository (Lua + Python).
     cmds:
       - stylua --config-path .stylua.toml --check .
       - selene .
-    sources:
-      - "lua/**/*.lua"
-      - "plugin/**/*.lua"
+      - task: mcp:lint
+
+  test:
+    desc: Run tests across all subprojects.
+    cmds:
+      - task: mcp:test
