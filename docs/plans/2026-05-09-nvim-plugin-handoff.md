@@ -42,40 +42,35 @@ log,init}.lua` first to internalise the shape. Highlights to copy:
 
 ## Inspirations (not anchors)
 
-Two other plugins inform _specific_ techniques. The implementer borrows
-patterns from each but does **not** mimic their layout — both are
-sprawling monoliths (avante's `sidebar.lua` is 3500+ lines).
+Specific techniques worth borrowing — the implementer adopts the patterns
+without mimicking any sprawling host layout.
 
-- **`codecompanion.nvim`**
-  (<https://github.com/olimorris/codecompanion.nvim>) —
-  - Streaming-into-buffer pattern (`api.nvim_buf_set_text(buf,
-    last_line, last_col, last_line, last_col, lines)` to append at
-    cursor without redraw).
-  - Tool-call collapsibles via `foldmethod=manual` + `virt_text_pos =
-    "inline"` extmarks for icon-only summaries (not `conceal_lines` —
-    fragile).
-  - `vim.treesitter.language.register("markdown", "<filetype>")` to get
-    full markdown highlighting on a custom filetype without writing a
-    parser. **No `vim.filetype.add`** — set `vim.bo[buf].filetype =
-    "hyprpilot"` imperatively when opening the chat buffer.
-  - `LineBuffer` primitive for NDJSON framing (`utils/jsonrpc.lua`):
-    accumulate fragments into a string, walk for `\n`, callback per
-    line. Lift this verbatim.
-- **`avante.nvim`** (<https://github.com/yetone/avante.nvim>) —
-  - **Canonical `vim.uv` pipe transport for JSON-RPC over stdio**
-    (`lua/avante/libs/acp_client.lua:340-460`). Adapts trivially to
-    a unix-socket connect: swap `uv.spawn` for `uv.new_pipe()` +
-    `pipe:connect(sockpath, cb)` — same `read_start` framing from
-    there. The implementer copies the structure: pipe creation,
-    `read_start` callback with running buffer + `vim.split` on `\n`,
-    `vim.json.decode` per line, `pcall` guard. Keep the `connecting →
-    connected → disconnected/error` state machine + `vim.defer_fn`
-    auto-reconnect.
-  - Throttled re-render via `Utils.throttle(fn, 50)` on streams that
-    fire faster than 60 Hz. Probably not needed for the daemon's
-    streaming rate; reach for it if FPS suffers.
-  - Heavy extmark use for state badges (e.g. "current tool use"
-    indicator) — single tracked id, deleted+recreated on update.
+- **Streaming into the buffer** —
+  `api.nvim_buf_set_text(buf, last_line, last_col, last_line, last_col,
+  lines)` appends at the cursor without a redraw. Standard Neovim API,
+  no fancy framework.
+- **Tool-call collapsibles** — `foldmethod=manual` plus inline extmarks
+  (`virt_text_pos = "inline"`) for icon-only summaries. Avoid
+  `conceal_lines`; it's fragile. Manual folds + extmarks is the safer
+  path.
+- **Custom filetype with markdown highlighting** —
+  `vim.treesitter.language.register("markdown", "<filetype>")` lights
+  up markdown TS highlights on a custom filetype without writing a
+  parser. **No `vim.filetype.add`** — set `vim.bo[buf].filetype =
+  "hyprpilot"` imperatively when opening the chat buffer.
+- **`LineBuffer` primitive for NDJSON framing** — accumulate fragments
+  into a running string, walk for `\n`, fire a per-line callback. Plain
+  Lua class, no deps. Lives in `client/linebuffer.lua`.
+- **`vim.uv` pipe transport for JSON-RPC** — `vim.uv.new_pipe()` +
+  `pipe:connect(sockpath, cb)`. `read_start` callback feeds a running
+  `LineBuffer`; per-line: `vim.json.decode` inside a `pcall` guard.
+  Keep the `connecting → connected → disconnected/error` state machine
+  + `vim.defer_fn` auto-reconnect.
+- **Throttled re-render** — `throttle(fn, 50)` on streams that fire
+  faster than 60 Hz. Probably not needed for the daemon's streaming
+  rate; reach for it if FPS suffers.
+- **State badges via extmarks** — single tracked extmark id per badge
+  (e.g. "current tool use" indicator), deleted + recreated on update.
 
 ## Architecture
 
@@ -86,8 +81,8 @@ lua/hyprpilot/
 ├── log.lua           -- vlog-derived logger (verbatim from schema-companion)
 ├── health.lua        -- :checkhealth (socket reachable, daemon version, plenary)
 ├── client/
-│   ├── transport.lua -- vim.uv unix-socket NDJSON client (avante-style)
-│   ├── linebuffer.lua-- NDJSON framing primitive (codecompanion-style)
+│   ├── transport.lua -- vim.uv unix-socket NDJSON client
+│   ├── linebuffer.lua-- NDJSON framing primitive
 │   ├── envelope.lua  -- JSON-RPC request/notification builders + IdGenerator
 │   └── rpc.lua       -- request/notify with timeout + dispatch by id/method
 ├── chat/
@@ -116,8 +111,9 @@ in a separate repo; CI is `nvim --headless` + `plenary.busted` or similar.
 
 **Steps**:
 
-1. `client/linebuffer.lua` — copy `codecompanion`'s `LineBuffer:push(data,
-   cb)` verbatim. Plain Lua class; no deps.
+1. `client/linebuffer.lua` — `LineBuffer:push(data, cb)` primitive.
+   Accumulate fragments into a running string, walk for `\n`, fire a
+   per-line callback. Plain Lua class; no deps.
 2. `client/envelope.lua` — `request(method, params)`,
    `notification(method, params)`, `result(id, value)`, `error(id, code,
    msg)`, `IdGenerator` (incrementing). All JSON-RPC 2.0 standard codes
@@ -199,7 +195,7 @@ live. No re-render of unchanged turns; only the live tail rewrites.
 
 **Files**: `chat/folds.lua`, `chat/render.lua`.
 
-**Steps** (codecompanion's pattern, lifted to our schema):
+**Steps** (manual-fold + extmark pattern, adapted to our schema):
 
 1. Per-buffer `M.fold_summaries[bufnr] = { [start_row] = { content,
    status, kind } }` table — keyed by line number.
@@ -246,8 +242,8 @@ live. No re-render of unchanged turns; only the live tail rewrites.
 
 **Files**: `chat/pager.lua`.
 
-This is the captain's specific design ask — neither codecompanion nor
-avante implements it; we roll our own.
+This is the captain's specific design ask — no off-the-shelf pattern in
+the Neovim chat-buffer space implements it. We roll our own.
 
 **Steps**:
 
@@ -386,8 +382,8 @@ Defer until the core works:
   desktop overlay has it (`<XtermView>`); the plugin can render
   terminal output as a plain folded block in v0. Add ANSI parsing
   later if the captain finds the difference jarring.
-- **Conceal-based collapsibles** — codecompanion explicitly avoids
-  these; manual folds + extmarks are the safer path for v0.
+- **Conceal-based collapsibles** — fragile in practice; manual folds +
+  extmarks are the safer path for v0.
 - **Local skills/MCP picker** — `:HyprpilotSkills` etc. are nice but
   not blocking. Composer-only is fine for v0.
 
