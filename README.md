@@ -12,10 +12,10 @@ daemon's Unix socket at `$XDG_RUNTIME_DIR/hyprpilot.sock`.
 > [`docs/plans/2026-05-09-nvim-plugin-handoff.md`](docs/plans/2026-05-09-nvim-plugin-handoff.md)).
 
 This repository is a mono-repo. Alongside the Lua plugin, it ships
-[`hyprpilot-nvim-mcp`](mcp/) — a `uvx`-runnable MCP server (Python)
+[`hyprpilot-nvim-mcp`](pkg/) — a `uvx`-runnable MCP server (Python)
 that exposes Neovim editor state (current buffer, LSP, treesitter,
 diagnostics, plus user-registered Lua tools) to the agent. See
-[`mcp/README.md`](mcp/README.md) for installation in `mcps.json`.
+[`pkg/README.md`](pkg/README.md) for installation in `mcps.json`.
 
 ## Installation
 

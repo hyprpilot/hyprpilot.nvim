@@ -4,30 +4,30 @@
 version: "3"
 
 includes:
-  mcp:
-    taskfile: ./mcp/Taskfile.yml
-    dir: ./mcp
+  pkg:
+    taskfile: ./pkg/Taskfile.yml
+    dir: ./pkg
 
 tasks:
   install:
     desc: Install dependencies for all subprojects.
     cmds:
-      - task: mcp:install
+      - task: pkg:install
 
   format:
     desc: Format the entire repository.
     cmds:
       - stylua --config-path .stylua.toml . -v
-      - task: mcp:format
+      - task: pkg:format
 
   lint:
     desc: Lint the entire repository (Lua + Python).
     cmds:
       - stylua --config-path .stylua.toml --check .
       - selene .
-      - task: mcp:lint
+      - task: pkg:lint
 
   test:
     desc: Run tests across all subprojects.
     cmds:
-      - task: mcp:test
+      - task: pkg:test

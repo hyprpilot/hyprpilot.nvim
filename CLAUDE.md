@@ -16,15 +16,15 @@ This repository ships **two packages** managed together:
 
 - **Lua plugin (root)** — `lua/hyprpilot/`, `plugin/hyprpilot.lua`. The
   Neovim frontend itself.
-- **Python MCP bridge** — `mcp/` subdirectory. `uvx`-runnable MCP
+- **Python MCP bridge** — `pkg/` subdirectory. `uvx`-runnable MCP
   server (`hyprpilot-nvim-mcp`) that bridges Neovim editor state into
   the agent's tool surface via `pynvim`. See
-  [`mcp/CLAUDE.md`](mcp/CLAUDE.md) for Python-specific conventions and
+  [`pkg/CLAUDE.md`](pkg/CLAUDE.md) for Python-specific conventions and
   [`docs/plans/2026-05-09-nvim-mcp-handoff.md`](docs/plans/2026-05-09-nvim-mcp-handoff.md)
   for the implementation roadmap.
 
 `task lint` and `task test` at the root run both subprojects via
-`Taskfile.yml`'s `includes:` block (`mcp:` namespace). `release-please`
+`Taskfile.yml`'s `includes:` block (`pkg:` namespace). `release-please`
 is configured for both packages independently — tags are
 `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 
@@ -125,7 +125,7 @@ dead ends here so no one repeats them.)
   `lua-language-server` so editor diagnostics align with `selene`.
 - **GitHub Actions** — `.github/workflows/lint.yml` runs three jobs on
   every PR and push to `main`: `lint-lua` (stylua + selene), `lint-python`
-  (`task mcp:lint` — ruff + mypy), and `test-python` (`task mcp:test` —
+  (`task pkg:lint` — ruff + mypy), and `test-python` (`task pkg:test` —
   pytest). `release-please.yml` opens release PRs per package on push to
   `main`.
 

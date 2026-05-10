@@ -1,4 +1,4 @@
-# CLAUDE.md (`mcp/` workspace)
+# CLAUDE.md (`pkg/` workspace)
 
 > Sub-CLAUDE.md for the Python package inside the `hyprpilot.nvim`
 > mono-repo. The root [`../CLAUDE.md`](../CLAUDE.md) covers shared
@@ -31,9 +31,9 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
   fixture in `conftest.py`).
 - **Toolchain pin:** `mise.toml` pins `python = "3.13"`, `uv = "latest"`,
   `task = "3"`.
-- **Build backend:** `hatchling` (pure-Python wheel; `src/` layout).
-- **Layout:** `src/hyprpilot_nvim_mcp/{__init__,cli,config,log,nvim,server,
-  dynamic}.py` + `src/hyprpilot_nvim_mcp/tools/{buffer,lsp,treesitter,
+- **Build backend:** `hatchling` (pure-Python wheel; flat package layout).
+- **Layout:** `hyprpilot_nvim_mcp/{__init__,cli,config,log,nvim,server,
+  dynamic}.py` + `hyprpilot_nvim_mcp/tools/{buffer,lsp,treesitter,
   exec_lua}.py`. One function per tool.
 
 ## Conventions
@@ -99,8 +99,8 @@ no one repeats them.)
   idiom (PyPI fetch + cache).
 - **`ruff`** — single-binary lint + format. `task lint` runs both
   `ruff format --check` and `ruff check`.
-- **`mypy --strict`** — full type-check of `src/` and `tests/`. `task
-  lint` runs it after ruff.
+- **`mypy --strict`** — full type-check of `hyprpilot_nvim_mcp/` and
+  `tests/`. `task lint` runs it after ruff.
 - **`pytest`** — test runner. `tests/conftest.py` spawns headless
   `nvim --embed --clean` per fixture; tests assert against the in-process
   pynvim handle.

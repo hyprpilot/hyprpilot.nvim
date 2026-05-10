@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mcp
+        working-directory: pkg
     steps:
       - uses: actions/checkout@v6
 
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mcp
+        working-directory: pkg
     steps:
       - uses: actions/checkout@v6
 

@@ -40,7 +40,7 @@ luac.out
 *.hex
 /.task
 
-# Python (mcp/)
+# Python (pkg/)
 __pycache__/
 *.py[cod]
 *$py.class

@@ -17,7 +17,7 @@
       "package-name": "hyprpilot.nvim",
       "release-type": "simple"
     },
-    "mcp": {
+    "pkg": {
       "package-name": "hyprpilot-nvim-mcp",
       "release-type": "python"
     }
