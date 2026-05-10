@@ -5,6 +5,7 @@ local M = {}
 ---@field socket? string
 ---@field ui? hyprpilot.ConfigUi
 ---@field mcp? hyprpilot.ConfigMcp
+---@field client? hyprpilot.ConfigClient
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -12,6 +13,11 @@ local M = {}
 
 ---@class hyprpilot.ConfigMcp
 ---@field enabled? boolean
+
+---@class hyprpilot.ConfigClient
+---@field timeout_ms? integer        -- per-request timeout
+---@field connect_attempts? integer  -- connect tries before giving up
+---@field retry_delay_ms? integer    -- delay between connect attempts
 
 ---@type hyprpilot.Config
 local defaults = {
@@ -29,6 +35,11 @@ local defaults = {
   },
   mcp = {
     enabled = true,
+  },
+  client = {
+    timeout_ms = 5000,
+    connect_attempts = 3,
+    retry_delay_ms = 1000,
   },
 }
 
@@ -49,6 +60,11 @@ M.options = {
   },
   mcp = {
     enabled = true,
+  },
+  client = {
+    timeout_ms = 5000,
+    connect_attempts = 3,
+    retry_delay_ms = 1000,
   },
 }
 
