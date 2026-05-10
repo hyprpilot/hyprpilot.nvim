@@ -22,6 +22,16 @@ local M = {}
 
 ---@class hyprpilot.ConfigComposer
 ---@field height? integer | (fun(lines: number): number?)
+---@field keymaps? hyprpilot.ConfigComposerKeymaps
+
+---@class hyprpilot.ConfigComposerKeymaps
+---@field submit? hyprpilot.ConfigComposerKeymapAction | false
+---@field cancel? hyprpilot.ConfigComposerKeymapAction | false
+---@field close?  hyprpilot.ConfigComposerKeymapAction | false
+
+---@class hyprpilot.ConfigComposerKeymapAction
+---@field normal? string | string[] | false
+---@field insert? string | string[] | false
 
 ---@type hyprpilot.Config
 local defaults = {
@@ -47,6 +57,11 @@ local defaults = {
   },
   composer = {
     height = 5,
+    keymaps = {
+      submit = { normal = "<C-CR>", insert = "<C-CR>" },
+      cancel = { normal = "<C-c>", insert = "<C-c>" },
+      close = { normal = "<Esc><Esc>" },
+    },
   },
 }
 
@@ -75,6 +90,11 @@ M.options = {
   },
   composer = {
     height = 5,
+    keymaps = {
+      submit = { normal = "<C-CR>", insert = "<C-CR>" },
+      cancel = { normal = "<C-c>", insert = "<C-c>" },
+      close = { normal = "<Esc><Esc>" },
+    },
   },
 }
 

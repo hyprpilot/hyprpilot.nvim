@@ -47,6 +47,33 @@ end
 ---Get-or-create the per-instance composer buffer.
 ---@param instance_id string
 ---@return integer bufnr
+---Apply one action's keymaps onto `bufnr`. `spec` is either `false`
+---(disabled), or `{ normal = ..., insert = ... }` where each value is
+---a string, a list of strings, or `false` (disabled per-mode).
+---@param bufnr integer
+---@param spec hyprpilot.ConfigComposerKeymapAction | false | nil
+---@param handler fun(): nil
+---@param desc string
+local function apply_action(bufnr, spec, handler, desc)
+  if spec == false or spec == nil then
+    return
+  end
+
+  local mode_keys = { n = spec.normal, i = spec.insert }
+
+  for mode, keys in pairs(mode_keys) do
+    if keys ~= false then
+      if type(keys) == "string" then
+        keys = { keys }
+      end
+
+      for _, key in ipairs(keys) do
+        vim.keymap.set(mode, key, handler, { buffer = bufnr, desc = "hyprpilot: " .. desc })
+      end
+    end
+  end
+end
+
 local function ensure_buffer(instance_id)
   local existing = buffers[instance_id]
 
@@ -63,17 +90,19 @@ local function ensure_buffer(instance_id)
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
 
-  vim.keymap.set({ "n", "i" }, "<C-CR>", function()
+  local keymaps = (config.options.composer or {}).keymaps or {}
+
+  apply_action(bufnr, keymaps.submit, function()
     M.submit()
-  end, { buffer = bufnr, desc = "hyprpilot: submit prompt" })
+  end, "submit prompt")
 
-  vim.keymap.set("n", "<C-c>", function()
+  apply_action(bufnr, keymaps.cancel, function()
     M.cancel()
-  end, { buffer = bufnr, desc = "hyprpilot: cancel in-flight" })
+  end, "cancel in-flight")
 
-  vim.keymap.set("n", "<Esc><Esc>", function()
+  apply_action(bufnr, keymaps.close, function()
     M.close()
-  end, { buffer = bufnr, desc = "hyprpilot: close composer" })
+  end, "close composer")
 
   buffers[instance_id] = bufnr
 
