@@ -8,13 +8,8 @@
 local client = require("hyprpilot.client")
 local log = require("hyprpilot.log")
 local render = require("hyprpilot.chat.render")
-local window = require("hyprpilot.chat.window")
 
 local M = {}
-
-local SUBSCRIBE_METHOD = "events/subscribe"
-local NOTIFICATION_METHOD = "events/changed"
-local SNAPSHOT_METHOD = "instance/snapshot/chat"
 
 local subscribed = false
 local unsubscribe = nil ---@type fun()?
@@ -42,9 +37,9 @@ function M.ensure_subscribed()
 
   subscribed = true
 
-  unsubscribe = client.on_notification(NOTIFICATION_METHOD, dispatch)
+  unsubscribe = client.on_notification("events/changed", dispatch)
 
-  client.request(SUBSCRIBE_METHOD, nil, nil, function(err, _result)
+  client.request("events/subscribe", nil, nil, function(err, _result)
     if err ~= nil then
       subscribed = false
 
@@ -68,7 +63,7 @@ function M.hydrate(instance_id, bufnr)
 
   local state = render.state(instance_id, bufnr)
 
-  client.request(SNAPSHOT_METHOD, { instanceId = instance_id }, nil, function(err, snapshot)
+  client.request("instance/snapshot/chat", { instanceId = instance_id }, nil, function(err, snapshot)
     if err ~= nil then
       log.warn("events.hydrate: %s", err.message)
 
@@ -96,23 +91,5 @@ function M._reset()
 
   subscribed = false
 end
-
----Listen for instance closure so render state gets cleaned up.
-function M.setup_autocmds()
-  vim.api.nvim_create_autocmd("User", {
-    pattern = "HyprpilotInstanceClosed",
-    callback = function(args)
-      local instance_id = args.data and args.data.instance_id
-
-      if type(instance_id) == "string" then
-        render.forget(instance_id)
-      end
-    end,
-  })
-end
-
--- Suppress the unused-window warning while we wire window.show
--- integration in this same module's `hydrate` consumer below.
-local _ = window
 
 return M
