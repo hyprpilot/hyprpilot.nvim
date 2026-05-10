@@ -49,6 +49,12 @@ function M.state(instance_id, bufnr)
     return existing
   end
 
+  if existing ~= nil then
+    log.debug("render.state: rebinding instance=%s from bufnr=%s to bufnr=%s", instance_id, existing.bufnr, bufnr)
+  else
+    log.debug("render.state: creating state for instance=%s bufnr=%s", instance_id, bufnr)
+  end
+
   local state = {
     bufnr = bufnr,
     instance_id = instance_id,
@@ -62,6 +68,12 @@ end
 ---Drop the render state for an instance (used when the buffer is wiped).
 ---@param instance_id string
 function M.forget(instance_id)
+  if M._states[instance_id] == nil then
+    return
+  end
+
+  log.debug("render.forget: instance=%s", instance_id)
+
   M._states[instance_id] = nil
 end
 
@@ -195,7 +207,7 @@ function M.render_item(state, turn_id, item)
     append_placeholder(state, "tool", (rec.title and tostring(rec.title)) or rec.toolKind or "?")
   elseif kind == "tool_call_update" then
     -- updates land in v1 as no-op text; PR B threads them into a fold
-    log.debug("render: tool_call_update (deferred to next PR)")
+    log.debug("render.render_item: tool_call_update id=%s (deferred to next PR)", tostring(item.id))
   elseif kind == "plan" then
     append_placeholder(state, "plan")
   elseif kind == "permission_request" then
@@ -203,8 +215,10 @@ function M.render_item(state, turn_id, item)
   elseif kind == "agent_attachment" then
     append_placeholder(state, "attachment")
   elseif kind == "unknown" then
+    log.warn("render.render_item: daemon emitted unknown wire kind=%s", tostring(item.wireKind))
     append_placeholder(state, "unknown", item.wireKind)
   else
+    log.warn("render.render_item: unhandled transcript kind=%s for instance=%s", kind, state.instance_id)
     append_placeholder(state, "unhandled", kind)
   end
 end
@@ -214,6 +228,16 @@ end
 ---@param state hyprpilot.render.State
 ---@param snapshot { items: table[], oldestSeq?: integer, latestSeq?: integer, hasMore?: boolean }
 function M.hydrate(state, snapshot)
+  local items = snapshot.items or {}
+
+  log.debug(
+    "render.hydrate: instance=%s items=%d latestSeq=%s hasMore=%s",
+    state.instance_id,
+    #items,
+    tostring(snapshot.latestSeq),
+    tostring(snapshot.hasMore)
+  )
+
   chat_buffer.with_buffer(state.bufnr, function()
     vim.api.nvim_buf_set_lines(state.bufnr, 0, -1, false, {})
   end)
@@ -222,7 +246,7 @@ function M.hydrate(state, snapshot)
   state.active_text_block = nil
   state.last_seq = snapshot.latestSeq
 
-  for _, entry in ipairs(snapshot.items or {}) do
+  for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)
   end
 end
@@ -234,6 +258,8 @@ function M.handle_transcript(event)
   local state = M._states[event.instanceId]
 
   if state == nil then
+    log.debug("render.handle_transcript: no state for instance=%s — dropping event", tostring(event.instanceId))
+
     return
   end
 
@@ -247,8 +273,12 @@ function M.handle_turn_started(event)
   local state = M._states[event.instanceId]
 
   if state == nil then
+    log.debug("render.handle_turn_started: no state for instance=%s", tostring(event.instanceId))
+
     return
   end
+
+  log.debug("render.handle_turn_started: instance=%s turnId=%s", event.instanceId, event.turnId)
 
   append_turn_header(state, "agent", event.turnId)
 end
@@ -260,8 +290,18 @@ function M.handle_turn_ended(event)
   local state = M._states[event.instanceId]
 
   if state == nil then
+    log.debug("render.handle_turn_ended: no state for instance=%s", tostring(event.instanceId))
+
     return
   end
+
+  log.debug(
+    "render.handle_turn_ended: instance=%s turnId=%s stopReason=%s error=%s",
+    event.instanceId,
+    event.turnId,
+    tostring(event.stopReason),
+    tostring(event.error)
+  )
 
   state.active_text_block = nil
 

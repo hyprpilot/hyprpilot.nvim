@@ -17,6 +17,8 @@ local unsubscribe = nil ---@type fun()?
 ---@param event table
 local function dispatch(event)
   if type(event) ~= "table" or type(event.event) ~= "string" then
+    log.warn("events.dispatch: dropping malformed payload: %s", vim.inspect(event))
+
     return
   end
 
@@ -26,6 +28,8 @@ local function dispatch(event)
     render.handle_turn_started(event)
   elseif event.event == "turn_ended" then
     render.handle_turn_ended(event)
+  else
+    log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
   end
 end
 
@@ -39,7 +43,7 @@ function M.ensure_subscribed()
 
   unsubscribe = client.on_notification("events/changed", dispatch)
 
-  client.request("events/subscribe", nil, nil, function(err, _result)
+  client.request("events/subscribe", nil, nil, function(err, result)
     if err ~= nil then
       subscribed = false
 
@@ -50,7 +54,11 @@ function M.ensure_subscribed()
       end
 
       log.warn("events.subscribe: %s", err.message)
+
+      return
     end
+
+    log.debug("events.subscribe: ack %s", vim.inspect(result))
   end)
 end
 
@@ -63,15 +71,17 @@ function M.hydrate(instance_id, bufnr)
 
   local state = render.state(instance_id, bufnr)
 
+  log.debug("events.hydrate: requesting snapshot for instance=%s", instance_id)
+
   client.request("instance/snapshot/chat", { instanceId = instance_id }, nil, function(err, snapshot)
     if err ~= nil then
-      log.warn("events.hydrate: %s", err.message)
+      log.warn("events.hydrate: snapshot failed for instance=%s: %s", instance_id, err.message)
 
       return
     end
 
     if type(snapshot) ~= "table" then
-      log.warn("events.hydrate: snapshot is not a table for instance=%s", instance_id)
+      log.warn("events.hydrate: snapshot is not a table for instance=%s (got %s)", instance_id, type(snapshot))
 
       return
     end
