@@ -65,38 +65,11 @@ local defaults = {
   },
 }
 
+---Live config — reads here resolve to defaults until `M.setup()` runs
+---and merges the captain's overrides. Modules can `require` and read
+---`config.options.*` regardless of setup order.
 ---@type hyprpilot.Config
----@diagnostic disable-next-line: missing-fields
-M.options = {
-  log_level = vim.log.levels.INFO,
-  socket = nil,
-  ui = {
-    position = "right",
-    width = function(columns)
-      if columns < 200 then
-        return math.floor(columns * 0.35)
-      end
-
-      return 80
-    end,
-  },
-  mcp = {
-    enabled = true,
-  },
-  client = {
-    timeout_ms = 5000,
-    connect_attempts = 3,
-    retry_delay_ms = 1000,
-  },
-  composer = {
-    height = 5,
-    keymaps = {
-      submit = { normal = "<C-CR>", insert = "<C-CR>" },
-      cancel = { normal = "<C-c>", insert = "<C-c>" },
-      close = { normal = "<Esc><Esc>" },
-    },
-  },
-}
+M.options = vim.deepcopy(defaults)
 
 ---@param config hyprpilot.Config
 ---@return hyprpilot.Config
