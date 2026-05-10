@@ -16,3 +16,6 @@ any = true
 
 [it]
 any = true
+
+[MiniTest]
+any = true

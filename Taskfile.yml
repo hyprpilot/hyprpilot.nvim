@@ -27,7 +27,13 @@ tasks:
       - selene .
       - task: pkg:lint
 
+  test-lua:
+    desc: Run the Lua test suite via mini.test (headless nvim).
+    cmds:
+      - nvim --headless --clean -u scripts/minimal_init.lua -c "lua MiniTest.run()" -c "qa!"
+
   test:
     desc: Run tests across all subprojects.
     cmds:
+      - task: test-lua
       - task: pkg:test
