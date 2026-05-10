@@ -1,0 +1,33 @@
+---
+# https://taskfile.dev
+
+version: "3"
+
+includes:
+  pkg:
+    taskfile: ./pkg/Taskfile.yml
+    dir: ./pkg
+
+tasks:
+  install:
+    desc: Install dependencies for all subprojects.
+    cmds:
+      - task: pkg:install
+
+  format:
+    desc: Format the entire repository.
+    cmds:
+      - stylua --config-path .stylua.toml . -v
+      - task: pkg:format
+
+  lint:
+    desc: Lint the entire repository (Lua + Python).
+    cmds:
+      - stylua --config-path .stylua.toml --check .
+      - selene .
+      - task: pkg:lint
+
+  test:
+    desc: Run tests across all subprojects.
+    cmds:
+      - task: pkg:test

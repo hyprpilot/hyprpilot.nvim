@@ -1,0 +1,52 @@
+[project]
+name = "hyprpilot-nvim-mcp"
+version = "0.0.0"
+description = "MCP server bridging Neovim editor state into the hyprpilot agent's tool surface."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Cenk Kilic" }]
+dependencies = [
+  "click>=8.1",
+  "fastmcp>=2.0",
+  "pynvim>=0.5",
+  "rich>=13.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/hyprpilot/hyprpilot-nvim-mcp"
+Source = "https://github.com/hyprpilot/hyprpilot-nvim-mcp"
+
+[project.scripts]
+hyprpilot-nvim-mcp = "hyprpilot_nvim_mcp.cli:Server.cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hyprpilot_nvim_mcp"]
+
+[dependency-groups]
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+files = ["hyprpilot_nvim_mcp", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

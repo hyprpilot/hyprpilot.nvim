@@ -1,0 +1,41 @@
+---
+# Conventional Commits → version-bump table that release-please applies
+# (Angular preset, parser-baked):
+#
+#   `feat: ...`         → minor    (0.1.9 → 0.2.0)
+#   `fix: ...`          → patch    (0.1.9 → 0.1.10)
+#   `perf: ...`         → patch    (changelog: "Performance" section)
+#   `refactor: ...`     → patch    (changelog: "Refactor" section)
+#   `docs: ...`         → patch    (changelog: "Documentation" section)
+#   `chore/test/ci: ..` → no bump  (hidden in changelog)
+#
+# To force a major bump from any type, use the `!` suffix or
+# `BREAKING CHANGE:` footer:
+#
+#   `feat!: drop X`     → major    (0.1.9 → 1.0.0)
+#   `perf!: replace Y`  → major
+#   `fix!: rewire Z`    → major
+#   plain commit body containing `BREAKING CHANGE: <text>` → major
+
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json

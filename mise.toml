@@ -1,0 +1,6 @@
+[tools]
+"aqua:Kampfkarren/selene" = "latest"
+stylua = "latest"
+task = "3"
+python = "3.13"
+uv = "latest"
