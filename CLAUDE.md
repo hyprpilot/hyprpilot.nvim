@@ -137,6 +137,17 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   re-creates `M.options` via `vim.tbl_deep_extend("force", {},
   defaults, user)`. Reads before setup resolve to the deep-copied
   defaults, not a separate stub.
+- **Behaviour tests, not idiomatic ones** — every Lua test in
+  `tests/test_*.lua` drives a real public entry point (the same call
+  shape a live wire event or captain keypress would produce) and
+  asserts on visible output: buffer text, fold state via
+  `foldclosed()`, recorded RPC dispatches. Don't poke at extmark ids,
+  block table internals, or other implementation details — those
+  shift as the code evolves and tests bound to them lock in
+  arbitrary choices instead of catching regressions. Stub
+  `client.request` / `permissions.respond` (helpers in
+  `tests/helpers.lua`) to capture wire-side effects; never mock the
+  modules under test.
 
 ## Decision Log
 
@@ -245,6 +256,21 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   - Chose: `CLAUDE.md` at the repo root.
   - Why: captain's explicit instruction at bootstrap.
 
+- **Lua test framework: `mini.test`**
+  - Chose: `mini.test` (from `echasnovski/mini.nvim`), auto-cloned
+    into `.testdeps/mini.nvim` by `scripts/minimal_init.lua` on first
+    `task test-lua` run.
+  - Why: `plenary.nvim`'s `busted` is the de facto standard but
+    plenary is on the explicit-no list (see Conventions). `mini.test`
+    has zero hard deps, ships full test isolation via child-nvim
+    factories when we want it (`MiniTest.new_child_neovim()`), and is
+    a single repo we can pin without pulling its sibling modules.
+  - Rejected: `nvim-test` (lower adoption, wraps busted directly);
+    rolling our own (`/tmp/smoke_*.lua`-style headless scripts) — no
+    diffs, no per-case isolation, no shared collector. We did this in
+    early development and graduated to `mini.test` once the surface
+    was big enough to warrant it.
+
 ## Approaches Tried
 
 - **Five stacked PRs (#7–#11) for the wire stack** —
@@ -287,19 +313,30 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   `collapse_simple_statement = "Never"`. `task format` runs it; `task
   lint` runs `stylua --check`.
 - **`selene`** — linter. `selene.toml` uses `std = "vim"` with
-  `mixed_table = "allow"`. `vim.toml` declares the vim/jit/test
-  globals (`describe`, `it`, `assert`).
+  `mixed_table = "allow"` and excludes `.testdeps/**`. `vim.toml`
+  declares the vim/jit/test globals (`describe`, `it`, `assert`,
+  `MiniTest`).
 - **`Taskfile.yml`** — `task format` and `task lint` are the canonical
-  entry points. CI calls `task lint`.
+  entry points. `task test-lua` runs the Lua suite via `mini.test`;
+  `task test` chains `test-lua` + `pkg:test`. CI calls `task lint`
+  per language and `task test-lua` / `task pkg:test` separately.
+- **`mini.test`** — Lua test runner. `scripts/minimal_init.lua`
+  bootstraps `mini.nvim` into `.testdeps/mini.nvim` (gitignored) on
+  first run, then `nvim --headless -u scripts/minimal_init.lua -c
+  "lua MiniTest.run()" -c "qa!"` collects every `tests/test_*.lua`.
 - **`mise.toml`** — pins `aqua:Kampfkarren/selene` and `stylua` to
-  `latest`. CI installs via mise.
+  `latest`, plus `neovim = "latest"` so CI has `nvim` for `task
+  test-lua`. CI installs via mise.
 - **`.luarc.json`** — declares `vim` as a global for
   `lua-language-server` so editor diagnostics align with `selene`.
-- **GitHub Actions** — `.github/workflows/lint.yml` runs three jobs on
-  every PR and push to `main`: `lint-lua` (stylua + selene), `lint-python`
-  (`task pkg:lint` — ruff + mypy), and `test-python` (`task pkg:test` —
-  pytest). `release-please.yml` opens release PRs per package on push to
-  `main`.
+- **`.styluaignore`** — excludes `.testdeps/` so the cloned mini.nvim
+  source doesn't get formatted/checked on every run.
+- **GitHub Actions** — `.github/workflows/lint.yml` runs four jobs on
+  every PR and push to `main`: `lint-lua` (stylua + selene),
+  `lint-python` (`task pkg:lint` — ruff + mypy), `test-python`
+  (`task pkg:test` — pytest), and `test-lua` (`task test-lua` —
+  mini.test, with `.testdeps/` cached across runs).
+  `release-please.yml` opens release PRs per package on push to `main`.
 
 ## Gotchas
 

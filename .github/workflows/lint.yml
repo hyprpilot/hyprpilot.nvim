@@ -69,3 +69,23 @@ jobs:
 
       - name: Test
         run: task test
+
+  test-lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Bootstrap toolchain via mise
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+
+      - name: Cache mini.nvim test harness
+        uses: actions/cache@v4
+        with:
+          path: .testdeps
+          key: testdeps-mini-nvim-${{ runner.os }}
+
+      - name: Test
+        run: task test-lua
