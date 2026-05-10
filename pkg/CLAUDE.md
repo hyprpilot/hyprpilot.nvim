@@ -18,7 +18,18 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
 
 ## Stack & Structure
 
-- **Language:** Python 3.10+ (CI on 3.13).
+- **Language:** Python 3.14+ (`requires-python = ">=3.14"` in
+  `pyproject.toml`; ruff `target-version = "py314"`).
+- **CLI:** [`click`](https://click.palletsprojects.com/) with a
+  class-based command tree. The `Server` class hosts state + behaviour;
+  `Server.cli` is the `@click.group` exposed to `[project.scripts]`.
+  click owns env-var parsing for every option (`envvar=`, `click.BOOL`
+  coercion). Do not write a separate `Config.from_env()` layer.
+- **Logging:** [`rich`](https://rich.readthedocs.io/) `RichHandler`
+  bound to a stderr `Console`. The wrapper module
+  (`hyprpilot_nvim_mcp/log.py`) exports `configure(level)` + `get(name)`;
+  every module imports `from hyprpilot_nvim_mcp import log` and uses
+  the standard logging level methods.
 - **Package manager:** [`uv`](https://docs.astral.sh/uv/) (Astral). This
   package is a member of the repo-root **uv workspace**; `uv.lock` and
   `.venv/` live at the repo root, not in `pkg/`. Run `uv sync` from the
@@ -31,7 +42,7 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
 - **Type-check:** `mypy --strict` (configured via `pyproject.toml`).
 - **Test:** `pytest` + `pytest-asyncio` (headless `nvim --embed --clean`
   fixture in `conftest.py`).
-- **Toolchain pin:** `mise.toml` pins `python = "3.13"`, `uv = "latest"`,
+- **Toolchain pin:** `mise.toml` pins `python = "3.14"`, `uv = "latest"`,
   `task = "3"`.
 - **Build backend:** `hatchling` (pure-Python wheel; flat package layout).
 - **Layout:** `hyprpilot_nvim_mcp/{__init__,cli,config,log,nvim,server,
@@ -60,6 +71,16 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
 - **`pyproject.toml` is the single source of truth** for deps, scripts,
   ruff config, mypy config. No `setup.py`, no `setup.cfg`, no
   `requirements.txt`.
+- **Inline single-use values** — same rule as the root CLAUDE.md.
+  Never name a local, constant, or intermediate dict that has only one
+  consumer. Inline directly into the call site.
+- **Config knobs ship with their behaviour** — never declare a CLI
+  option, env var, or config dataclass field whose handler doesn't
+  exist yet. Add it in the same PR that wires it.
+- **Validation logs and skips, not throws** for captain-facing input
+  (CLI args, env vars, MCP tool registration). Tool handler errors
+  still translate to `MCPToolError` per the "Errors are values" rule
+  above; that's a different surface.
 
 ## Decision Log
 
