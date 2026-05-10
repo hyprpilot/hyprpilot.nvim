@@ -53,7 +53,8 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 - **Conventional Commits** — `feat:`, `fix:`, `chore:`, `docs:`,
   `refactor:`, `test:`. Scope when meaningful (`feat(client): ...`).
 - **Branching** — `feature/*` for new work, `fix/*` or `hotfix/*` for
-  fixes. Branches are local until the captain pushes.
+  fixes, `chore/*` for tooling/infra, `docs/*` for documentation-only
+  changes. Branches are local until the captain pushes.
 - **Module pattern** — every Lua module exports a single `local M = {}` …
   `return M`. No global state outside `M`.
 - **Setup chain** — `require("hyprpilot").setup({})` is the only entry
@@ -65,6 +66,11 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 - **Logger first** — call `log.trace` / `log.debug` liberally during
   development; demote to `info` once a path stabilises. Bad logs equal
   un-debuggable plugin.
+- **Use the logger directly** — `lua/hyprpilot/log.lua` auto-wires the
+  level functions (`log.debug` / `log.info` / `log.warn` / `log.error`)
+  at module load. Any module can `require("hyprpilot.log")` and call
+  the level methods immediately, before `setup({})` runs. Do not write
+  defensive `if log.debug then ... end` wrappers.
 - **`:checkhealth` from day one** — even the bootstrap PR ships a real
   `health.lua`. The captain runs it first when something is off.
 - **No `plenary.nvim`** — deprecated. Use core APIs: `vim.uv` for IO
@@ -72,6 +78,31 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   `vim.json` for JSON, `vim.ui.*` for prompts. If a helper truly
   doesn't exist, write the small primitive in `utils.lua` instead of
   pulling a dependency.
+- **Inline single-use values** — never name a variable, constant, or
+  intermediate table that has only one consumer. Inline directly into
+  the call site. The only reason to lift a value into a binding is
+  multi-use or a genuine readability win that no inline can match.
+  Applies equally to Lua locals, module-level constants, and config
+  literals (the `defaults` and `M.options` tables in `config.lua`
+  duplicate their contents on purpose to keep zero shared sub-tables).
+- **Config knobs ship with their behaviour, not before** — never
+  declare a config field whose handler doesn't exist yet. Forward-
+  looking knobs rot, drift from their eventual semantic, and confuse
+  captains. Add the field in the same PR that wires it.
+- **Validation logs and skips, not throws** — captain-facing entry
+  points (`mcp.register`, `setup`, anywhere a misconfig is plausible)
+  use `log.error` + early return on invalid input rather than `error()`.
+  A bad config line should never crash nvim startup; the captain sees
+  the warning in their notify backend and life continues.
+- **Batch-friendly varargs where it matters** — public APIs that the
+  captain might want to call with a list of values take `...` directly
+  (e.g., `mcp.unregister(name1, name2, ...)`). Saves the captain a
+  loop and signals the operation is naturally batchable.
+- **Resolve merge conflicts proactively, in PRs** — when a sibling PR
+  lands on `main` and our open PR touches the same file, merge `main`
+  back into the open PR's branch immediately and resolve the conflict
+  there. Don't push a branch that will conflict at merge time and
+  don't ask the reviewer to handle it.
 
 ## Decision Log
 
