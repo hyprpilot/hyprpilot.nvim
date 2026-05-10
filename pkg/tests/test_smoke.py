@@ -9,16 +9,12 @@ from click.testing import CliRunner
 
 from hyprpilot_nvim_mcp import __version__
 from hyprpilot_nvim_mcp.cli import Server
-from hyprpilot_nvim_mcp.server import ping
+from hyprpilot_nvim_mcp.nvim import NvimUnavailableError
 
 
 def test_version_is_string() -> None:
     assert isinstance(__version__, str)
     assert __version__
-
-
-def test_ping_returns_pong() -> None:
-    assert ping() == "pong"
 
 
 def test_cli_help_advertises_options_and_envvars() -> None:
@@ -104,3 +100,23 @@ def test_cli_resolves_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "nvim_listen_address": "/tmp/nvim.sock",
         "enable_exec_lua": True,
     }
+
+
+def test_cli_run_without_nvim_address_surfaces_clean_error() -> None:
+    """Missing NVIM_LISTEN_ADDRESS should fail fast with a click error,
+    not a raw exception."""
+    result = CliRunner(env={"NVIM_LISTEN_ADDRESS": ""}).invoke(Server.cli, ["run"])
+
+    assert result.exit_code != 0
+    assert "NVIM_LISTEN_ADDRESS" in (result.output or "")
+
+
+def test_nvim_wrapper_rejects_missing_address() -> None:
+    """NvimWrapper construction with no address must raise immediately."""
+    from hyprpilot_nvim_mcp.nvim import NvimWrapper
+
+    with pytest.raises(NvimUnavailableError, match="NVIM_LISTEN_ADDRESS"):
+        NvimWrapper(None)
+
+    with pytest.raises(NvimUnavailableError, match="NVIM_LISTEN_ADDRESS"):
+        NvimWrapper("")

@@ -1,18 +1,25 @@
 """Entry point for ``uvx hyprpilot-nvim-mcp``.
 
 Class-based click CLI: ``Server`` owns the runtime state (log config,
-parsed options, FastMCP instance handle), and ``Server.cli`` is the
-click group dispatched from the ``hyprpilot-nvim-mcp`` console script.
+parsed options, FastMCP instance handle, nvim wrapper, dispatcher
+registry), and ``Server.cli`` is the click group dispatched from the
+``hyprpilot-nvim-mcp`` console script.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import click
 
 from . import __version__, log
+from .dispatcher import register_dynamic
+from .nvim import NvimUnavailableError, NvimWrapper
 from .server import mcp
+from .tools import exec_lua as exec_lua_tool
+from .tools import healthcheck as healthcheck_tool
+from .tools import reload as reload_tool
 
 # Standard logging level names, sourced from Python's logging module
 # itself (skipping NOTSET == 0 and the WARN alias).
@@ -50,6 +57,16 @@ class Server:
             self.nvim_listen_address,
             self.enable_exec_lua,
         )
+
+        nvim = NvimWrapper(self.nvim_listen_address)
+
+        registry: dict[str, Any] = register_dynamic(mcp, nvim)
+        healthcheck_tool.register(mcp, nvim, lambda: len(registry))
+        reload_tool.register(mcp, nvim, registry)
+
+        if self.enable_exec_lua:
+            self._log.warning("exec_lua tool ENABLED — RCE surface is open")
+            exec_lua_tool.register(mcp, nvim)
 
         mcp.run(transport="stdio")
 
@@ -105,7 +122,10 @@ class Server:
     @click.pass_obj
     def cmd_run(server: Server) -> None:
         """Run the MCP server on stdio (default when no subcommand is given)."""
-        server.serve()
+        try:
+            server.serve()
+        except NvimUnavailableError as exc:
+            raise click.ClickException(str(exc)) from exc
 
 
 def main() -> None:
