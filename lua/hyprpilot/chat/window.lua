@@ -126,6 +126,11 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].signcolumn = "no"
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
+  vim.wo[M._winid].foldmethod = "expr"
+  vim.wo[M._winid].foldexpr = "v:lua.require'hyprpilot.chat.render'.foldexpr(v:lnum)"
+  vim.wo[M._winid].foldenable = true
+  vim.wo[M._winid].foldlevel = 0
+  vim.wo[M._winid].foldcolumn = "1"
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).
