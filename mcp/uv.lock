@@ -566,8 +566,10 @@ name = "hyprpilot-nvim-mcp"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "fastmcp" },
     { name = "pynvim" },
+    { name = "rich" },
 ]
 
 [package.dev-dependencies]
@@ -580,8 +582,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.1" },
     { name = "fastmcp", specifier = ">=2.0" },
     { name = "pynvim", specifier = ">=0.5" },
+    { name = "rich", specifier = ">=13.7" },
 ]
 
 [package.metadata.requires-dev]

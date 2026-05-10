@@ -8,10 +8,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Config:
-    """Runtime configuration parsed from environment variables."""
+    """Runtime configuration parsed from environment variables.
+
+    ``log_level`` is not part of this — the CLI (click) owns it via
+    ``--log-level`` / ``HYPRPILOT_NVIM_MCP_LOG_LEVEL``.
+    """
 
     nvim_listen_address: str | None
-    log_level: str
     enable_exec_lua: bool
 
     @classmethod
@@ -19,7 +22,6 @@ class Config:
         """Build a Config from the process environment."""
         return cls(
             nvim_listen_address=os.environ.get("NVIM_LISTEN_ADDRESS"),
-            log_level=os.environ.get("HYPRPILOT_NVIM_MCP_LOG_LEVEL", "INFO"),
             enable_exec_lua=_truthy(os.environ.get("HYPRPILOT_NVIM_MCP_ENABLE_EXEC_LUA", "0")),
         )
 

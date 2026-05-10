@@ -8,8 +8,10 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Cenk Kilic" }]
 dependencies = [
+  "click>=8.1",
   "fastmcp>=2.0",
   "pynvim>=0.5",
+  "rich>=13.7",
 ]
 
 [project.urls]
