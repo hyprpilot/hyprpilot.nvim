@@ -10,24 +10,21 @@ local M = {}
 ---@field width? number | (fun(columns: number): number?)
 ---@field autoclose? boolean
 
----@type hyprpilot.ConfigUi
-local ui_defaults = {
-  position = "right",
-  width = function(columns)
-    if columns < 200 then
-      return math.floor(columns * 0.35)
-    end
-
-    return 80
-  end,
-  autoclose = false,
-}
-
 ---@type hyprpilot.Config
 local defaults = {
   log_level = vim.log.levels.INFO,
   socket = nil,
-  ui = ui_defaults,
+  ui = {
+    position = "right",
+    width = function(columns)
+      if columns < 200 then
+        return math.floor(columns * 0.35)
+      end
+
+      return 80
+    end,
+    autoclose = false,
+  },
 }
 
 ---@type hyprpilot.Config
@@ -35,7 +32,17 @@ local defaults = {
 M.options = {
   log_level = vim.log.levels.INFO,
   socket = nil,
-  ui = vim.deepcopy(ui_defaults),
+  ui = {
+    position = "right",
+    width = function(columns)
+      if columns < 200 then
+        return math.floor(columns * 0.35)
+      end
+
+      return 80
+    end,
+    autoclose = false,
+  },
 }
 
 ---@param config hyprpilot.Config

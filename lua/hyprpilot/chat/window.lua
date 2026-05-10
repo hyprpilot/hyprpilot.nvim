@@ -114,10 +114,7 @@ end
 ---@param ui hyprpilot.ConfigUi
 ---@param bufnr integer
 local function open_split(ui, bufnr)
-  local position = ui.position == "left" and "topleft" or "botright"
-  local width = resolve_width(ui)
-
-  vim.cmd(string.format("%s vertical %dnew", position, width))
+  vim.cmd(string.format("%s vertical %dnew", ui.position == "left" and "topleft" or "botright", resolve_width(ui)))
 
   M._winid = vim.api.nvim_get_current_win()
 
@@ -132,14 +129,13 @@ end
 ---Show the chat window, switching to `instance_id` (or the last active).
 ---@param instance_id string?
 function M.show(instance_id)
-  local ui = config.options.ui or {}
   local bufnr = resolve_target_buffer(instance_id)
 
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, bufnr)
     vim.api.nvim_set_current_win(M._winid)
   else
-    open_split(ui, bufnr)
+    open_split(config.options.ui or {}, bufnr)
   end
 
   if instance_id ~= nil and M._instances[instance_id] ~= nil then

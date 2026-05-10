@@ -8,7 +8,6 @@ local M = {}
 ---@field name? string
 
 local BUFFER_PREFIX = "hyprpilot://"
-local PLACEHOLDER_NAME = "hyprpilot://placeholder"
 
 ---@type integer?
 local _placeholder_bufnr = nil
@@ -90,7 +89,7 @@ function M.placeholder()
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)
-  apply_options(bufnr, PLACEHOLDER_NAME)
+  apply_options(bufnr, "hyprpilot://placeholder")
 
   M.with_buffer(bufnr, function()
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
