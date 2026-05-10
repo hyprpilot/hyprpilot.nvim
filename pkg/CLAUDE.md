@@ -10,11 +10,13 @@
 `hyprpilot-nvim-mcp` is a `uvx`-runnable MCP server that bridges Neovim
 editor state into the [`hyprpilot`](https://github.com/hyprpilot/hyprpilot)
 agent's tool surface. It attaches to a running Neovim via the
-`$NVIM_LISTEN_ADDRESS` socket using `pynvim`, and exposes a curated set
-of editor-state tools (current buffer, open buffers, LSP definition /
-references / hover / diagnostics, treesitter symbols at cursor) plus
-any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
-`require('hyprpilot.mcp').register(...)` API.
+`$NVIM_LISTEN_ADDRESS` socket using `pynvim` and acts as a **pure
+dispatcher**: at boot it queries the Lua side
+(`require("hyprpilot.mcp").list()`) for the captain-registered tool
+catalogue and re-exposes each tool to the agent via FastMCP. The Python
+package ships **zero default tools**; the captain registers what they
+need on the Lua side. Two management tools (`reload_dynamic_tools`,
+`healthcheck`) are the only built-ins.
 
 ## Stack & Structure
 
@@ -34,8 +36,13 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
   package is a member of the repo-root **uv workspace**; `uv.lock` and
   `.venv/` live at the repo root, not in `pkg/`. Run `uv sync` from the
   root (or anywhere — uv finds the workspace).
-- **MCP framework:** [`fastmcp`](https://gofastmcp.com/) — decorator-based
-  tool registration, JSON Schema auto-derived from type hints + docstrings.
+- **MCP framework:** [`fastmcp`](https://gofastmcp.com/) — but we don't
+  use the decorator path for dynamic tools. We construct
+  `fastmcp.tools.FunctionTool(name=..., description=..., parameters=schema, fn=dispatcher)`
+  directly so the **Lua schema passes through verbatim** as the agent's
+  tool view — single source of truth on the Lua side. Decorator-based
+  registration is fine for the management tools (`healthcheck`,
+  `reload_dynamic_tools`) where we own both ends.
 - **Neovim client:** [`pynvim`](https://github.com/neovim/pynvim) — msgpack-RPC
   over the listen socket. Sync API.
 - **Lint / format:** `ruff` (single binary, replaces black + isort + flake8).
@@ -45,9 +52,13 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
 - **Toolchain pin:** `mise.toml` pins `python = "3.14"`, `uv = "latest"`,
   `task = "3"`.
 - **Build backend:** `hatchling` (pure-Python wheel; flat package layout).
-- **Layout:** `hyprpilot_nvim_mcp/{__init__,cli,config,log,nvim,server,
-  dynamic}.py` + `hyprpilot_nvim_mcp/tools/{buffer,lsp,treesitter,
-  exec_lua}.py`. One function per tool.
+- **Layout:**
+  `hyprpilot_nvim_mcp/{__init__,cli,log,nvim,server,dispatcher}.py`
+  + `hyprpilot_nvim_mcp/tools/{healthcheck,reload}.py`. `cli.py` hosts
+  the `Server` class (click group + runtime state); `dispatcher.py`
+  builds the FastMCP `FunctionTool` per Lua-registered tool;
+  `tools/<name>.py` exposes a single `register(mcp, nvim, ...)` entry
+  point that the CLI wires.
 
 ## Conventions
 
@@ -60,9 +71,16 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
   stdout. One stray `print` corrupts the daemon's parser.
 - **`mypy --strict` from day one** — every public function annotated,
   every helper too. No `# type: ignore` without a comment explaining why.
-- **One function per tool** — tools live in `tools/<group>.py` as
-  top-level functions with type hints + docstrings. FastMCP reads both
-  for the JSON Schema. No clever metaprogramming.
+- **One file per management tool** — `tools/<name>.py` exports a
+  `register(mcp, nvim, ...)` function and nothing else. Dynamic
+  Lua-side tools live in `dispatcher.py` (single closure factory) — no
+  per-tool Python file for those.
+- **No tool catalogue in Python** — the captain's tools live on the Lua
+  side; Python just dispatches. If you find yourself adding a Python
+  tool that talks to nvim editor state (LSP, treesitter, buffers, etc.),
+  stop and add it to `lua/hyprpilot/mcp.lua` examples instead. Python
+  built-ins are reserved for things only the bridge can do
+  (`healthcheck`, `reload_dynamic_tools`).
 - **Errors are values** — wrap every `nvim.*` call to translate pynvim
   exceptions into typed `MCPToolError`. The daemon never sees a Python
   traceback; the captain reads clean messages in the chat surface.
@@ -110,10 +128,43 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
   - Why: `pynvim`'s msgpack-RPC is sync; FastMCP allows async tools
     but the underlying transport gains nothing from it.
 
+- **Pure dispatcher, zero default tools (shipped in #14)**
+  - Chose: Python ships only `healthcheck` + `reload_dynamic_tools`.
+    Everything else comes from `require("hyprpilot.mcp").list()` on the
+    Lua side and is registered via FastMCP `FunctionTool(parameters=schema)`
+    so the Lua schema is the agent's view verbatim.
+  - Why: single source of truth for the tool catalogue (Lua), and the
+    captain registers what they need — no curated Python defaults to
+    fight with. Bridge stays small (~150 LOC of dispatcher + nvim wrapper).
+  - Rejected: shipping built-in `buffer`/`lsp`/`treesitter`/`exec_lua`
+    tools on the Python side. Captain explicitly pulled this:
+    "we will register it from explicitly the plugin side of the neovim".
+
+- **CLI: class-based click `Server`**
+  - Chose: a single `Server` class hosts log config, parsed options,
+    and a `serve()` method. `Server.cli` is the `@click.group` exposed
+    via `[project.scripts]`. Subcommands receive the instance via
+    `click.pass_obj`.
+  - Why: keeps option parsing, env-var resolution, and runtime wiring
+    in one cohesive unit; matches the captain's pattern across other
+    Python projects.
+  - Rejected: function-based click commands with separate `Config`
+    dataclass — adds an env-parsing layer click already provides.
+
 ## Approaches Tried
 
-(Empty — bootstrap repo. Append failed approaches and dead ends here so
-no one repeats them.)
+- **Built-in `exec_lua` tool (#14)** — gated behind an env var, with a
+  separate `tools/exec_lua.py` file. Captain pulled it entirely:
+  "we will register it from explicitly the plugin side of the neovim".
+  If the captain wants an arbitrary-Lua escape hatch, they register it
+  via `require("hyprpilot.mcp").register({...})`. The Python side does
+  not own that surface.
+- **Forward-looking config knobs** — same lesson as the root CLAUDE.md.
+  Don't declare a CLI option / env var whose handler doesn't exist yet.
+- **Decorator registration for dynamic tools** — `@mcp.tool` derives
+  the schema from Python type hints + docstring. For Lua-side tools
+  whose schema lives on the Lua side, that's the wrong direction:
+  use `FunctionTool(parameters=schema)` so the Lua schema is verbatim.
 
 ## Tools & MCP Usage
 
@@ -143,11 +194,17 @@ no one repeats them.)
   fails fast with a typed error if the socket is missing.
 - **Logging to stdout corrupts the MCP wire** — see Conventions above.
   All logs go to stderr; the `log` module's helpers enforce this.
-- **`exec_lua` is RCE** — gated behind `HYPRPILOT_NVIM_MCP_ENABLE_EXEC_LUA=1`.
-  Off by default. Document the risk loudly when enabling.
 - **`pynvim` is thread-unsafe** — the bridge wraps every `nvim.*` access
   in a lock; FastMCP's tool dispatch can run on multiple threads under
   load.
+- **`pynvim` lacks `py.typed`** — mypy can't see its types. We carry
+  one targeted `[[tool.mypy.overrides]]` block in `pyproject.toml` to
+  silence missing-imports for `pynvim`. Don't widen this to other deps
+  without a stated reason.
+- **`FunctionTool` parameters take JSON Schema verbatim** — pass the
+  Lua-side `schema` table straight through; do not Pythonize it. FastMCP
+  forwards the JSON Schema to the agent. Rebuilding it from Python
+  type hints would defeat the purpose of dynamic discovery.
 - **`uv.lock` lives at the repo root**, not in `pkg/`. The workspace
   shares one lockfile and one `.venv/`. Update via `uv sync` or
   `uv lock` from any directory; never edit by hand.
