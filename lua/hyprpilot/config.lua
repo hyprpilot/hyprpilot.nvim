@@ -8,7 +8,6 @@ local M = {}
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
 ---@field width? number | (fun(columns: number): number?)
----@field autoclose? boolean
 
 ---@type hyprpilot.Config
 local defaults = {
@@ -23,7 +22,6 @@ local defaults = {
 
       return 80
     end,
-    autoclose = false,
   },
 }
 
@@ -41,7 +39,6 @@ M.options = {
 
       return 80
     end,
-    autoclose = false,
   },
 }
 
