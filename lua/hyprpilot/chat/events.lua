@@ -28,6 +28,10 @@ local function dispatch(event)
     render.handle_turn_started(event)
   elseif event.event == "turn_ended" then
     render.handle_turn_ended(event)
+  elseif event.event == "permission_request" then
+    render.handle_permission_request(event)
+  elseif event.event == "permission_resolved" then
+    render.handle_permission_resolved(event)
   else
     log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
   end

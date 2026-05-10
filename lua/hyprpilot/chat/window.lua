@@ -126,6 +126,14 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].signcolumn = "no"
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
+  -- Manual folds: render.lua programmatically calls `:N,Mfold` when
+  -- a turn ends or a block reaches a terminal state. Foldexpr would
+  -- recompute on every motion and clobber fold open/closed state we
+  -- care about (a closed t1 fold should stay closed when t3 ends).
+  vim.wo[M._winid].foldmethod = "manual"
+  vim.wo[M._winid].foldenable = true
+  vim.wo[M._winid].foldlevel = 99
+  vim.wo[M._winid].foldcolumn = "1"
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).
@@ -154,6 +162,8 @@ function M.show(instance_id)
   if resolved_id ~= nil then
     require("hyprpilot.chat.events").hydrate(resolved_id, bufnr)
   end
+
+  require("hyprpilot.chat.render").apply_pending_folds(bufnr)
 
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
 end
