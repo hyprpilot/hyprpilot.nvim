@@ -6,6 +6,7 @@ local M = {}
 ---@field ui? hyprpilot.ConfigUi
 ---@field mcp? hyprpilot.ConfigMcp
 ---@field client? hyprpilot.ConfigClient
+---@field composer? hyprpilot.ConfigComposer
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -18,6 +19,9 @@ local M = {}
 ---@field timeout_ms? integer        -- per-request timeout
 ---@field connect_attempts? integer  -- connect tries before giving up
 ---@field retry_delay_ms? integer    -- delay between connect attempts
+
+---@class hyprpilot.ConfigComposer
+---@field height? integer | (fun(lines: number): number?)
 
 ---@type hyprpilot.Config
 local defaults = {
@@ -40,6 +44,9 @@ local defaults = {
     timeout_ms = 5000,
     connect_attempts = 3,
     retry_delay_ms = 1000,
+  },
+  composer = {
+    height = 5,
   },
 }
 
@@ -65,6 +72,9 @@ M.options = {
     timeout_ms = 5000,
     connect_attempts = 3,
     retry_delay_ms = 1000,
+  },
+  composer = {
+    height = 5,
   },
 }
 
