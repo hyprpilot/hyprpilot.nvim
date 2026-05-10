@@ -1,30 +1,29 @@
--- Headless test bootstrap. Clones `mini.nvim` into a repo-local
--- `.testdeps/` cache (committed-out via .gitignore) on first run, then
--- adds the cache + the plugin under test to the runtimepath. Used by
--- `task test-lua` and CI; not loaded during normal editor sessions.
+-- Headless test bootstrap. Each `task test-lua` invocation gets a
+-- fresh ephemeral `mini.nvim` clone in a Neovim-managed temp dir;
+-- nvim wipes it on exit, leaving the repo (and the user's cache /
+-- data dirs) untouched. Adds the clone + the plugin under test to
+-- the runtimepath, then hands off to `mini.test`.
 
 local repo_root = vim.fn.getcwd()
-local deps_dir = repo_root .. "/.testdeps"
-local mini_path = deps_dir .. "/mini.nvim"
+local tmp_dir = vim.fn.tempname()
+local mini_path = tmp_dir .. "/mini.nvim"
 
-if vim.fn.isdirectory(mini_path) == 0 then
-  vim.fn.mkdir(deps_dir, "p")
+vim.fn.mkdir(tmp_dir, "p")
 
-  vim.notify("bootstrapping mini.nvim into " .. mini_path, vim.log.levels.INFO)
+vim.notify("cloning mini.nvim into " .. mini_path, vim.log.levels.INFO)
 
-  local result = vim.fn.system({
-    "git",
-    "clone",
-    "--depth=1",
-    "--filter=blob:none",
-    "https://github.com/echasnovski/mini.nvim",
-    mini_path,
-  })
+local result = vim.fn.system({
+  "git",
+  "clone",
+  "--depth=1",
+  "--filter=blob:none",
+  "https://github.com/echasnovski/mini.nvim",
+  mini_path,
+})
 
-  if vim.v.shell_error ~= 0 then
-    vim.notify("mini.nvim clone failed:\n" .. result, vim.log.levels.ERROR)
-    vim.cmd("cquit 1")
-  end
+if vim.v.shell_error ~= 0 then
+  vim.notify("mini.nvim clone failed:\n" .. result, vim.log.levels.ERROR)
+  vim.cmd("cquit 1")
 end
 
 vim.opt.rtp:prepend(mini_path)

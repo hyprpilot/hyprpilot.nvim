@@ -58,9 +58,6 @@ env/
 .coverage
 htmlcov/
 
-# Test harness deps (mini.nvim auto-cloned by scripts/minimal_init.lua)
-.testdeps/
-
 # Editors
 .idea/
 .vscode/

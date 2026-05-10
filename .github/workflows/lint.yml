@@ -81,11 +81,5 @@ jobs:
           install: true
           cache: true
 
-      - name: Cache mini.nvim test harness
-        uses: actions/cache@v4
-        with:
-          path: .testdeps
-          key: testdeps-mini-nvim-${{ runner.os }}
-
       - name: Test
         run: task test-lua

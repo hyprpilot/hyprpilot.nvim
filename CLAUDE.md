@@ -257,14 +257,22 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   - Why: captain's explicit instruction at bootstrap.
 
 - **Lua test framework: `mini.test`**
-  - Chose: `mini.test` (from `echasnovski/mini.nvim`), auto-cloned
-    into `.testdeps/mini.nvim` by `scripts/minimal_init.lua` on first
-    `task test-lua` run.
+  - Chose: `mini.test` (from `echasnovski/mini.nvim`), shallow-cloned
+    into `vim.fn.tempname()` by `scripts/minimal_init.lua` on every
+    `task test-lua` invocation. Neovim wipes the temp dir on exit;
+    nothing persists in the repo or the user's cache.
   - Why: `plenary.nvim`'s `busted` is the de facto standard but
     plenary is on the explicit-no list (see Conventions). `mini.test`
     has zero hard deps, ships full test isolation via child-nvim
     factories when we want it (`MiniTest.new_child_neovim()`), and is
     a single repo we can pin without pulling its sibling modules.
+  - Rejected: a repo-local `.testdeps/` cache — leaks state into the
+    project tree and needs `.gitignore` / `.styluaignore` /
+    `selene.toml` exclusions. Captain pushed back: just use a Neovim-
+    managed temp dir.
+  - Rejected: `stdpath('cache')` for persistence — also leaks state,
+    just into `~/.cache/nvim` instead of the repo. Per-run clones
+    are fast enough with `--depth=1 --filter=blob:none`.
   - Rejected: `nvim-test` (lower adoption, wraps busted directly);
     rolling our own (`/tmp/smoke_*.lua`-style headless scripts) — no
     diffs, no per-case isolation, no shared collector. We did this in
@@ -313,29 +321,29 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   `collapse_simple_statement = "Never"`. `task format` runs it; `task
   lint` runs `stylua --check`.
 - **`selene`** — linter. `selene.toml` uses `std = "vim"` with
-  `mixed_table = "allow"` and excludes `.testdeps/**`. `vim.toml`
-  declares the vim/jit/test globals (`describe`, `it`, `assert`,
-  `MiniTest`).
+  `mixed_table = "allow"`. `vim.toml` declares the vim/jit/test
+  globals (`describe`, `it`, `assert`, `MiniTest`).
 - **`Taskfile.yml`** — `task format` and `task lint` are the canonical
   entry points. `task test-lua` runs the Lua suite via `mini.test`;
   `task test` chains `test-lua` + `pkg:test`. CI calls `task lint`
   per language and `task test-lua` / `task pkg:test` separately.
 - **`mini.test`** — Lua test runner. `scripts/minimal_init.lua`
-  bootstraps `mini.nvim` into `.testdeps/mini.nvim` (gitignored) on
-  first run, then `nvim --headless -u scripts/minimal_init.lua -c
-  "lua MiniTest.run()" -c "qa!"` collects every `tests/test_*.lua`.
+  clones `mini.nvim` into `vim.fn.tempname()` on every invocation;
+  Neovim wipes the temp dir on exit, so the repo (and the user's
+  cache / data dirs) stay untouched. Then `nvim --headless -u
+  scripts/minimal_init.lua -c "lua MiniTest.run()" -c "qa!"` collects
+  every `tests/test_*.lua`. The clone is `--depth=1
+  --filter=blob:none` so it stays fast even without caching.
 - **`mise.toml`** — pins `aqua:Kampfkarren/selene` and `stylua` to
   `latest`, plus `neovim = "latest"` so CI has `nvim` for `task
   test-lua`. CI installs via mise.
 - **`.luarc.json`** — declares `vim` as a global for
   `lua-language-server` so editor diagnostics align with `selene`.
-- **`.styluaignore`** — excludes `.testdeps/` so the cloned mini.nvim
-  source doesn't get formatted/checked on every run.
 - **GitHub Actions** — `.github/workflows/lint.yml` runs four jobs on
   every PR and push to `main`: `lint-lua` (stylua + selene),
   `lint-python` (`task pkg:lint` — ruff + mypy), `test-python`
   (`task pkg:test` — pytest), and `test-lua` (`task test-lua` —
-  mini.test, with `.testdeps/` cached across runs).
+  mini.test, fresh clone per run via `tempname()`).
   `release-please.yml` opens release PRs per package on push to `main`.
 
 ## Gotchas
