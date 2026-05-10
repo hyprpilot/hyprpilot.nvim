@@ -42,35 +42,4 @@ function M.active_instance()
   return require("hyprpilot.chat.window").active_instance()
 end
 
--- ── Composer ───────────────────────────────────────────────────────
-
---- Open the composer split below the chat window.
-function M.composer_open()
-  require("hyprpilot.ui.composer").open()
-end
-
---- Close the composer split. Buffer persists for next open.
-function M.composer_close()
-  require("hyprpilot.ui.composer").close()
-end
-
---- Toggle the composer split.
-function M.composer_toggle()
-  require("hyprpilot.ui.composer").toggle()
-end
-
---- Submit the composer's contents (or `text` when provided) to the
---- active instance.
----@param text string?
----@param opts { instance_id?: string }?
-function M.submit(text, opts)
-  require("hyprpilot.ui.composer").submit(text, opts)
-end
-
---- Cancel the in-flight turn on the active instance.
----@param instance_id string?
-function M.cancel(instance_id)
-  require("hyprpilot.ui.composer").cancel(instance_id)
-end
-
 return M
