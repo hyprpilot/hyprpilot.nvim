@@ -3,11 +3,26 @@ local M = {}
 ---@class hyprpilot.Config
 ---@field log_level? number
 ---@field socket? string
+---@field ui? hyprpilot.ConfigUi
+
+---@class hyprpilot.ConfigUi
+---@field position? "left" | "right"
+---@field width? number | (fun(columns: number): number?)
 
 ---@type hyprpilot.Config
 local defaults = {
   log_level = vim.log.levels.INFO,
   socket = nil,
+  ui = {
+    position = "right",
+    width = function(columns)
+      if columns < 200 then
+        return math.floor(columns * 0.35)
+      end
+
+      return 80
+    end,
+  },
 }
 
 ---@type hyprpilot.Config
@@ -15,6 +30,16 @@ local defaults = {
 M.options = {
   log_level = vim.log.levels.INFO,
   socket = nil,
+  ui = {
+    position = "right",
+    width = function(columns)
+      if columns < 200 then
+        return math.floor(columns * 0.35)
+      end
+
+      return 80
+    end,
+  },
 }
 
 ---@param config hyprpilot.Config
