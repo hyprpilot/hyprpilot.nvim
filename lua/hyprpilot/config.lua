@@ -4,10 +4,14 @@ local M = {}
 ---@field log_level? number
 ---@field socket? string
 ---@field ui? hyprpilot.ConfigUi
+---@field mcp? hyprpilot.ConfigMcp
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
 ---@field width? number | (fun(columns: number): number?)
+
+---@class hyprpilot.ConfigMcp
+---@field enabled? boolean
 
 ---@type hyprpilot.Config
 local defaults = {
@@ -22,6 +26,9 @@ local defaults = {
 
       return 80
     end,
+  },
+  mcp = {
+    enabled = true,
   },
 }
 
@@ -39,6 +46,9 @@ M.options = {
 
       return 80
     end,
+  },
+  mcp = {
+    enabled = true,
   },
 }
 
