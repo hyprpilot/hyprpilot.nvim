@@ -80,6 +80,8 @@ function M.close(instance_id)
   buffer.wipe(state.bufnr)
   M._instances[id] = nil
 
+  require("hyprpilot.chat.render").forget(id)
+
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)
   end
@@ -127,6 +129,8 @@ local function open_split(ui, bufnr)
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).
+---Hydrates the buffer from the daemon's snapshot + ensures the live
+---event stream is wired.
 ---@param instance_id string?
 function M.show(instance_id)
   local bufnr = resolve_target_buffer(instance_id)
@@ -138,11 +142,20 @@ function M.show(instance_id)
     open_split(config.options.ui or {}, bufnr)
   end
 
+  local resolved_id = nil
+
   if instance_id ~= nil and M._instances[instance_id] ~= nil then
     M._last_active_id = instance_id
+    resolved_id = instance_id
+  elseif M._last_active_id ~= nil and M._instances[M._last_active_id] ~= nil then
+    resolved_id = M._last_active_id
   end
 
-  log.debug("window.show: instance=%s bufnr=%s", instance_id or "<placeholder>", bufnr)
+  if resolved_id ~= nil then
+    require("hyprpilot.chat.events").hydrate(resolved_id, bufnr)
+  end
+
+  log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
 end
 
 ---Hide the chat window. Buffers persist for resume.
