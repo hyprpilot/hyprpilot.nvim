@@ -52,11 +52,24 @@ local M = {}
 ---@field blocks table<string, hyprpilot.render.Block>
 ---@field tool_calls table<string, string>      -- daemon tool-call id → block id
 ---@field permissions table<string, string>     -- request id → block id
+---@field turn_anchors table<string, integer>   -- turn id → extmark id of the turn header row
+---@field turn_separators integer[]             -- extmark ids on blank rows that mark turn boundaries (foldexpr returns "<1")
+---@field pending_fold_rows integer[]           -- 0-indexed rows whose fold should close on next window-show
 
 ---@type table<string, hyprpilot.render.State>
 M._states = {}
 
 local NS = vim.api.nvim_create_namespace("hyprpilot.render")
+
+-- Forward-declared helpers (definitions live further down so the
+-- handler block above can stay close to the high-level logic).
+-- Without these declarations Lua resolves the names as nil-valued
+-- locals at parse time, since each `local` only enters scope after
+-- the line it's declared on.
+local close_fold_at
+local collapse_old_turns
+local fold_turn
+local fold_block
 
 ---Get-or-create the per-instance render state.
 ---@param instance_id string
@@ -81,6 +94,9 @@ function M.state(instance_id, bufnr)
     blocks = {},
     tool_calls = {},
     permissions = {},
+    turn_anchors = {},
+    turn_separators = {},
+    pending_fold_rows = {},
   }
 
   M._states[instance_id] = state
@@ -178,23 +194,45 @@ local function replace_block_body(state, block, body_lines)
 end
 
 ---Append a turn header (`## agent`, `## user`) and reset the active
----text block tracker.
+---text block tracker. When `turn_id` is non-nil, anchor an extmark on
+---the header row so foldexpr can express the per-turn fold and
+---`turn_ended` can collapse the right one.
 ---@param state hyprpilot.render.State
 ---@param role "agent" | "user"
 ---@param turn_id? string
 local function append_turn_header(state, role, turn_id)
+  local header_row
+
   chat_buffer.with_buffer(state.bufnr, function()
     local total = vim.api.nvim_buf_line_count(state.bufnr)
     local prepend_blank = not (total == 1 and vim.api.nvim_buf_get_lines(state.bufnr, 0, 1, false)[1] == "")
 
     local lines = prepend_blank and { "", "## " .. role, "" } or { "## " .. role, "" }
-    append_lines(state, lines)
+    local first = append_lines(state, lines)
+    header_row = prepend_blank and (first + 1) or first
   end)
 
   state.active_text_block = nil
 
   if role == "agent" then
     state.current_turn = turn_id
+  end
+
+  if turn_id ~= nil and state.turn_anchors[turn_id] == nil then
+    state.turn_anchors[turn_id] = vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row, 0, { right_gravity = true })
+
+    -- The blank line we prepended (when there was prior content) is
+    -- the turn boundary that foldexpr uses to terminate the previous
+    -- turn fold. Without this Vim treats consecutive `>1` lines as
+    -- one continuous fold instead of two adjacent ones.
+    --
+    -- Right-gravity matches the pattern used for block head/tail
+    -- marks: when an earlier block grows by replacing its body, the
+    -- delete+insert pair would otherwise strand left-gravity marks
+    -- inside the inserted range.
+    if header_row > 0 then
+      table.insert(state.turn_separators, vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row - 1, 0, { right_gravity = true }))
+    end
   end
 end
 
@@ -404,6 +442,10 @@ local function render_tool_call(state, record)
   local block = track_block(state, record.id, "tool_call", first_row, first_row + #body)
   block.tool_call_id = record.id
   state.tool_calls[record.id] = block.id
+
+  if record.state == "completed" or record.state == "failed" then
+    fold_block(state, block)
+  end
 end
 
 ---Apply a tool_call_update: re-render the header line and replace the
@@ -438,6 +480,10 @@ function M.handle_tool_call_update(instance_id, update)
   end)
 
   replace_block_body(state, block, tool_body_lines(update.formatted))
+
+  if update.state == "completed" or update.state == "failed" then
+    fold_block(state, block)
+  end
 end
 
 ---Render an agent thought block — header + folded body so the chat
@@ -619,6 +665,8 @@ function M.mark_permission_resolved(state, request_id, resolved_label)
   state.permissions[request_id] = nil
 
   require("hyprpilot.ui.permissions").unregister(state.bufnr, request_id)
+
+  fold_block(state, block)
 end
 
 ---Render one transcript item (from snapshot or live transcript event).
@@ -638,7 +686,7 @@ function M.render_item(state, turn_id, item)
   local kind = item.kind
 
   if kind == "user_prompt" or kind == "user_text" then
-    append_turn_header(state, "user")
+    append_turn_header(state, "user", turn_id)
 
     chat_buffer.with_buffer(state.bufnr, function()
       append_lines(state, vim.split(item.text or "", "\n", { plain = true }))
@@ -686,12 +734,17 @@ function M.hydrate(state, snapshot)
   state.blocks = {}
   state.tool_calls = {}
   state.permissions = {}
+  state.turn_anchors = {}
+  state.turn_separators = {}
+  state.pending_fold_rows = {}
 
   require("hyprpilot.ui.permissions").reset(state.bufnr)
 
   for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)
   end
+
+  collapse_old_turns(state)
 end
 
 ---Live `transcript` event handler.
@@ -763,7 +816,8 @@ function M.handle_turn_started(event)
   append_turn_header(state, "agent", event.turnId)
 end
 
----Live `turn_ended` event handler.
+---Live `turn_ended` event handler. Closes the matching turn fold so
+---the chat collapses the moment the agent finishes streaming.
 ---@param event table
 function M.handle_turn_ended(event)
   local state = M._states[event.instanceId]
@@ -800,43 +854,147 @@ function M.handle_turn_ended(event)
     virt_text = { { " " .. chip, "Comment" } },
     virt_text_pos = "eol",
   })
+
+  if state.turn_anchors[event.turnId] ~= nil then
+    fold_turn(state, event.turnId)
+  end
 end
 
----Compute fold level for `lnum` in the chat buffer the function is
----called from. Used as `foldexpr` on chat windows so block bodies
----collapse under their headers automatically.
----@param lnum integer
----@return string
-function M.foldexpr(lnum)
-  local bufnr = vim.api.nvim_get_current_buf()
-  local state
-
-  for _, candidate in pairs(M._states) do
-    if candidate.bufnr == bufnr then
-      state = candidate
-      break
-    end
+---Resolve the row range a turn covers — from its anchor row down to
+---one row before the next turn anchor, or to the end of the buffer
+---when this is the latest turn. Both rows 0-indexed, inclusive.
+---@param state hyprpilot.render.State
+---@param turn_id string
+---@return integer? start_row
+---@return integer? end_row
+local function turn_range(state, turn_id)
+  local mark = state.turn_anchors[turn_id]
+  if mark == nil then
+    return nil, nil
   end
 
-  if state == nil then
-    return "0"
-  end
+  local start_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, mark, {})[1]
+  local next_row = nil
 
-  local row = lnum - 1
-
-  for _, block in pairs(state.blocks) do
-    if block.kind == "tool_call" or block.kind == "plan" or block.kind == "agent_thought" or block.kind == "permission_request" then
-      local head_row, tail_row = block_range(state, block)
-
-      if row == head_row then
-        return ">1"
-      elseif row > head_row and row <= tail_row then
-        return "1"
+  for other_id, other_mark in pairs(state.turn_anchors) do
+    if other_id ~= turn_id then
+      local other_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, other_mark, {})[1]
+      if other_row > start_row and (next_row == nil or other_row < next_row) then
+        next_row = other_row
       end
     end
   end
 
-  return "0"
+  local end_row = next_row ~= nil and (next_row - 1) or (vim.api.nvim_buf_line_count(state.bufnr) - 1)
+
+  return start_row, end_row
+end
+
+---Run `:N,Mfold` in every window currently showing `bufnr`. Manual
+---folds are created closed by default — exactly what we want for the
+---auto-collapse-on-finalize behaviour. Queues the operation when no
+---window is showing the buffer; `apply_pending_folds` replays it on
+---the next show.
+---@param state hyprpilot.render.State
+---@param start_row integer
+---@param end_row integer
+local function fold_range(state, start_row, end_row)
+  if end_row < start_row then
+    return
+  end
+
+  local cmd = string.format("silent! %d,%dfold", start_row + 1, end_row + 1)
+  local applied = false
+
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == state.bufnr then
+      vim.api.nvim_win_call(winid, function()
+        pcall(vim.cmd, cmd)
+      end)
+      applied = true
+    end
+  end
+
+  if not applied then
+    table.insert(state.pending_fold_rows, start_row)
+    table.insert(state.pending_fold_rows, end_row)
+  end
+end
+
+function close_fold_at(state, target_row)
+  fold_range(state, target_row, target_row)
+end
+
+---Fold a tool / plan / thought / permission block by its registered
+---head + tail extmarks (block-level inner fold).
+---@param state hyprpilot.render.State
+---@param block hyprpilot.render.Block
+function fold_block(state, block)
+  local head_row, tail_row = block_range(state, block)
+  fold_range(state, head_row, tail_row)
+end
+
+---Fold an entire turn by id (covers the header line through the row
+---before the next turn).
+---@param state hyprpilot.render.State
+---@param turn_id string
+function fold_turn(state, turn_id)
+  local start_row, end_row = turn_range(state, turn_id)
+  if start_row == nil then
+    return
+  end
+  fold_range(state, start_row, end_row)
+end
+
+---Apply queued fold-close requests to the window that just opened
+---`bufnr` (called from `chat.window` on show / switch).
+---@param bufnr integer
+function M.apply_pending_folds(bufnr)
+  local state = M.state_for_bufnr(bufnr)
+  if state == nil or #state.pending_fold_rows == 0 then
+    return
+  end
+
+  local rows = state.pending_fold_rows
+  state.pending_fold_rows = {}
+
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
+      vim.api.nvim_win_call(winid, function()
+        for i = 1, #rows, 2 do
+          local start_row = rows[i]
+          local end_row = rows[i + 1] or start_row
+          pcall(vim.cmd, string.format("silent! %d,%dfold", start_row + 1, end_row + 1))
+        end
+      end)
+      return
+    end
+  end
+end
+
+---Close every turn the state knows about except the one with the
+---greatest header row (the most recent — kept open so a freshly-shown
+---chat lands focused on the latest exchange).
+---@param state hyprpilot.render.State
+function collapse_old_turns(state)
+  local rows = {}
+
+  for turn_id, mark in pairs(state.turn_anchors) do
+    local row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, mark, {})[1]
+    table.insert(rows, { id = turn_id, row = row })
+  end
+
+  if #rows < 2 then
+    return
+  end
+
+  table.sort(rows, function(a, b)
+    return a.row < b.row
+  end)
+
+  for i = 1, #rows - 1 do
+    fold_turn(state, rows[i].id)
+  end
 end
 
 ---Lookup the block registered for `bufnr` whose head row matches the
