@@ -8,6 +8,8 @@ function M.setup(config)
   require("hyprpilot.log").setup({ level = c.log_level })
 end
 
+-- ── Window ─────────────────────────────────────────────────────────
+
 --- Toggle the chat side split: hide if visible, show otherwise.
 function M.toggle()
   require("hyprpilot.chat.window").toggle()
