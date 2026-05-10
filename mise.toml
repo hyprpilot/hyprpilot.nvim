@@ -2,5 +2,5 @@
 "aqua:Kampfkarren/selene" = "latest"
 stylua = "latest"
 task = "3"
-python = "3.13"
+python = "3.14"
 uv = "latest"
