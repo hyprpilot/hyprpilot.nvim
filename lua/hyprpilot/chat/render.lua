@@ -230,13 +230,7 @@ end
 function M.hydrate(state, snapshot)
   local items = snapshot.items or {}
 
-  log.debug(
-    "render.hydrate: instance=%s items=%d latestSeq=%s hasMore=%s",
-    state.instance_id,
-    #items,
-    tostring(snapshot.latestSeq),
-    tostring(snapshot.hasMore)
-  )
+  log.debug("render.hydrate: instance=%s items=%d latestSeq=%s hasMore=%s", state.instance_id, #items, tostring(snapshot.latestSeq), tostring(snapshot.hasMore))
 
   chat_buffer.with_buffer(state.bufnr, function()
     vim.api.nvim_buf_set_lines(state.bufnr, 0, -1, false, {})
@@ -295,13 +289,7 @@ function M.handle_turn_ended(event)
     return
   end
 
-  log.debug(
-    "render.handle_turn_ended: instance=%s turnId=%s stopReason=%s error=%s",
-    event.instanceId,
-    event.turnId,
-    tostring(event.stopReason),
-    tostring(event.error)
-  )
+  log.debug("render.handle_turn_ended: instance=%s turnId=%s stopReason=%s error=%s", event.instanceId, event.turnId, tostring(event.stopReason), tostring(event.error))
 
   state.active_text_block = nil
 
