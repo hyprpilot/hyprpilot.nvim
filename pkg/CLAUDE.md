@@ -19,8 +19,10 @@ any user-defined Lua tools registered via the `hyprpilot.nvim` plugin's
 ## Stack & Structure
 
 - **Language:** Python 3.10+ (CI on 3.13).
-- **Package manager:** [`uv`](https://docs.astral.sh/uv/) (Astral). `uv.lock`
-  is committed for reproducible installs.
+- **Package manager:** [`uv`](https://docs.astral.sh/uv/) (Astral). This
+  package is a member of the repo-root **uv workspace**; `uv.lock` and
+  `.venv/` live at the repo root, not in `pkg/`. Run `uv sync` from the
+  root (or anywhere — uv finds the workspace).
 - **MCP framework:** [`fastmcp`](https://gofastmcp.com/) — decorator-based
   tool registration, JSON Schema auto-derived from type hints + docstrings.
 - **Neovim client:** [`pynvim`](https://github.com/neovim/pynvim) — msgpack-RPC
@@ -125,9 +127,9 @@ no one repeats them.)
 - **`pynvim` is thread-unsafe** — the bridge wraps every `nvim.*` access
   in a lock; FastMCP's tool dispatch can run on multiple threads under
   load.
-- **`uv.lock` is committed** — reproducible installs across the captain's
-  machines and CI. Update it via `uv sync` or `uv lock`, never edit by
-  hand.
+- **`uv.lock` lives at the repo root**, not in `pkg/`. The workspace
+  shares one lockfile and one `.venv/`. Update via `uv sync` or
+  `uv lock` from any directory; never edit by hand.
 - **One bridge per nvim** — N Neovim instances mean N entries in
   `mcps.json`, each with its own `NVIM_LISTEN_ADDRESS`. No multi-attach
   in v0.

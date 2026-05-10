@@ -24,9 +24,12 @@ This repository ships **two packages** managed together:
   for the implementation roadmap.
 
 `task lint` and `task test` at the root run both subprojects via
-`Taskfile.yml`'s `includes:` block (`pkg:` namespace). `release-please`
-is configured for both packages independently — tags are
-`hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
+`Taskfile.yml`'s `includes:` block (`pkg:` namespace). The Python side
+is a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/):
+the root `pyproject.toml` declares `pkg/` as a member, so `uv.lock` and
+`.venv/` live at the repo root and are shared across the workspace.
+`release-please` is configured for both packages independently — tags
+are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 
 ## Stack & Structure (Lua plugin)
 
