@@ -9,16 +9,6 @@
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 
----Log a debug line only when the logger has been set up. The MCP API is
----reachable before `hyprpilot.setup()` runs (the module is independent),
----so log calls must tolerate the un-initialized state.
----@param fmt string
-local function trace(fmt, ...)
-  if log.debug ~= nil then
-    log.debug(fmt, ...)
-  end
-end
-
 local M = {}
 
 ---@class hyprpilot.mcp.Tool
@@ -59,94 +49,109 @@ local NAME_MAX_LENGTH = 64
 ---@type table<string, hyprpilot.mcp.Tool>
 local registry = {}
 
----Validate a tool spec. Throws on invalid input via `error()`.
+---Validate a tool spec. Returns true when the spec is well-formed; logs an
+---error line and returns false otherwise. Captains see the warning in their
+---notify backend and the registration is silently skipped — bad configs
+---don't crash nvim startup.
 ---@param tool any
+---@return boolean
 local function validate(tool)
   if type(tool) ~= "table" then
-    error("mcp.register: tool must be a table, got " .. type(tool))
+    log.error("mcp.register: tool must be a table, got %s", type(tool))
+
+    return false
   end
 
   if type(tool.name) ~= "string" or tool.name == "" then
-    error("mcp.register: tool.name must be a non-empty string")
+    log.error("mcp.register: tool.name must be a non-empty string")
+
+    return false
   end
 
   if not tool.name:match(NAME_PATTERN) then
-    error(string.format("mcp.register: tool.name %q must match %s", tool.name, NAME_PATTERN))
+    log.error("mcp.register: tool.name %q must match %s", tool.name, NAME_PATTERN)
+
+    return false
   end
 
   if #tool.name > NAME_MAX_LENGTH then
-    error(string.format("mcp.register: tool.name %q exceeds %d chars", tool.name, NAME_MAX_LENGTH))
+    log.error("mcp.register: tool.name %q exceeds %d chars", tool.name, NAME_MAX_LENGTH)
+
+    return false
   end
 
   if type(tool.description) ~= "string" or tool.description == "" then
-    error("mcp.register: tool.description must be a non-empty string")
+    log.error("mcp.register: tool.description must be a non-empty string for %q", tostring(tool.name))
+
+    return false
   end
 
   if type(tool.schema) ~= "table" then
-    error("mcp.register: tool.schema must be a table")
+    log.error("mcp.register: tool.schema must be a table for %q", tostring(tool.name))
+
+    return false
   end
 
   if tool.schema.type ~= "object" then
-    error('mcp.register: tool.schema.type must be "object" (v1 restriction)')
+    log.error('mcp.register: tool.schema.type must be "object" for %q (v1 restriction)', tostring(tool.name))
+
+    return false
   end
 
   if type(tool.handler) ~= "function" then
-    error("mcp.register: tool.handler must be a function")
+    log.error("mcp.register: tool.handler must be a function for %q", tostring(tool.name))
+
+    return false
   end
+
+  return true
 end
 
----Fire the tool-list-changed autocmd, defensively.
-local function emit_changed()
+---Register or overwrite a tool. Logs an error and skips when validation
+---fails — never throws.
+---@param tool hyprpilot.mcp.Tool
+function M.register(tool)
+  if not validate(tool) then
+    return
+  end
+
+  log.debug("mcp.register: %s (overwrite=%s)", tool.name, tostring(registry[tool.name] ~= nil))
+
+  registry[tool.name] = tool
+
   pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "HyprpilotMcpToolsChanged" })
 end
 
----True when MCP discovery is enabled. Captains can flip this via
----`setup({ mcp = { enabled = false } })`.
----@return boolean
-local function is_enabled()
-  local cfg = config.options.mcp
+---Remove one or more tools by name. Missing entries are logged and skipped;
+---never throws. Fires the change autocmd once when at least one tool was
+---actually removed.
+---@param ... string
+function M.unregister(...)
+  local removed = 0
 
-  if cfg == nil then
-    return true
+  for _, name in ipairs({ ... }) do
+    if type(name) ~= "string" or name == "" then
+      log.error("mcp.unregister: name must be a non-empty string, got %s", vim.inspect(name))
+    elseif registry[name] == nil then
+      log.warn("mcp.unregister: no tool registered as %s", name)
+    else
+      log.debug("mcp.unregister: %s", name)
+
+      registry[name] = nil
+      removed = removed + 1
+    end
   end
 
-  return cfg.enabled ~= false
-end
-
----Register or overwrite a tool. Validation throws on malformed input.
----@param tool hyprpilot.mcp.Tool
-function M.register(tool)
-  validate(tool)
-
-  local existed = registry[tool.name] ~= nil
-  registry[tool.name] = tool
-
-  trace("mcp.register: %s (overwrite=%s)", tool.name, tostring(existed))
-  emit_changed()
-end
-
----Remove a tool by name. Throws when no entry exists.
----@param name string
-function M.unregister(name)
-  if type(name) ~= "string" or name == "" then
-    error("mcp.unregister: name must be a non-empty string")
+  if removed > 0 then
+    pcall(vim.api.nvim_exec_autocmds, "User", { pattern = "HyprpilotMcpToolsChanged" })
   end
-
-  if registry[name] == nil then
-    error("mcp.unregister: no tool registered as " .. name)
-  end
-
-  registry[name] = nil
-
-  trace("mcp.unregister: %s", name)
-  emit_changed()
 end
 
 ---Discovery shape — the Python MCP server consumes this verbatim.
 ---Returns an empty table when MCP is disabled via config.
 ---@return hyprpilot.mcp.ToolSummary[]
 function M.list()
-  if not is_enabled() then
+  if config.options.mcp == nil or config.options.mcp.enabled == false then
     return {}
   end
 

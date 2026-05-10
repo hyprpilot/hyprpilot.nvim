@@ -95,6 +95,12 @@ function M.setup(config)
   return M
 end
 
+-- Wire the level functions at module load so `log.debug/info/warn/error`
+-- work for any module that imports the logger before `hyprpilot.setup()`
+-- runs. The captain's setup later calls `M.setup({ level = ... })` again
+-- to apply their configured level — re-wiring is idempotent.
+M.setup()
+
 --- Sets the log level of the logger.
 ---@param level integer
 function M.set_log_level(level)

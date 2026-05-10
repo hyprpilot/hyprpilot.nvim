@@ -8,16 +8,13 @@ local M = {}
 ---@class hyprpilot.ConfigMcp
 ---@field enabled? boolean
 
----@type hyprpilot.ConfigMcp
-local mcp_defaults = {
-  enabled = true,
-}
-
 ---@type hyprpilot.Config
 local defaults = {
   log_level = vim.log.levels.INFO,
   socket = nil,
-  mcp = mcp_defaults,
+  mcp = {
+    enabled = true,
+  },
 }
 
 ---@type hyprpilot.Config
@@ -25,7 +22,9 @@ local defaults = {
 M.options = {
   log_level = vim.log.levels.INFO,
   socket = nil,
-  mcp = vim.deepcopy(mcp_defaults),
+  mcp = {
+    enabled = true,
+  },
 }
 
 ---@param config hyprpilot.Config
