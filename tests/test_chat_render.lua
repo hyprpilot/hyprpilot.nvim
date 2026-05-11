@@ -83,7 +83,7 @@ T["tool_call renders header + body, update patches the same block"] = function()
   MiniTest.expect.equality(helpers.has_line_containing(lines_running, "ls -la"), true)
   -- Single-field, single-line, execute-shaped tool → renders as a
   -- fenced ` ```bash ` block, not a `command: ls -la` line.
-  MiniTest.expect.equality(helpers.has_line(lines_running, "```bash"), true)
+  MiniTest.expect.equality(helpers.has_line(lines_running, "````bash"), true)
   MiniTest.expect.equality(helpers.has_line(lines_running, "ls -la"), true)
 
   render.handle_tool_call_update(id, {
@@ -104,7 +104,7 @@ T["tool_call renders header + body, update patches the same block"] = function()
   MiniTest.expect.equality(helpers.has_line_containing(lines_done, "234ms"), true)
   -- Output landed inside the same block as a ` ```console ` block.
   MiniTest.expect.equality(helpers.has_line(lines_done, "total 8"), true)
-  MiniTest.expect.equality(helpers.has_line(lines_done, "```console"), true)
+  MiniTest.expect.equality(helpers.has_line(lines_done, "````console"), true)
 
   helpers.cleanup_instance(id)
 end

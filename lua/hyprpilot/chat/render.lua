@@ -848,13 +848,20 @@ local function tool_input_lang(tool_kind)
 end
 
 ---Render the body lines for a tool-call block from its `formatted`
----spec. Wraps content in `---` separators + uses fenced code blocks
----so the chat buffer's markdown highlighter (registered for
----`filetype = "hyprpilot"` in `plugin/hyprpilot.lua`) takes over —
----no `line_hl_group` dimming. Fields render as `<label>: <value>`
----lines; description renders plain; output renders as a fenced
----code block (language inferred from `tool_kind`). Always returns
----at least one line so the head/tail extmarks bracket distinct rows.
+---spec. Wraps content in `---` separators + uses 4-backtick fenced
+---code blocks so the chat buffer's markdown highlighter (registered
+---for `filetype = "hyprpilot"` in `plugin/hyprpilot.lua`) takes
+---over — no `line_hl_group` dimming. We use 4 backticks instead of
+---the more common 3 because pilot prose / tool output frequently
+---contains 3-backtick fences of its own; nesting 3-fence content
+---inside a 3-fence wrapper terminates the outer fence prematurely
+---and breaks rendering. 4 backticks bracket cleanly past 3-fence
+---inner content.
+---
+---Fields render as `<label>: <value>` lines; description renders
+---plain; output renders as a fenced code block (language inferred
+---from `tool_kind`). Always returns at least one line so the
+---head/tail extmarks bracket distinct rows.
 ---@param formatted? table
 ---@param tool_kind? string
 ---@return string[]
@@ -880,9 +887,9 @@ local function tool_body_lines(formatted, tool_kind)
     end
 
     if field_count == 1 and input_lang ~= "" and not tostring(single_field.value):find("\n", 1, true) then
-      table.insert(lines, "```" .. input_lang)
+      table.insert(lines, "````" .. input_lang)
       table.insert(lines, tostring(single_field.value))
-      table.insert(lines, "```")
+      table.insert(lines, "````")
     else
       for _, field in ipairs(formatted.fields) do
         if type(field) == "table" and field.label and field.value then
@@ -907,11 +914,11 @@ local function tool_body_lines(formatted, tool_kind)
       table.insert(lines, "")
     end
     local output_lang = tool_output_lang(tool_kind)
-    table.insert(lines, "```" .. output_lang)
+    table.insert(lines, "````" .. output_lang)
     for _, l in ipairs(vim.split(formatted.output, "\n", { plain = true })) do
       table.insert(lines, l)
     end
-    table.insert(lines, "```")
+    table.insert(lines, "````")
   end
 
   if #lines == 1 then
@@ -975,7 +982,7 @@ local function render_tool_call(state, record)
 
   -- Header gets a status colour; body intentionally has no
   -- `line_hl_group` so the chat buffer's markdown highlighter takes
-  -- over (fenced code blocks ` ``` ` get treesitter highlight).
+  -- over (fenced code blocks ` ```` ` get treesitter highlight).
   apply_line_hl(state, first_row, tool_status_hl(record.state))
 
   if record.state == "completed" or record.state == "failed" then
@@ -1553,11 +1560,11 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
   if term.output == "" then
     table.insert(body, "(no output yet)")
   else
-    table.insert(body, "```console")
+    table.insert(body, "````console")
     for _, l in ipairs(vim.split(term.output, "\n", { plain = true })) do
       table.insert(body, l)
     end
-    table.insert(body, "```")
+    table.insert(body, "````")
   end
   table.insert(body, "---")
 
