@@ -41,8 +41,9 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 - **Tooling:** `stylua` (format), `selene` (lint), `Taskfile.yml`
   (`task format` / `task lint`), `mise.toml` pins versions.
 - **Layout:**
-  - **Root modules:** `init`, `config`, `log`, `health`, `utils`,
-    `client`, `status`, `instances`, `mcp` (each one file).
+  - **Root modules:** `init`, `config`, `log`, `health`, `client`,
+    `status`, `instances`, `mcp`, `permissions`, `highlights` (each
+    one file).
   - `chat/` — chat surface: `buffer`, `window`, `render`, `events`.
     Future: `folds`, per-block-kind renderers.
   - `ui/` — interactive widgets: `composer`. Future: `permissions`,
@@ -81,9 +82,9 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   `health.lua`. The captain runs it first when something is off.
 - **No `plenary.nvim`** — deprecated. Use core APIs: `vim.uv` for IO
   and async, `vim.system` for processes, `vim.fs` for paths,
-  `vim.json` for JSON, `vim.ui.*` for prompts. If a helper truly
-  doesn't exist, write the small primitive in `utils.lua` instead of
-  pulling a dependency.
+  `vim.json` for JSON, `vim.ui.*` for prompts. If a small primitive
+  truly doesn't exist, add it to the module that needs it (or a new
+  root module) instead of pulling a dependency.
 - **Inline single-use values** — never name a variable, constant, or
   intermediate table that has only one consumer. Inline directly into
   the call site. The only reason to lift a value into a binding is

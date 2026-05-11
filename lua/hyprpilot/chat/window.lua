@@ -58,8 +58,13 @@ end
 ---Register an instance state entry. Used by future spawn() to declare a buffer.
 ---@param state hyprpilot.InstanceState
 function M.register(state)
+  local previous = M._last_active_id
   M._instances[state.instance_id] = state
   M._last_active_id = state.instance_id
+
+  if previous ~= state.instance_id then
+    require("hyprpilot.status").emit_instance_changed(state.instance_id)
+  end
 end
 
 ---Wipe a per-instance buffer + drop the registry entry.
@@ -148,6 +153,7 @@ end
 ---event stream is wired.
 ---@param instance_id string?
 function M.show(instance_id)
+  local previous = M._last_active_id
   local bufnr = resolve_target_buffer(instance_id)
 
   if M.is_visible() then
@@ -171,6 +177,10 @@ function M.show(instance_id)
   end
 
   require("hyprpilot.chat.render").apply_pending_folds(bufnr)
+
+  if M._last_active_id ~= previous then
+    require("hyprpilot.status").emit_instance_changed(M._last_active_id)
+  end
 
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
 end
@@ -207,10 +217,15 @@ function M.switch(instance_id)
     return
   end
 
+  local previous = M._last_active_id
   M._last_active_id = instance_id
 
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, state.bufnr)
+  end
+
+  if previous ~= instance_id then
+    require("hyprpilot.status").emit_instance_changed(instance_id)
   end
 
   log.debug("window.switch: instance=%s", instance_id)

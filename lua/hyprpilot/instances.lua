@@ -45,10 +45,27 @@ local M = {}
 ---@field restore? boolean
 ---@field show? boolean       -- default true
 
+---@class hyprpilot.InstanceMeta
+---@field profile_id? string
+---@field session_id? string
+---@field cwd? string
+---@field current_mode_id? string
+---@field current_model_id? string
+---@field available_modes? table[]
+---@field available_models? table[]
+---@field config_options? table[]
+---@field mcps_count? integer
+---@field usage? table
+---@field latest_seq? integer
+---@field pending_permissions? table[]
+
 ---@alias hyprpilot.InstanceCallback fun(err: hyprpilot.client.RpcError?, instance: hyprpilot.Instance?): nil
 ---@alias hyprpilot.InstancesCallback fun(err: hyprpilot.client.RpcError?, instances: hyprpilot.Instance[]?): nil
+---@alias hyprpilot.InstanceMetaCallback fun(err: hyprpilot.client.RpcError?, meta: hyprpilot.InstanceMeta?): nil
 
----Translate the daemon's camelCase wire shape into our snake_case Instance.
+---Translate the daemon's camelCase Instance wire shape into our
+---snake_case `hyprpilot.Instance` shape. Used for `instances/list`
+---and `instances/info` replies.
 ---@param wire table
 ---@return hyprpilot.Instance
 local function from_wire(wire)
@@ -60,6 +77,31 @@ local function from_wire(wire)
     session_id = wire.sessionId,
     mode = wire.mode,
     cwd = wire.cwd,
+  }
+end
+
+---Translate the daemon's camelCase MetaSnapshot shape into our
+---snake_case `hyprpilot.InstanceMeta`. Distinct from `from_wire`
+---because MetaSnapshot is a fundamentally different payload —
+---no `instanceId` / `name` / `agentId`, but it carries mode /
+---model / usage / mcps_count / available_* fields the pickers and
+---winbar consume.
+---@param wire table
+---@return hyprpilot.InstanceMeta
+local function from_meta_wire(wire)
+  return {
+    profile_id = wire.profileId,
+    session_id = wire.sessionId,
+    cwd = wire.cwd,
+    current_mode_id = wire.currentModeId,
+    current_model_id = wire.currentModelId,
+    available_modes = wire.availableModes,
+    available_models = wire.availableModels,
+    config_options = wire.configOptions,
+    mcps_count = wire.mcpsCount,
+    usage = wire.usage,
+    latest_seq = wire.latestSeq,
+    pending_permissions = wire.pendingPermissions,
   }
 end
 
@@ -96,8 +138,11 @@ function M.list(callback)
   end)
 end
 
----Fetch one instance's metadata. Defaults to the active instance when
----`instance_id` is nil.
+---Fetch one instance's identity (`Instance` shape — id / name /
+---agent_id / profile_id / session_id / mode / cwd). Defaults to the
+---focused instance when `instance_id` is nil. Calls the daemon's
+---`instances/info` RPC; use `M.meta` when you need mode / model /
+---usage / availability details.
 ---@param instance_id string?
 ---@param callback hyprpilot.InstanceCallback
 function M.info(instance_id, callback)
@@ -107,7 +152,7 @@ function M.info(instance_id, callback)
     params = { instanceId = instance_id }
   end
 
-  client.request("instance/snapshot/meta", params, nil, function(err, result)
+  client.request("instances/info", params, nil, function(err, result)
     if err ~= nil then
       callback(err, nil)
 
@@ -115,6 +160,25 @@ function M.info(instance_id, callback)
     end
 
     callback(nil, from_wire(result))
+  end)
+end
+
+---Fetch the live `MetaSnapshot` (mode / model / usage / mcps_count /
+---availability lists / pending permissions) for an instance. This is
+---the payload the chat winbar hydrates from and what the README's
+---mode / model pickers read off. Defaults to the focused instance
+---when `instance_id` is nil.
+---@param instance_id string?
+---@param callback hyprpilot.InstanceMetaCallback
+function M.meta(instance_id, callback)
+  client.request("instance/snapshot/meta", { instanceId = instance_id }, nil, function(err, result)
+    if err ~= nil then
+      callback(err, nil)
+
+      return
+    end
+
+    callback(nil, from_meta_wire(result))
   end)
 end
 

@@ -124,7 +124,8 @@ require("hyprpilot.chat.window").load_older(instance_id?, opts?, callback?)
 local instances = require("hyprpilot.instances")
 
 instances.list(function(err, list) ... end)
-instances.info(instance_id, function(err, info) ... end)
+instances.info(instance_id, function(err, info) ... end)         -- → { id, name, agent_id, profile_id, session_id, mode, cwd }
+instances.meta(instance_id, function(err, meta) ... end)         -- → { current_mode_id, current_model_id, available_modes, available_models, usage, mcps_count, ... }
 instances.spawn({ name = "main", cwd = vim.fn.getcwd(), restore = false }, callback?)
 instances.focus(instance_id, opts?, callback?)
 instances.restart(instance_id, callback?)
@@ -401,13 +402,13 @@ set("n", "<leader>ap", function() composer.attach_clipboard_image() end,
   { desc = "hyprpilot: attach clipboard image" })
 
 -- Mode picker — drive `instances.set_mode` from the active instance's
--- advertised `available_modes` (read off the meta snapshot).
+-- `available_modes` (read off `instances.meta`, the MetaSnapshot RPC).
 set("n", "<leader>am", function()
   local id = hp.active_instance()
   if id == nil then return end
-  instances.info(id, function(err, info)
-    if err ~= nil or info == nil then return end
-    local modes = info.availableModes or info.available_modes or {}
+  instances.meta(id, function(err, meta)
+    if err ~= nil or meta == nil then return end
+    local modes = meta.available_modes or {}
     if #modes == 0 then return end
     vim.ui.select(modes, {
       prompt = "hyprpilot mode",
@@ -422,9 +423,9 @@ end, { desc = "hyprpilot: pick mode" })
 set("n", "<leader>aM", function()
   local id = hp.active_instance()
   if id == nil then return end
-  instances.info(id, function(err, info)
-    if err ~= nil or info == nil then return end
-    local models = info.availableModels or info.available_models or {}
+  instances.meta(id, function(err, meta)
+    if err ~= nil or meta == nil then return end
+    local models = meta.available_models or {}
     if #models == 0 then return end
     vim.ui.select(models, {
       prompt = "hyprpilot model",

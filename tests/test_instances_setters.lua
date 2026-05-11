@@ -7,6 +7,79 @@ local helpers = require("tests.helpers")
 
 local T = MiniTest.new_set()
 
+T["info calls instances/info and translates the Instance shape"] = function()
+  local client = require("hyprpilot.client")
+  local original = client.request
+  local calls = {}
+
+  client.request = function(method, params, _opts, callback)
+    table.insert(calls, { method = method, params = params })
+    callback(nil, {
+      instanceId = "inst-1",
+      name = "main",
+      agentId = "claude-code",
+      profileId = "default",
+      sessionId = "sess-1",
+      mode = "plan",
+    })
+  end
+
+  local seen
+  require("hyprpilot.instances").info("inst-1", function(err, info)
+    seen = { err = err, info = info }
+  end)
+
+  client.request = original
+
+  MiniTest.expect.equality(calls[1].method, "instances/info")
+  MiniTest.expect.equality(calls[1].params.instanceId, "inst-1")
+  MiniTest.expect.equality(seen.err, nil)
+  MiniTest.expect.equality(seen.info.id, "inst-1")
+  MiniTest.expect.equality(seen.info.name, "main")
+  MiniTest.expect.equality(seen.info.agent_id, "claude-code")
+  MiniTest.expect.equality(seen.info.mode, "plan")
+end
+
+T["meta calls instance/snapshot/meta and translates the MetaSnapshot shape"] = function()
+  local client = require("hyprpilot.client")
+  local original = client.request
+  local calls = {}
+
+  client.request = function(method, params, _opts, callback)
+    table.insert(calls, { method = method, params = params })
+    callback(nil, {
+      profileId = "default",
+      sessionId = "sess-1",
+      cwd = "/tmp",
+      currentModeId = "plan",
+      currentModelId = "sonnet",
+      availableModes = { { id = "plan", name = "Plan" } },
+      availableModels = { { id = "sonnet", name = "Sonnet" } },
+      mcpsCount = 2,
+      usage = { used = 100, size = 1000 },
+      latestSeq = 42,
+    })
+  end
+
+  local seen
+  require("hyprpilot.instances").meta("inst-1", function(err, meta)
+    seen = { err = err, meta = meta }
+  end)
+
+  client.request = original
+
+  MiniTest.expect.equality(calls[1].method, "instance/snapshot/meta")
+  MiniTest.expect.equality(seen.err, nil)
+  MiniTest.expect.equality(seen.meta.current_mode_id, "plan")
+  MiniTest.expect.equality(seen.meta.current_model_id, "sonnet")
+  MiniTest.expect.equality(#seen.meta.available_modes, 1)
+  MiniTest.expect.equality(seen.meta.available_modes[1].id, "plan")
+  MiniTest.expect.equality(#seen.meta.available_models, 1)
+  MiniTest.expect.equality(seen.meta.mcps_count, 2)
+  MiniTest.expect.equality(seen.meta.usage.used, 100)
+  MiniTest.expect.equality(seen.meta.latest_seq, 42)
+end
+
 T["set_mode fires instances/setMode with camelCase params"] = function()
   local restore, calls = helpers.stub_client_request()
   require("hyprpilot.instances").set_mode("inst-1", "plan")
