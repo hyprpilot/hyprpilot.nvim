@@ -45,6 +45,7 @@ local M = {}
 
 ---@class hyprpilot.render.Section
 ---@field head_mark integer                     -- extmark on the `### tasks` / `### thoughts` / `### tools` header row
+---@field tail_mark integer                     -- extmark on the section's trailing blank row (visual separator)
 ---@field block_ids string[]                    -- ids of blocks that belong to this section (ordered)
 
 ---@class hyprpilot.render.TurnLayout
@@ -269,59 +270,63 @@ local function get_layout(state, turn_id)
   return state.turn_layouts[turn_id]
 end
 
----Resolve `(head_row, tail_row)` for a block via its tracked extmarks.
----Forward-declared so `section_end_row` (below) can call it before its
----definition further down. Don't reorder — the original definition
----still lands later for the bulk of consumers.
-local block_range_fn
-
----Resolve the row JUST BELOW the last visible content of a section
----(i.e., where the next inner block should insert). Returns
----`head_row` when the section has no body yet.
+---Resolve the row OF the section's trailing blank (where new body
+---inserts go, pushing the blank down). Each section ends at a blank
+---line that doubles as the visual separator before the next section
+---/ prose region.
 ---@param state hyprpilot.render.State
 ---@param section hyprpilot.render.Section
 ---@return integer
 local function section_end_row(state, section)
-  local head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})[1]
-  local end_row = head_row
-
-  for _, block_id in ipairs(section.block_ids) do
-    local block = state.blocks[block_id]
-    if block ~= nil then
-      local _, tail = block_range_fn(state, block)
-      if tail > end_row then
-        end_row = tail
-      end
-    end
-  end
-
-  return end_row
+  return vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.tail_mark, {})[1]
 end
 
----Find the row at which a NEW section of `kind` should insert: just
----above the next-priority existing section (so the canonical order
----tasks → thoughts → tools is preserved), or the section_anchor row
----when no higher-priority section exists yet. Falls back to
----prose_anchor when the section anchor isn't set (legacy turns).
+---Find the row at which a NEW section of `kind` should insert. Three
+---cases:
+---  * higher-priority sections exist (order > kind's order) → insert
+---    AT the lowest of their head_rows so we land just above them
+---  * only lower-priority sections exist → insert at the row JUST
+---    AFTER the highest of their tail_rows (their trailing blank
+---    serves as our leading separator)
+---  * no other sections → insert at section_anchor row (with
+---    prose_anchor as legacy fallback)
 ---@param state hyprpilot.render.State
 ---@param layout hyprpilot.render.TurnLayout
 ---@param kind string
 ---@return integer
 local function find_section_insert_row(state, layout, kind)
   local order = SECTION_ORDER[kind]
-  local anchor_mark = layout.section_anchor_mark or layout.prose_anchor_mark
-  local insert_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, anchor_mark, {})[1]
 
+  local higher_min = nil
   for other_kind, other in pairs(layout.sections) do
     if SECTION_ORDER[other_kind] > order then
-      local other_head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, other.head_mark, {})[1]
-      if other_head_row < insert_row then
-        insert_row = other_head_row
+      local head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, other.head_mark, {})[1]
+      if higher_min == nil or head_row < higher_min then
+        higher_min = head_row
       end
     end
   end
 
-  return insert_row
+  if higher_min ~= nil then
+    return higher_min
+  end
+
+  local lower_max_end = nil
+  for other_kind, other in pairs(layout.sections) do
+    if SECTION_ORDER[other_kind] < order then
+      local tail_row = section_end_row(state, other)
+      if lower_max_end == nil or tail_row > lower_max_end then
+        lower_max_end = tail_row
+      end
+    end
+  end
+
+  if lower_max_end ~= nil then
+    return lower_max_end + 1
+  end
+
+  local anchor_mark = layout.section_anchor_mark or layout.prose_anchor_mark
+  return vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, anchor_mark, {})[1]
 end
 
 ---Resolve the highlight group for a tool-call header row by state.
@@ -362,9 +367,6 @@ local function block_range(state, block)
 
   return head[1], tail[1]
 end
-
--- Wire the forward-declared alias (declared above `section_end_row`).
-block_range_fn = block_range
 
 ---Replace the body lines of a block (everything from `head_row + 1`
 ---through `tail_row`). Header line stays put. Re-anchors the tail
@@ -469,14 +471,40 @@ local function ensure_section(state, turn_id, kind)
   local insert_row = find_section_insert_row(state, layout, kind)
   local header = SECTION_HEADER[kind] or ("### " .. kind)
 
+  -- Add a leading blank only when the row immediately above isn't
+  -- already blank (e.g. first section under `## pilot`). When the
+  -- row above IS blank (preceding section's trailing blank, or pilot
+  -- header's own trailing blank), reuse it as the separator. The
+  -- trailing blank below the header is always added — it doubles as
+  -- the visual separator before the next section / prose region.
+  local needs_leading_blank = true
+  if insert_row > 0 then
+    local line_above = vim.api.nvim_buf_get_lines(state.bufnr, insert_row - 1, insert_row, false)[1]
+    if line_above == "" then
+      needs_leading_blank = false
+    end
+  end
+
+  local lines = {}
+  if needs_leading_blank then
+    table.insert(lines, "")
+  end
+  table.insert(lines, header)
+  table.insert(lines, "")
+
   chat_buffer.with_buffer(state.bufnr, function()
-    vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, { header })
+    vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, lines)
   end)
 
-  local head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, insert_row, 0, { right_gravity = true })
-  apply_line_hl(state, insert_row, "HyprpilotSectionHeader")
+  local header_offset = needs_leading_blank and 1 or 0
+  local header_row = insert_row + header_offset
+  local tail_row = header_row + 1
 
-  layout.sections[kind] = { head_mark = head_mark, block_ids = {} }
+  local head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row, 0, { right_gravity = true })
+  local tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, tail_row, 0, { right_gravity = true })
+  apply_line_hl(state, header_row, "HyprpilotSectionHeader")
+
+  layout.sections[kind] = { head_mark = head_mark, tail_mark = tail_mark, block_ids = {} }
   return layout.sections[kind]
 end
 
@@ -498,8 +526,11 @@ local function insert_block_into_section(state, turn_id, kind, block_id, block_k
     return nil, nil
   end
 
-  local end_row = section_end_row(state, section)
-  local insert_row = end_row + 1
+  -- Insert AT the section's trailing blank row — the blank gets
+  -- pushed down (gravity=true on the tail_mark follows), and the new
+  -- block lands above it. Result: [header][...prior blocks...]
+  -- [new block][trailing blank].
+  local insert_row = section_end_row(state, section)
 
   chat_buffer.with_buffer(state.bufnr, function()
     vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, lines)
@@ -1363,9 +1394,12 @@ function M.handle_turn_ended(event)
   if layout ~= nil then
     for _, section in pairs(layout.sections) do
       local head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})[1]
-      local end_row = section_end_row(state, section)
-      if end_row > head_row then
-        fold_range(state, head_row, end_row)
+      local tail_row = section_end_row(state, section)
+      -- Fold up to tail_row - 1 so the trailing blank stays visible
+      -- as the separator between this folded section and whatever
+      -- follows (the next section / prose region).
+      if tail_row - 1 > head_row then
+        fold_range(state, head_row, tail_row - 1)
       end
     end
   end
