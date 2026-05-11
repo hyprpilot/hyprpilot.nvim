@@ -57,7 +57,7 @@ T["activity transitions through tool / awaiting_permission via dispatch flow"] =
   MiniTest.expect.equality(status.get().activity.kind, "idle")
 end
 
-T["turn_ended with cancel-shaped stopReason marks the chip as cancelled"] = function()
+T["turn_ended with cancel-shaped stopReason marks the chip as cancelled on the pilot header"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -73,25 +73,19 @@ T["turn_ended with cancel-shaped stopReason marks the chip as cancelled"] = func
 
   render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "cancelled_by_user" })
 
-  -- Find the virt_text on the last row of the chat buffer.
-  local NS = vim.api.nvim_create_namespace("hyprpilot.render")
-  local total = vim.api.nvim_buf_line_count(bufnr)
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, NS, { total - 1, 0 }, { total - 1, -1 }, { details = true })
-
-  local found_cancel_chip = false
-  for _, mark in ipairs(marks) do
-    local virt = mark[4] and mark[4].virt_text
-    if virt ~= nil then
-      for _, chunk in ipairs(virt) do
-        if type(chunk[1]) == "string" and chunk[1]:find("cancelled", 1, true) ~= nil then
-          MiniTest.expect.equality(chunk[2], "HyprpilotTurnEndCancelled")
-          found_cancel_chip = true
-        end
-      end
+  -- The cancel chip should land on the `## pilot` header line as a
+  -- stat-style pill, NOT as virt_text at the end of the buffer.
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local pilot_line
+  for _, l in ipairs(lines) do
+    if l:find("^## pilot") then
+      pilot_line = l
+      break
     end
   end
 
-  MiniTest.expect.equality(found_cancel_chip, true)
+  MiniTest.expect.equality(pilot_line ~= nil, true)
+  MiniTest.expect.equality(pilot_line:find("[cancelled cancelled_by_user]", 1, true) ~= nil, true)
 
   -- The unused `state` binding makes selene happy without dropping a
   -- side effect we still need (state registration with the buffer).

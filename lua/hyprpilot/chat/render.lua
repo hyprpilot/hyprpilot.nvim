@@ -59,6 +59,8 @@ local M = {}
 ---@field started_at_ms? integer                -- turn_started timestamp (daemon-side, ms since epoch)
 ---@field ended_at_ms? integer                  -- turn_ended timestamp (set on handle_turn_ended)
 ---@field usage? { used?: integer, size?: integer, cost?: table }  -- latest usage_update reading
+---@field stop_reason? string                   -- turn_ended.stopReason, rendered as a status chip on the pilot header
+---@field stop_error? string                    -- turn_ended.error (mutually exclusive with stop_reason)
 
 ---@class hyprpilot.render.State
 ---@field bufnr integer
@@ -481,6 +483,8 @@ local function pilot_header_line(layout)
     ended_at_ms = layout.ended_at_ms,
     now_ms = os.time() * 1000,
     usage = layout.usage,
+    stop_reason = layout.stop_reason,
+    stop_error = layout.stop_error,
   })
   return "## pilot" .. stats.format_pills(pills)
 end
@@ -1257,7 +1261,28 @@ function M.mark_permission_resolved(state, request_id, resolved_label)
     return
   end
 
+  -- Replace the button line with a dimmed "(resolved: <label>)" mark
+  -- AND surface the same outcome as a stat-style chip on the
+  -- permission block's header, e.g. `? permission · Bash [allow-once]`.
+  -- The chip is the at-a-glance signal once the block folds (the
+  -- inline marker is hidden inside the fold).
   M.update_permission_buttons(state, block, nil, nil, resolved_label or "ok")
+
+  if resolved_label ~= nil and resolved_label ~= "" then
+    local head_row = block_range(state, block)
+    local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
+    -- Strip any existing chip suffix (handles double-resolution e.g.
+    -- a resolved → resolved replay during re-hydrate) before appending
+    -- the new one.
+    local base = existing:match("^(.-)%s*%[[^%]]*%]%s*$") or existing
+    local new_line = base .. stats.format_pills({ tostring(resolved_label) })
+    if new_line ~= existing then
+      chat_buffer.with_buffer(state.bufnr, function()
+        vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { new_line })
+      end)
+    end
+  end
+
   state.permissions[request_id] = nil
 
   require("hyprpilot.ui.permissions").unregister(state.bufnr, request_id)
@@ -1489,40 +1514,23 @@ function M.handle_turn_ended(event)
     state.current_turn = nil
   end
 
-  -- Stamp the turn's end timestamp + repaint the pilot header so the
-  -- elapsed chip freezes at its final value.
+  -- Stamp the turn's end timestamp + stop reason on the layout, then
+  -- repaint the pilot header so the elapsed chip freezes at its
+  -- final value AND the `[ok end_turn]` / `[cancelled <reason>]` /
+  -- `[error: <msg>]` chip lands on the header alongside the other
+  -- stat pills (same pill format, same place — captain reads turn
+  -- outcome at a glance from the header instead of scrolling to the
+  -- end of the prose).
   local layout = state.turn_layouts[event.turnId]
   if layout ~= nil then
     local ended_at = event.endedAt or event.ended_at or (os.time() * 1000)
     layout.ended_at_ms = ended_at
-    repaint_pilot_header(state, layout)
-  end
-
-  local chip
-  local chip_hl
-  if event.error ~= nil then
-    chip = "x " .. event.error
-    chip_hl = "HyprpilotTurnEndError"
-  elseif event.stopReason ~= nil then
-    local reason = tostring(event.stopReason)
-    if reason:lower():find("cancel", 1, true) ~= nil then
-      chip = "[cancelled] " .. reason
-      chip_hl = "HyprpilotTurnEndCancelled"
-    else
-      chip = "ok " .. reason
-      chip_hl = "HyprpilotTurnEndOk"
+    if event.error ~= nil then
+      layout.stop_error = tostring(event.error)
+    elseif event.stopReason ~= nil then
+      layout.stop_reason = tostring(event.stopReason)
     end
-  end
-
-  if chip ~= nil then
-    local bufnr = state.bufnr
-    local total = vim.api.nvim_buf_line_count(bufnr)
-    local row = math.max(0, total - 1)
-
-    pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
-      virt_text = { { " " .. chip, chip_hl } },
-      virt_text_pos = "eol",
-    })
+    repaint_pilot_header(state, layout)
   end
 
   -- Fold each section (tasks / thoughts / tools) belonging to this

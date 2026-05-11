@@ -72,6 +72,18 @@ T["turn_pills omits chips that have no data"] = function()
   MiniTest.expect.equality(pills[1], "234ms")
 end
 
+T["turn_pills appends stop_reason / stop_error as the trailing chip"] = function()
+  local stats = require("hyprpilot.chat.stats")
+  local ok = stats.turn_pills({ started_at_ms = 1000, ended_at_ms = 1100, stop_reason = "end_turn" })
+  MiniTest.expect.equality(ok[#ok], "ok end_turn")
+
+  local cancelled = stats.turn_pills({ stop_reason = "cancelled_by_user" })
+  MiniTest.expect.equality(cancelled[1], "cancelled cancelled_by_user")
+
+  local errored = stats.turn_pills({ stop_error = "boom" })
+  MiniTest.expect.equality(errored[1], "error: boom")
+end
+
 T["format_pills wraps labels in single-space-joined brackets"] = function()
   local stats = require("hyprpilot.chat.stats")
   MiniTest.expect.equality(stats.format_pills({ "120k/200k", "$0.74", "3s" }), " [120k/200k] [$0.74] [3s]")

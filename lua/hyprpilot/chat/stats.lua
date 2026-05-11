@@ -141,10 +141,32 @@ function M.from_wire_stats(wire_stats)
   return labels
 end
 
+---Format a turn's stop reason as a chip label. Cancel-shaped reasons
+---become `cancelled <reason>`; any other reason becomes `ok <reason>`;
+---an explicit error wins over a reason entirely.
+---@param stop_reason? string
+---@param stop_error? string
+---@return string?
+function M.format_stop_chip(stop_reason, stop_error)
+  if stop_error ~= nil and stop_error ~= "" then
+    return "error: " .. tostring(stop_error)
+  end
+  if stop_reason == nil or stop_reason == "" then
+    return nil
+  end
+  local reason = tostring(stop_reason)
+  if reason:lower():find("cancel", 1, true) ~= nil then
+    return "cancelled " .. reason
+  end
+  return "ok " .. reason
+end
+
 ---Build the pill list for a pilot-turn header from the turn's
----accumulated metadata. Order: tokens, cost, elapsed — matches the
----Tauri UI's Turn.vue header chip order.
----@param turn { started_at_ms?: integer, ended_at_ms?: integer, now_ms?: integer, usage?: { used?: integer, size?: integer, cost?: table } }
+---accumulated metadata. Order: tokens, cost, elapsed, stop-reason —
+---matches the Tauri UI's Turn.vue chip order (the stop chip is
+---hyprpilot.nvim's addition since it didn't make sense in the web
+---UI which already has a "live" indicator next to the role tag).
+---@param turn { started_at_ms?: integer, ended_at_ms?: integer, now_ms?: integer, usage?: { used?: integer, size?: integer, cost?: table }, stop_reason?: string, stop_error?: string }
 ---@return string[]
 function M.turn_pills(turn)
   local labels = {}
@@ -170,6 +192,11 @@ function M.turn_pills(turn)
         table.insert(labels, elapsed)
       end
     end
+  end
+
+  local stop_chip = M.format_stop_chip(turn.stop_reason, turn.stop_error)
+  if stop_chip ~= nil then
+    table.insert(labels, stop_chip)
   end
 
   return labels

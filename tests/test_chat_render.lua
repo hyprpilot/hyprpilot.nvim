@@ -288,6 +288,57 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   helpers.cleanup_instance(id)
 end
 
+T["permission_resolved tags the permission header with the chosen option_id chip"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  render.state(id, bufnr)
+
+  render.handle_permission_request({
+    instanceId = id,
+    requestId = "req-1",
+    tool = "Bash",
+    kind = "execute",
+    args = "ls",
+    options = {
+      { optionId = "allow-once", name = "Allow", kind = "allow_once" },
+      { optionId = "reject-once", name = "Reject", kind = "reject_once" },
+    },
+    formatted = { title = "ls", stats = {}, fields = {} },
+  })
+
+  -- Before resolution, the header should NOT carry a result chip.
+  local function find_line(predicate)
+    for _, l in ipairs(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)) do
+      if predicate(l) then
+        return l
+      end
+    end
+    return nil
+  end
+
+  local pre_header = find_line(function(l)
+    return l:find("^%? permission") ~= nil
+  end)
+  MiniTest.expect.equality(pre_header ~= nil, true)
+  MiniTest.expect.equality(pre_header:find("[allow-once]", 1, true), nil)
+
+  render.handle_permission_resolved({
+    instanceId = id,
+    requestId = "req-1",
+    optionId = "allow-once",
+  })
+
+  local post_header = find_line(function(l)
+    return l:find("^%? permission") ~= nil
+  end)
+  MiniTest.expect.equality(post_header ~= nil, true)
+  MiniTest.expect.equality(post_header:find("[allow-once]", 1, true) ~= nil, true)
+
+  helpers.cleanup_instance(id)
+end
+
 T["pilot header repaints with usage / elapsed chips on live updates"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
