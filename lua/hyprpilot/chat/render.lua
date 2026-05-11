@@ -585,9 +585,15 @@ local function ensure_section(state, turn_id, kind)
   -- Add a leading blank only when the row immediately above isn't
   -- already blank (e.g. first section under `## pilot`). When the
   -- row above IS blank (preceding section's trailing blank, or pilot
-  -- header's own trailing blank), reuse it as the separator. The
-  -- trailing blank below the header is always added — it doubles as
-  -- the visual separator before the next section / prose region.
+  -- header's own trailing blank), reuse it as the separator.
+  --
+  -- Below the header we always add TWO blanks: the first is a fixed
+  -- spacer between `### kind` and the section's body (captain wants
+  -- one blank after every header, like markdown convention), the
+  -- second is the trailing separator that doubles as the gap before
+  -- the next section / prose. Body inserts go AT the trailing blank
+  -- (tail_mark with gravity=true follows the blank down) so the
+  -- spacer between header and body never moves.
   local needs_leading_blank = true
   if insert_row > 0 then
     local line_above = vim.api.nvim_buf_get_lines(state.bufnr, insert_row - 1, insert_row, false)[1]
@@ -602,6 +608,7 @@ local function ensure_section(state, turn_id, kind)
   end
   table.insert(lines, header)
   table.insert(lines, "")
+  table.insert(lines, "")
 
   chat_buffer.with_buffer(state.bufnr, function()
     vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, lines)
@@ -609,7 +616,7 @@ local function ensure_section(state, turn_id, kind)
 
   local header_offset = needs_leading_blank and 1 or 0
   local header_row = insert_row + header_offset
-  local tail_row = header_row + 1
+  local tail_row = header_row + 2
 
   local head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row, 0, { right_gravity = true })
   local tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, tail_row, 0, { right_gravity = true })
