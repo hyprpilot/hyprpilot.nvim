@@ -411,32 +411,45 @@ function M.is_visible()
   return true
 end
 
----Open the composer split below the chat window. No-op when no instance
----is active or when the chat window isn't visible (open it first).
----Focuses the composer buffer and enters insert mode.
-function M.open()
+---Open the composer split below the chat window. Idempotent — when
+---the composer is already visible, syncs its buffer to the active
+---instance's composer buffer (so switch() flows pick the right
+---draft) and re-enters insert mode. No-op when no instance is
+---active or when the chat window isn't visible (open the chat first).
+---@param opts? { focus?: boolean }  -- `focus = false` skips startinsert
+function M.open(opts)
+  opts = opts or {}
+  local focus = opts.focus ~= false
+
   local instance_id = window.active_instance()
 
   if instance_id == nil then
-    log.warn("composer.open: no active instance")
-
+    log.debug("composer.open: no active instance — skipping")
     return
   end
 
   if not window.is_visible() then
-    log.warn("composer.open: chat window not visible; toggle the chat first")
-
-    return
-  end
-
-  if M.is_visible() then
-    vim.api.nvim_set_current_win(M._winid)
-    vim.cmd("startinsert")
-
+    log.debug("composer.open: chat window not visible — skipping")
     return
   end
 
   local bufnr = ensure_buffer(instance_id)
+
+  if M.is_visible() then
+    -- Already open — re-bind to the active instance's composer buffer
+    -- (handles the switch() case where the chat flipped instances).
+    if vim.api.nvim_win_get_buf(M._winid) ~= bufnr then
+      vim.api.nvim_win_set_buf(M._winid, bufnr)
+    end
+
+    if focus then
+      vim.api.nvim_set_current_win(M._winid)
+      vim.cmd("startinsert")
+    end
+
+    paint_indicator(instance_id)
+    return
+  end
 
   vim.api.nvim_set_current_win(window._winid)
   vim.cmd(string.format("belowright %dsplit", resolve_height()))
@@ -452,7 +465,9 @@ function M.open()
 
   paint_indicator(instance_id)
 
-  vim.cmd("startinsert")
+  if focus then
+    vim.cmd("startinsert")
+  end
 end
 
 ---Close the composer split. The buffer persists for next open.

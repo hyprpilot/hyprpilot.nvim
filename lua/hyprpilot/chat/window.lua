@@ -182,14 +182,25 @@ function M.show(instance_id)
     require("hyprpilot.status").emit_instance_changed(M._last_active_id)
   end
 
+  -- Auto-open the composer below the chat whenever an instance is
+  -- active. Matches the v1 "default focus: composer + insert mode on
+  -- toggle()" contract. Skipped for the placeholder buffer (no
+  -- instance to compose against).
+  if resolved_id ~= nil then
+    require("hyprpilot.ui.composer").open()
+  end
+
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
 end
 
----Hide the chat window. Buffers persist for resume.
+---Hide the chat window. Buffers persist for resume. Closes the
+---composer first since it lives in a sub-split below the chat.
 function M.hide()
   if not M.is_visible() then
     return
   end
+
+  require("hyprpilot.ui.composer").close()
 
   pcall(vim.api.nvim_win_close, M._winid, true)
   M._winid = nil
@@ -222,6 +233,13 @@ function M.switch(instance_id)
 
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, state.bufnr)
+
+    -- Composer.open() is idempotent: when the composer's already
+    -- visible it swaps its buffer to the new instance's draft.
+    -- `focus = false` keeps the captain's cursor where it was —
+    -- switch is a peek-at-the-other-instance gesture, not an "I'm
+    -- about to type" gesture.
+    require("hyprpilot.ui.composer").open({ focus = false })
   end
 
   if previous ~= instance_id then
