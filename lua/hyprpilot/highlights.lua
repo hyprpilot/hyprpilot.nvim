@@ -31,6 +31,9 @@ M.LINKS = {
   HyprpilotThoughtHeader = "Conceal",
   HyprpilotThoughtBody = "Comment",
 
+  -- Per-turn section headers (### tasks / ### thoughts / ### tools)
+  HyprpilotSectionHeader = "Title",
+
   -- Permission block
   HyprpilotPermissionHeader = "WarningMsg",
   HyprpilotPermissionBody = "Comment",
@@ -45,6 +48,13 @@ M.LINKS = {
 
   -- Composer
   HyprpilotComposerAttachments = "Comment",
+
+  -- Header buffer (pinned single-line bar above the chat split)
+  HyprpilotHeader = "StatusLine",
+
+  -- Permission row (pinned single-line bar between chat and composer
+  -- while at least one permission is pending)
+  HyprpilotPermissionRow = "WarningMsg",
 }
 
 ---Apply (or re-apply) every default highlight link. Idempotent —

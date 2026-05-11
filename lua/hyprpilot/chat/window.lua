@@ -140,12 +140,16 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].foldenable = true
   vim.wo[M._winid].foldlevel = 99
   vim.wo[M._winid].foldcolumn = "1"
-  vim.wo[M._winid].winbar = "%!v:lua.require'hyprpilot.chat.winbar'.render()"
+  -- Custom foldtext renders the head row of each fold as-is (icon +
+  -- status + title) instead of Neovim's default `+-- N lines:` chrome.
+  vim.wo[M._winid].foldtext = "v:lua.require'hyprpilot.chat.render'.foldtext()"
+  vim.wo[M._winid].fillchars = vim.wo[M._winid].fillchars .. ",fold: "
 
-  -- The winbar reads `status.get().activity` for the active instance,
-  -- so make sure HyprpilotActivityChanged repaints every chat
-  -- winbar — registers once, idempotent.
-  require("hyprpilot.chat.winbar").ensure_activity_listener()
+  -- Header info lives in a pinned 1-row split above the chat (see
+  -- `chat.header`). The winbar architecture was abandoned because it
+  -- only painted while the chat window itself held focus; dropping
+  -- into the composer below made the bar vanish, hiding mode / model /
+  -- activity exactly when the captain wanted them visible.
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).
@@ -182,14 +186,28 @@ function M.show(instance_id)
     require("hyprpilot.status").emit_instance_changed(M._last_active_id)
   end
 
+  -- Auxiliary windows around the chat — header above, composer below.
+  -- Both are skipped for the placeholder (no instance to drive them).
+  require("hyprpilot.chat.header").ensure_listeners()
+  require("hyprpilot.chat.header").open()
+
+  if resolved_id ~= nil then
+    require("hyprpilot.ui.composer").open()
+  end
+
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
 end
 
----Hide the chat window. Buffers persist for resume.
+---Hide the chat window. Buffers persist for resume. Closes the
+---composer first since it lives in a sub-split below the chat.
 function M.hide()
   if not M.is_visible() then
     return
   end
+
+  require("hyprpilot.ui.composer").close()
+  require("hyprpilot.chat.header").close()
+  require("hyprpilot.chat.permission_row").close()
 
   pcall(vim.api.nvim_win_close, M._winid, true)
   M._winid = nil
@@ -222,6 +240,18 @@ function M.switch(instance_id)
 
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, state.bufnr)
+
+    -- Composer.open() is idempotent: when the composer's already
+    -- visible it swaps its buffer to the new instance's draft.
+    -- `focus = false` keeps the captain's cursor where it was —
+    -- switch is a peek-at-the-other-instance gesture, not an "I'm
+    -- about to type" gesture.
+    require("hyprpilot.ui.composer").open({ focus = false })
+
+    -- Header reads via active_instance() and emits its own update on
+    -- HyprpilotInstanceChanged; the explicit refresh covers the case
+    -- where this switch ran in between autocmd dispatches.
+    require("hyprpilot.chat.header").refresh()
   end
 
   if previous ~= instance_id then

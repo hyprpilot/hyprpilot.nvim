@@ -72,7 +72,9 @@ T["tool_call applies status-driven header highlight + body highlight"] = functio
   local header_row = row_of(bufnr, "[run]")
   MiniTest.expect.equality(header_row ~= nil, true)
   MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotToolStatusRunning")
-  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), "HyprpilotToolBody")
+  -- Body has no line_hl_group on purpose: markdown highlighter
+  -- handles ` ```bash ` / ` ```console ` fenced blocks.
+  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), nil)
 
   -- Updating to completed flips the header highlight.
   render.handle_tool_call_update(id, {
@@ -120,41 +122,44 @@ T["plan applies header + per-step highlights"] = function()
   helpers.cleanup_instance(id)
 end
 
-T["permission applies header / body / button highlights, resolution flips button row"] = function()
-  local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
-  local id = helpers.unique_id()
-  local bufnr = buffer.create(id)
-  render.state(id, bufnr)
+T["permission_row enqueue paints the header/button highlights on its own buffer"] = function()
+  local permission_row = require("hyprpilot.chat.permission_row")
+  permission_row.reset()
 
-  render.handle_permission_request({
-    instanceId = id,
-    requestId = "req-1",
+  permission_row.enqueue("inst-1", {
+    request_id = "req-1",
     tool = "Bash",
-    kind = "execute",
-    args = "ls",
     options = {
-      { optionId = "allow-once", name = "Allow", kind = "allow_once" },
-      { optionId = "reject-once", name = "Reject", kind = "reject_once" },
+      { optionId = "allow-once", name = "Allow" },
+      { optionId = "reject-once", name = "Reject" },
     },
     formatted = { title = "ls", stats = {}, fields = {} },
   })
 
-  local header_row = row_of(bufnr, "permission ·")
-  MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotPermissionHeader")
-  local button_row = row_of(bufnr, "[> Allow <]")
-  MiniTest.expect.equality(line_hl(bufnr, button_row), "HyprpilotPermissionButton")
+  -- enqueue without the chat window visible only stages the queue;
+  -- force a refresh to populate the row buffer for inspection.
+  permission_row.refresh()
 
-  render.handle_permission_resolved({
-    instanceId = id,
-    requestId = "req-1",
-    optionId = "allow-once",
-  })
+  local row_bufnr = permission_row._bufnr
+  MiniTest.expect.equality(row_bufnr ~= nil, true)
 
-  local resolved_row = row_of(bufnr, "(resolved:")
-  MiniTest.expect.equality(line_hl(bufnr, resolved_row), "HyprpilotPermissionResolved")
+  -- Permission row owns its own namespace; lookup directly there.
+  local row_ns = vim.api.nvim_create_namespace("hyprpilot.chat.permission_row")
+  local function row_line_hl(row)
+    local marks = vim.api.nvim_buf_get_extmarks(row_bufnr, row_ns, { row, 0 }, { row, -1 }, { details = true })
+    for _, mark in ipairs(marks) do
+      local details = mark[4]
+      if details and details.line_hl_group then
+        return details.line_hl_group
+      end
+    end
+    return nil
+  end
 
-  helpers.cleanup_instance(id)
+  MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "permission ·")), "HyprpilotPermissionHeader")
+  MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "[> Allow <]")), "HyprpilotPermissionButton")
+
+  permission_row.reset()
 end
 
 T["agent_thought applies header + body highlights"] = function()
@@ -172,7 +177,8 @@ T["agent_thought applies header + body highlights"] = function()
 
   local header_row = row_of(bufnr, "* thought")
   MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotThoughtHeader")
-  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), "HyprpilotThoughtBody")
+  -- Body lines have no line_hl_group (markdown highlighter handles them).
+  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), nil)
 
   helpers.cleanup_instance(id)
 end

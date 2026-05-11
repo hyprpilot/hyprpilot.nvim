@@ -1,0 +1,418 @@
+--- Pinned permission strip between the chat and the composer.
+---
+--- This is the SOLE interaction surface for permission prompts —
+--- chat-buffer rendering for permissions was dropped on purpose.
+--- The row renders the request title + tool details + button group;
+--- the window auto-resizes to fit (clamped to 40% of `vim.o.lines`)
+--- so a Bash command with a multi-line description grows the row
+--- without the captain having to scroll.
+---
+--- Default focus is ALWAYS the Allow-shaped option (`^allow`,
+--- `^accept`, `^proceed`); a bare `<CR>` answers Allow. `<Tab>` /
+--- `<S-Tab>` cycle through other options when the captain wants
+--- something more cautious; `g` jumps focus to Allow, `d` to deny.
+--- Auto-shows on the first pending request, auto-hides when the
+--- queue drains.
+
+local buffer = require("hyprpilot.chat.buffer")
+local config = require("hyprpilot.config")
+local log = require("hyprpilot.log")
+local window = require("hyprpilot.chat.window")
+
+local M = {}
+
+local BUFFER_NAME = "hyprpilot://permission_row"
+local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission_row")
+
+---@class hyprpilot.chat.permission_row.Entry
+---@field instance_id string
+---@field request_id string
+---@field tool string
+---@field tool_kind? string
+---@field options table[]
+---@field formatted? table
+---@field focused_idx integer
+
+---@type hyprpilot.chat.permission_row.Entry[]
+M._queue = {}
+
+---@type integer?
+M._winid = nil
+
+---@type integer?
+M._bufnr = nil
+
+---@type table<integer, integer>  -- line index → entry button col offsets registry (set on render; reserved)
+M._button_rows = {}
+
+---True when the row window exists + is valid.
+---@return boolean
+function M.is_visible()
+  if M._winid == nil then
+    return false
+  end
+  if not vim.api.nvim_win_is_valid(M._winid) then
+    M._winid = nil
+    return false
+  end
+  return true
+end
+
+---Get-or-create the shared row buffer.
+---@return integer
+local function ensure_buffer()
+  if M._bufnr ~= nil and vim.api.nvim_buf_is_valid(M._bufnr) then
+    return M._bufnr
+  end
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+
+  vim.api.nvim_buf_set_name(bufnr, BUFFER_NAME)
+  vim.bo[bufnr].filetype = "hyprpilot_permission_row"
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].swapfile = false
+  vim.bo[bufnr].bufhidden = "hide"
+  vim.bo[bufnr].buflisted = false
+  vim.bo[bufnr].modifiable = false
+
+  M._bufnr = bufnr
+  return bufnr
+end
+
+---Pick the "default" option index for a fresh permission prompt:
+---first option whose id or name matches `^allow|^accept|^proceed`.
+---Falls back to 1 when nothing matches (the daemon should never ship
+---a permission prompt without an allow-shaped option, but defending
+---against it keeps the captain from being keymap-stuck).
+---@param options table[]
+---@return integer
+local function default_focused_idx(options)
+  for i, opt in ipairs(options) do
+    local id = string.lower(tostring(opt.optionId or ""))
+    local name = string.lower(tostring(opt.name or ""))
+    if id:match("^allow") or id:match("^accept") or id:match("^proceed") or name:match("^allow") or name:match("^accept") or name:match("^proceed") then
+      return i
+    end
+  end
+  return 1
+end
+
+---Find the first option whose id or name matches a `^prefix`
+---pattern (case-insensitive).
+---@param options table[]
+---@param patterns string[]
+---@return table?
+---@return integer?
+local function smart_match(options, patterns)
+  for i, opt in ipairs(options) do
+    local id = string.lower(tostring(opt.optionId or ""))
+    local name = string.lower(tostring(opt.name or ""))
+    for _, pattern in ipairs(patterns) do
+      if id:match(pattern) ~= nil or name:match(pattern) ~= nil then
+        return opt, i
+      end
+    end
+  end
+  return nil, nil
+end
+
+---Resolve the active entry (head of queue).
+---@return hyprpilot.chat.permission_row.Entry?
+local function head()
+  return M._queue[1]
+end
+
+---Compose the button line for the head entry, marking the focused
+---option with `[> Label <]` and others with `[ Label ]`.
+---@param entry hyprpilot.chat.permission_row.Entry
+---@return string
+local function button_line(entry)
+  local parts = {}
+  for i, opt in ipairs(entry.options) do
+    local label = tostring(opt.name or opt.optionId or "?")
+    if i == entry.focused_idx then
+      table.insert(parts, "[> " .. label .. " <]")
+    else
+      table.insert(parts, "[ " .. label .. " ]")
+    end
+  end
+  return "  " .. table.concat(parts, "  ")
+end
+
+---Build the full content for the row's buffer from the head entry.
+---The button line lives at the TOP so it's the first thing the
+---captain sees the moment the row pops in — header + tool details
+---follow below for context. Returns the lines + the row index
+---(0-indexed) of the button line + the row index of the header
+---line so the caller can apply the corresponding highlights.
+---@return string[] lines
+---@return integer? button_row
+---@return integer? header_row
+local function compose()
+  local entry = head()
+  if entry == nil then
+    return { "" }, nil, nil
+  end
+
+  local lines = {}
+
+  table.insert(lines, button_line(entry))
+  local btn_row = 0
+
+  table.insert(lines, "")
+
+  local extra = #M._queue > 1 and string.format(" (+%d more)", #M._queue - 1) or ""
+  table.insert(lines, string.format(" permission · %s%s", entry.tool or "tool", extra))
+  local header_row = #lines - 1
+
+  -- Body lines from the daemon's `formatted` payload (description /
+  -- fields) — same shape as the inline tool-call body.
+  local formatted = entry.formatted
+  if type(formatted) == "table" then
+    if type(formatted.fields) == "table" then
+      for _, field in ipairs(formatted.fields) do
+        if type(field) == "table" and field.label and field.value then
+          local value = tostring(field.value):gsub("\n", " ")
+          table.insert(lines, string.format("  %s: %s", field.label, value))
+        end
+      end
+    end
+    if type(formatted.description) == "string" and formatted.description ~= "" then
+      for _, l in ipairs(vim.split(formatted.description, "\n", { plain = true })) do
+        table.insert(lines, "  " .. l)
+      end
+    end
+  end
+
+  return lines, btn_row, header_row
+end
+
+---Resolve the row's max height from config (40% of `vim.o.lines` by
+---default), with a sane floor.
+---@return integer
+local function resolve_max_height()
+  local raw = (config.options.permission_row or {}).max_height
+  if type(raw) == "function" then
+    local ok, value = pcall(raw, vim.o.lines)
+    if ok and type(value) == "number" then
+      return math.max(1, math.floor(value))
+    end
+    log.warn("permission_row: max_height function returned %s; falling back", vim.inspect(value))
+  end
+  if type(raw) == "number" then
+    return math.max(1, math.floor(raw))
+  end
+  return math.max(3, math.floor(vim.o.lines * 0.4))
+end
+
+---Re-paint the row buffer + resize the window to fit content.
+function M.refresh()
+  -- Ensure the buffer exists so refresh-without-window (test path,
+  -- early enqueue before open) can still populate the row.
+  ensure_buffer()
+
+  local lines, btn_row, header_row = compose()
+
+  buffer.with_buffer(M._bufnr, function()
+    vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, lines)
+    vim.api.nvim_buf_clear_namespace(M._bufnr, NS, 0, -1)
+
+    if head() ~= nil then
+      if btn_row ~= nil then
+        vim.api.nvim_buf_set_extmark(M._bufnr, NS, btn_row, 0, { line_hl_group = "HyprpilotPermissionButton" })
+      end
+      if header_row ~= nil then
+        vim.api.nvim_buf_set_extmark(M._bufnr, NS, header_row, 0, { line_hl_group = "HyprpilotPermissionHeader" })
+      end
+    end
+  end)
+
+  if M.is_visible() then
+    local target = math.min(#lines, resolve_max_height())
+    if target < 1 then
+      target = 1
+    end
+    if vim.api.nvim_win_get_height(M._winid) ~= target then
+      pcall(vim.api.nvim_win_set_height, M._winid, target)
+    end
+  end
+end
+
+---Submit the focused option (or one matching `patterns`) for the
+---head request.
+---@param patterns? string[]
+local function submit(patterns)
+  local entry = head()
+  if entry == nil then
+    return
+  end
+
+  local opt, idx
+  if patterns ~= nil then
+    opt, idx = smart_match(entry.options, patterns)
+    if opt == nil then
+      log.debug("permission_row: no option matching %s", vim.inspect(patterns))
+      return
+    end
+    entry.focused_idx = idx
+  else
+    opt = entry.options[entry.focused_idx]
+    if opt == nil then
+      return
+    end
+  end
+
+  require("hyprpilot.permissions").respond(entry.request_id, opt.optionId, function(err)
+    if err ~= nil then
+      log.warn("permission_row.respond: %s (%s/%s)", err.message, entry.request_id, opt.optionId)
+    else
+      log.debug("permission_row.respond: ok %s/%s", entry.request_id, opt.optionId)
+    end
+  end)
+end
+
+local function cycle_focus(delta)
+  local entry = head()
+  if entry == nil then
+    return
+  end
+  local count = #entry.options
+  if count == 0 then
+    return
+  end
+  local current = entry.focused_idx or 1
+  entry.focused_idx = ((current - 1 + delta) % count) + 1
+  M.refresh()
+end
+
+---Install the row keymaps once per buffer.
+---@param bufnr integer
+local function install_keymaps(bufnr)
+  vim.keymap.set("n", "<CR>", function()
+    -- `<CR>` always submits the focused option (default = Allow on
+    -- fresh prompts), so a captain who lands on the row and hits
+    -- enter gets the safe-path answer.
+    submit()
+  end, { buffer = bufnr, silent = true, desc = "hyprpilot: submit focused permission option" })
+
+  vim.keymap.set("n", "g", function()
+    submit({ "^allow", "^accept", "^proceed" })
+  end, { buffer = bufnr, silent = true, desc = "hyprpilot: allow pending permission" })
+
+  vim.keymap.set("n", "d", function()
+    submit({ "^reject", "^deny", "^abort", "^cancel" })
+  end, { buffer = bufnr, silent = true, desc = "hyprpilot: deny pending permission" })
+
+  vim.keymap.set("n", "<Tab>", function()
+    cycle_focus(1)
+  end, { buffer = bufnr, silent = true, desc = "hyprpilot: cycle permission options" })
+
+  vim.keymap.set("n", "<S-Tab>", function()
+    cycle_focus(-1)
+  end, { buffer = bufnr, silent = true, desc = "hyprpilot: cycle permission options (back)" })
+end
+
+---Open the row window below the chat split, sized to fit content.
+local function open_window()
+  if not window.is_visible() or head() == nil then
+    return
+  end
+
+  if M.is_visible() then
+    M.refresh()
+    return
+  end
+
+  local previous_win = vim.api.nvim_get_current_win()
+
+  vim.api.nvim_set_current_win(window._winid)
+  vim.cmd("belowright 1split")
+
+  M._winid = vim.api.nvim_get_current_win()
+  local bufnr = ensure_buffer()
+  vim.api.nvim_win_set_buf(M._winid, bufnr)
+  install_keymaps(bufnr)
+
+  vim.wo[M._winid].number = false
+  vim.wo[M._winid].relativenumber = false
+  vim.wo[M._winid].signcolumn = "no"
+  vim.wo[M._winid].foldcolumn = "0"
+  vim.wo[M._winid].wrap = true
+  vim.wo[M._winid].linebreak = true
+  vim.wo[M._winid].winfixheight = true
+  vim.wo[M._winid].cursorline = false
+
+  -- Sized properly inside refresh() based on content + max_height.
+  if vim.api.nvim_win_is_valid(previous_win) then
+    vim.api.nvim_set_current_win(previous_win)
+  end
+
+  M.refresh()
+end
+
+---Close the row window (queue stays — re-opens on next request).
+function M.close()
+  if not M.is_visible() then
+    return
+  end
+
+  pcall(vim.api.nvim_win_close, M._winid, true)
+  M._winid = nil
+end
+
+---Enqueue a permission request. Auto-opens the row if not already
+---visible and pre-focuses the Allow-shaped option.
+---@param instance_id string
+---@param record { request_id: string, tool: string, tool_kind?: string, options: table[], formatted?: table }
+function M.enqueue(instance_id, record)
+  for _, entry in ipairs(M._queue) do
+    if entry.request_id == record.request_id then
+      return
+    end
+  end
+
+  local options = record.options or {}
+  table.insert(M._queue, {
+    instance_id = instance_id,
+    request_id = record.request_id,
+    tool = record.tool,
+    tool_kind = record.tool_kind,
+    options = options,
+    formatted = record.formatted,
+    focused_idx = default_focused_idx(options),
+  })
+
+  if M.is_visible() then
+    M.refresh()
+  else
+    open_window()
+  end
+end
+
+---Drop a resolved permission from the queue. Auto-closes the row
+---when the queue drains.
+---@param request_id string
+---@param resolved_label? string
+function M.resolve(request_id, resolved_label)
+  for i, entry in ipairs(M._queue) do
+    if entry.request_id == request_id then
+      log.debug("permission_row.resolve: request_id=%s resolved=%s", request_id, tostring(resolved_label))
+      table.remove(M._queue, i)
+      break
+    end
+  end
+
+  if #M._queue == 0 then
+    M.close()
+  elseif M.is_visible() then
+    M.refresh()
+  end
+end
+
+---Wipe state (used on full hide / hydrate).
+function M.reset()
+  M._queue = {}
+  M.close()
+end
+
+return M

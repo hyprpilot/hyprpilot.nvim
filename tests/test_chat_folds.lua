@@ -15,7 +15,7 @@ local function fold_starts_at(winid, lnum)
   return out
 end
 
-T["hydrate folds older turns, keeps the most recent open"] = function()
+T["hydrate does NOT fold turns (chat history stays scrollable)"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -32,18 +32,18 @@ T["hydrate folds older turns, keeps the most recent open"] = function()
     },
   })
 
-  -- L1 belongs to the oldest turn (t1) which should be folded.
-  MiniTest.expect.equality(fold_starts_at(winid, 1) > 0, true)
-
-  -- The latest turn's last line stays visible (foldclosed = -1).
-  local last = vim.api.nvim_buf_line_count(bufnr)
-  MiniTest.expect.equality(fold_starts_at(winid, last), -1)
+  -- Captain wants the conversation flow visible top-to-bottom.
+  -- No turn-level folds — every line stays unfolded after hydrate.
+  local total = vim.api.nvim_buf_line_count(bufnr)
+  for lnum = 1, total do
+    MiniTest.expect.equality(fold_starts_at(winid, lnum), -1)
+  end
 
   helpers.close_window(winid)
   helpers.cleanup_instance(id)
 end
 
-T["turn_ended folds the matching turn"] = function()
+T["turn_ended folds plan/thought inner blocks but leaves the turn itself unfolded"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -57,15 +57,44 @@ T["turn_ended folds the matching turn"] = function()
     turnId = "t1",
     item = { kind = "agent_text", text = "live reply" },
   })
+  render.handle_transcript({
+    instanceId = id,
+    turnId = "t1",
+    item = { kind = "agent_thought", text = "let me think" },
+  })
+  render.handle_transcript({
+    instanceId = id,
+    turnId = "t1",
+    item = {
+      kind = "plan",
+      steps = { { content = "step", status = "pending" } },
+    },
+  })
 
-  -- Active turn is open while streaming.
-  local last_active = vim.api.nvim_buf_line_count(bufnr)
-  MiniTest.expect.equality(fold_starts_at(winid, last_active), -1)
+  -- Pre-end: nothing is folded.
+  local total = vim.api.nvim_buf_line_count(bufnr)
+  for lnum = 1, total do
+    MiniTest.expect.equality(fold_starts_at(winid, lnum), -1)
+  end
 
   render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "end_turn" })
 
-  -- After end_turn, every line of t1 sits inside a closed fold.
-  MiniTest.expect.equality(fold_starts_at(winid, last_active) > 0, true)
+  -- Some line is now inside a closed fold (the plan or thought
+  -- block body), AND there's at least one line that's still
+  -- visible (the agent_text under "## agent" — that's not in a
+  -- foldable block).
+  total = vim.api.nvim_buf_line_count(bufnr)
+  local found_closed = false
+  local found_open = false
+  for lnum = 1, total do
+    if fold_starts_at(winid, lnum) > 0 then
+      found_closed = true
+    else
+      found_open = true
+    end
+  end
+  MiniTest.expect.equality(found_closed, true)
+  MiniTest.expect.equality(found_open, true)
 
   helpers.close_window(winid)
   helpers.cleanup_instance(id)
@@ -127,14 +156,26 @@ T["pending fold queue flushes when window appears"] = function()
   local bufnr = buffer.create(id)
   local state = render.state(id, bufnr)
 
-  -- No window yet → fold operations should queue, not error.
+  -- No window yet — folds triggered by completing a tool call queue
+  -- onto state.pending_fold_rows instead of failing.
   render.handle_turn_started({ instanceId = id, turnId = "t1" })
   render.handle_transcript({
     instanceId = id,
     turnId = "t1",
-    item = { kind = "agent_text", text = "queued reply" },
+    item = {
+      kind = "tool_call",
+      id = "tc-pending",
+      toolKind = "execute",
+      title = "ls",
+      state = "running",
+      formatted = { title = "ls", stats = {}, fields = {} },
+    },
   })
-  render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "end_turn" })
+  render.handle_tool_call_update(id, {
+    id = "tc-pending",
+    state = "completed",
+    formatted = { title = "ls", stats = {}, fields = {}, output = "a" },
+  })
 
   MiniTest.expect.equality(#state.pending_fold_rows > 0, true)
 

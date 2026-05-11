@@ -57,7 +57,7 @@ T["activity transitions through tool / awaiting_permission via dispatch flow"] =
   MiniTest.expect.equality(status.get().activity.kind, "idle")
 end
 
-T["turn_ended with cancel-shaped stopReason marks the chip as cancelled"] = function()
+T["turn_ended with cancel-shaped stopReason marks the chip as cancelled on the pilot header"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -73,25 +73,19 @@ T["turn_ended with cancel-shaped stopReason marks the chip as cancelled"] = func
 
   render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "cancelled_by_user" })
 
-  -- Find the virt_text on the last row of the chat buffer.
-  local NS = vim.api.nvim_create_namespace("hyprpilot.render")
-  local total = vim.api.nvim_buf_line_count(bufnr)
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, NS, { total - 1, 0 }, { total - 1, -1 }, { details = true })
-
-  local found_cancel_chip = false
-  for _, mark in ipairs(marks) do
-    local virt = mark[4] and mark[4].virt_text
-    if virt ~= nil then
-      for _, chunk in ipairs(virt) do
-        if type(chunk[1]) == "string" and chunk[1]:find("cancelled", 1, true) ~= nil then
-          MiniTest.expect.equality(chunk[2], "HyprpilotTurnEndCancelled")
-          found_cancel_chip = true
-        end
-      end
+  -- The cancel chip should land on the `## pilot` header line as a
+  -- stat-style pill, NOT as virt_text at the end of the buffer.
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local pilot_line
+  for _, l in ipairs(lines) do
+    if l:find("^## pilot") then
+      pilot_line = l
+      break
     end
   end
 
-  MiniTest.expect.equality(found_cancel_chip, true)
+  MiniTest.expect.equality(pilot_line ~= nil, true)
+  MiniTest.expect.equality(pilot_line:find("[cancelled cancelled_by_user]", 1, true) ~= nil, true)
 
   -- The unused `state` binding makes selene happy without dropping a
   -- side effect we still need (state registration with the buffer).
@@ -125,8 +119,8 @@ T["terminal block accumulates output and folds on exit"] = function()
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line_containing(lines, "exit=0"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "  first line"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "  second line"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "first line"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "second line"), true)
 
   -- Block folds after the exit chunk (manual fold gets created by
   -- fold_block). Verify by checking that at least one line in the
@@ -211,6 +205,63 @@ T["HyprpilotInstanceChanged fires when window.switch flips the active id"] = fun
 
   helpers.cleanup_instance(id_a)
   helpers.cleanup_instance(id_b)
+end
+
+T["events.dispatch unwraps the daemon's { name, payload, instanceId } envelope"] = function()
+  -- Capture the notification handler the events module registers
+  -- by stubbing client.on_notification, then drive it with the
+  -- envelope shape the daemon actually emits.
+  local client = require("hyprpilot.client")
+  local original_on_notification = client.on_notification
+  local original_request = client.request
+  local captured
+
+  client.on_notification = function(method, handler)
+    if method == "events/changed" then
+      captured = handler
+    end
+    return function() end
+  end
+
+  -- ensure_subscribed also fires the events/subscribe RPC; short-
+  -- circuit it so the test doesn't hit the wire.
+  client.request = function(_, _, _, callback)
+    callback(nil, { subscribed = true })
+  end
+
+  local events = require("hyprpilot.chat.events")
+  events._reset()
+  events.ensure_subscribed()
+
+  client.on_notification = original_on_notification
+  client.request = original_request
+
+  MiniTest.expect.equality(captured ~= nil, true)
+
+  -- Hand the captured dispatcher the daemon's actual wire shape and
+  -- assert the instance-meta side effect lands.
+  local id = helpers.unique_id()
+  captured({
+    name = "acp:instance-meta",
+    instanceId = id,
+    payload = {
+      event = "instance_meta",
+      instanceId = id,
+      currentModeId = "plan",
+      availableModes = { { id = "plan", name = "Plan" } },
+      mcpsCount = 3,
+    },
+  })
+
+  local winbar = require("hyprpilot.chat.winbar")
+  MiniTest.expect.equality(winbar._meta[id].current_mode_id, "plan")
+  MiniTest.expect.equality(winbar._meta[id].mcps_count, 3)
+
+  -- And the malformed-payload guard rails still hold for things
+  -- missing the discriminator entirely.
+  captured({ no = "envelope at all" })
+
+  winbar.forget(id)
 end
 
 return T

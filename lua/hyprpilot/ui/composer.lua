@@ -37,28 +37,80 @@ M._winid = nil
 
 local INDICATOR_NS = vim.api.nvim_create_namespace("hyprpilot.composer.attachments")
 
----Resolve the configured composer height to a concrete line count.
+---Resolve a config height field (`min_height` or `max_height`). The
+---field can be `integer` (constant), a `fun(lines: number)` (passed
+---`vim.o.lines`), or nil. Returns the floor-1 line count. `fallback`
+---kicks in for nil / invalid values.
+---@param field "min_height" | "max_height"
+---@param fallback integer
 ---@return integer
-local function resolve_height()
-  local raw = (config.options.composer or {}).height
+local function resolve_height_field(field, fallback)
+  local raw = (config.options.composer or {})[field]
 
   if type(raw) == "function" then
     local ok, value = pcall(raw, vim.o.lines)
-
     if ok and type(value) == "number" then
       return math.max(1, math.floor(value))
     end
-
-    log.warn("composer: height function returned %s; falling back to 5", vim.inspect(value))
-
-    return 5
+    log.warn("composer: %s function returned %s; falling back to %d", field, vim.inspect(value), fallback)
+    return fallback
   end
 
   if type(raw) == "number" then
     return math.max(1, math.floor(raw))
   end
 
-  return 5
+  return fallback
+end
+
+---@return integer
+local function resolve_min_height()
+  return resolve_height_field("min_height", 8)
+end
+
+---@return integer
+local function resolve_max_height()
+  return resolve_height_field("max_height", math.max(8, math.floor(vim.o.lines * 0.4)))
+end
+
+---Compute the ideal composer window height for the buffer's current
+---content: clamp(buf_line_count, min_height, max_height). Empty
+---buffer collapses to min_height.
+---@param bufnr integer
+---@return integer
+local function compute_target_height(bufnr)
+  local min_h = resolve_min_height()
+  local max_h = resolve_max_height()
+  if max_h < min_h then
+    max_h = min_h
+  end
+
+  local content_lines = vim.api.nvim_buf_line_count(bufnr)
+  -- nvim_buf_line_count returns 1 for an empty buffer; treat that as 0.
+  if content_lines == 1 and (vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] or "") == "" then
+    content_lines = 0
+  end
+
+  if content_lines < min_h then
+    return min_h
+  end
+  if content_lines > max_h then
+    return max_h
+  end
+  return content_lines
+end
+
+---Resize the composer window to fit its content, clamped to
+---[min_height, max_height]. No-op when the window isn't visible.
+function M.resize()
+  if M._winid == nil or not vim.api.nvim_win_is_valid(M._winid) then
+    return
+  end
+  local bufnr = vim.api.nvim_win_get_buf(M._winid)
+  local target = compute_target_height(bufnr)
+  if vim.api.nvim_win_get_height(M._winid) ~= target then
+    pcall(vim.api.nvim_win_set_height, M._winid, target)
+  end
 end
 
 ---Get-or-create the per-instance composer buffer.
@@ -73,6 +125,7 @@ end
 ---@param desc string
 local function apply_action(bufnr, spec, handler, desc)
   if spec == false or spec == nil then
+    log.debug("composer.apply_action: skipping %s (spec is %s)", desc, vim.inspect(spec))
     return
   end
 
@@ -86,6 +139,7 @@ local function apply_action(bufnr, spec, handler, desc)
 
       for _, key in ipairs(keys) do
         vim.keymap.set(mode, key, handler, { buffer = bufnr, desc = "hyprpilot: " .. desc })
+        log.debug("composer.apply_action: bound %s key=%s mode=%s bufnr=%s", desc, key, mode, bufnr)
       end
     end
   end
@@ -120,6 +174,17 @@ local function ensure_buffer(instance_id)
   apply_action(bufnr, keymaps.close, function()
     M.close()
   end, "close composer")
+
+  -- Auto-resize the composer window to match the buffer's content
+  -- length whenever the captain types / clears / pastes. Clamped to
+  -- [min_height, max_height] in `M.resize`. Buffer-local autocmds so
+  -- closing the composer doesn't leave dangling listeners.
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+    buffer = bufnr,
+    callback = function()
+      M.resize()
+    end,
+  })
 
   buffers[instance_id] = bufnr
 
@@ -411,35 +476,49 @@ function M.is_visible()
   return true
 end
 
----Open the composer split below the chat window. No-op when no instance
----is active or when the chat window isn't visible (open it first).
----Focuses the composer buffer and enters insert mode.
-function M.open()
+---Open the composer split below the chat window. Idempotent — when
+---the composer is already visible, syncs its buffer to the active
+---instance's composer buffer (so switch() flows pick the right
+---draft) and re-enters insert mode. No-op when no instance is
+---active or when the chat window isn't visible (open the chat first).
+---@param opts? { focus?: boolean }  -- `focus = false` skips startinsert
+function M.open(opts)
+  opts = opts or {}
+  local focus = opts.focus ~= false
+
   local instance_id = window.active_instance()
 
   if instance_id == nil then
-    log.warn("composer.open: no active instance")
-
+    log.debug("composer.open: no active instance — skipping")
     return
   end
 
   if not window.is_visible() then
-    log.warn("composer.open: chat window not visible; toggle the chat first")
-
-    return
-  end
-
-  if M.is_visible() then
-    vim.api.nvim_set_current_win(M._winid)
-    vim.cmd("startinsert")
-
+    log.debug("composer.open: chat window not visible — skipping")
     return
   end
 
   local bufnr = ensure_buffer(instance_id)
 
+  if M.is_visible() then
+    -- Already open — re-bind to the active instance's composer buffer
+    -- (handles the switch() case where the chat flipped instances).
+    if vim.api.nvim_win_get_buf(M._winid) ~= bufnr then
+      vim.api.nvim_win_set_buf(M._winid, bufnr)
+    end
+
+    if focus then
+      vim.api.nvim_set_current_win(M._winid)
+      vim.cmd("startinsert")
+    end
+
+    paint_indicator(instance_id)
+    M.resize()
+    return
+  end
+
   vim.api.nvim_set_current_win(window._winid)
-  vim.cmd(string.format("belowright %dsplit", resolve_height()))
+  vim.cmd(string.format("belowright %dsplit", resolve_min_height()))
 
   M._winid = vim.api.nvim_get_current_win()
 
@@ -449,10 +528,17 @@ function M.open()
   vim.wo[M._winid].signcolumn = "no"
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
+  -- `winfixheight` keeps `<C-W>=` and other equalisation passes from
+  -- redistributing space onto the composer, so our auto-resize stays
+  -- the source of truth.
+  vim.wo[M._winid].winfixheight = true
 
   paint_indicator(instance_id)
+  M.resize()
 
-  vim.cmd("startinsert")
+  if focus then
+    vim.cmd("startinsert")
+  end
 end
 
 ---Close the composer split. The buffer persists for next open.
@@ -481,6 +567,8 @@ end
 function M.submit(text, opts)
   local instance_id = (opts or {}).instance_id or window.active_instance()
 
+  log.debug("composer.submit: invoked instance_id=%s text_passed=%s", tostring(instance_id), tostring(text ~= nil))
+
   if instance_id == nil then
     log.warn("composer.submit: no active instance")
 
@@ -497,11 +585,13 @@ function M.submit(text, opts)
     end
 
     text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+    log.debug("composer.submit: read %d bytes from composer bufnr=%s", #text, bufnr)
   end
 
   text = text:gsub("^%s+", ""):gsub("%s+$", "")
 
   if text == "" then
+    log.debug("composer.submit: text empty after trim, no-op")
     return
   end
 

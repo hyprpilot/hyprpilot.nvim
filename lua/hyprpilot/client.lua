@@ -127,9 +127,12 @@ local function dispatch_payload(payload)
   end
 
   if payload.method ~= nil then
+    log.debug("client.dispatch: notification method=%s", payload.method)
+
     local fns = listeners[payload.method]
 
     if fns == nil then
+      log.debug("client.dispatch: no listeners for %s (dropping)", payload.method)
       return
     end
 
@@ -148,10 +151,12 @@ local function dispatch_payload(payload)
     local entry = inflight[payload.id]
 
     if entry == nil then
-      log.warn("client: reply for unknown id=%s", tostring(payload.id))
+      log.warn("client.dispatch: reply for unknown id=%s (in-flight ids=%s)", tostring(payload.id), vim.inspect(vim.tbl_keys(inflight)))
 
       return
     end
+
+    log.debug("client.dispatch: reply for %s id=%s", entry.method, tostring(payload.id))
 
     inflight[payload.id] = nil
 
@@ -174,7 +179,7 @@ local function dispatch_payload(payload)
     return
   end
 
-  log.warn("client: payload has neither method nor id")
+  log.warn("client: payload has neither method nor id: %s", vim.inspect(payload))
 end
 
 ---`vim.fn.sockconnect` `on_data` callback. Accumulates bytes, splits on
@@ -183,22 +188,32 @@ end
 ---@param data string[]
 ---@param _name string
 local function on_data(_chan, data, _name)
-  -- Per :h on_data, the last entry is "" when the stream ends; the
-  -- first chunk continues whatever was in the buffer. Concatenating
-  -- with the existing accumulator is the canonical pattern.
-  buffer = buffer .. table.concat(data, "")
+  -- Neovim's channel callback semantics for raw byte channels are
+  -- the "split on newlines, strip them" shape (see :h channel-bytes):
+  -- `data` is a list where each item is the content between newlines,
+  -- the first item continues the previous chunk's tail, and a
+  -- trailing `""` indicates the chunk ended on a newline boundary.
+  --
+  -- The canonical reconstruction: join with literal "\n", then split
+  -- back the same way. That keeps the line boundaries we need to
+  -- pass JSON-RPC frames to the dispatcher.
+  if type(data) ~= "table" or #data == 0 then
+    return
+  end
 
-  while true do
-    local nl = buffer:find("\n", 1, true)
+  log.debug("client.on_data: %d chunks (total %d bytes)", #data, #table.concat(data, "\n"))
 
-    if nl == nil then
-      return
-    end
+  -- Stitch the first chunk onto any partial buffered tail; everything
+  -- between subsequent items is a real newline boundary.
+  buffer = buffer .. data[1]
 
-    local line = buffer:sub(1, nl - 1)
-    buffer = buffer:sub(nl + 1)
+  for i = 2, #data do
+    local line = buffer
+    buffer = data[i]
 
     if line ~= "" then
+      log.debug("client.on_data: line (first 200 chars): %s", line:sub(1, 200))
+
       local ok, payload = pcall(vim.json.decode, line)
 
       if ok then

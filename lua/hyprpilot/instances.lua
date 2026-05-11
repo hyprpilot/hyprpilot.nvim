@@ -16,6 +16,14 @@ local window = require("hyprpilot.chat.window")
 
 local M = {}
 
+-- Spawn-bearing daemon calls (spawn / focus + ensure / restart) wait
+-- on a cold agent handshake (claude-code, opencode, etc. spinning up
+-- their ACP runtime). The default 5s client timeout is too short for
+-- that path; bump to 30s for the calls that actually hit spawn paths.
+-- Read-only calls (list / info / meta / setMode / setModel / setOption
+-- / rename / shutdown) stay on the default timeout.
+local SPAWN_TIMEOUT_MS = 30000
+
 ---@class hyprpilot.Instance
 ---@field id string
 ---@field name? string
@@ -199,36 +207,31 @@ function M.spawn(opts, callback)
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
 
-  client.request(
-    "instances/spawn",
-    {
-      profileId = opts.profile_id,
-      agentId = opts.agent_id,
-      cwd = cwd,
-      mode = opts.mode,
-      model = opts.model,
-      restore = opts.restore == true,
-    },
-    nil,
-    function(err, result)
-      if err ~= nil then
-        log.warn("instances.spawn: %s", err.message)
-
-        if callback ~= nil then
-          callback(err, nil)
-        end
-
-        return
-      end
-
-      local instance = { id = result.instanceId, cwd = cwd }
-      attach(instance, show_after)
+  client.request("instances/spawn", {
+    profileId = opts.profile_id,
+    agentId = opts.agent_id,
+    cwd = cwd,
+    mode = opts.mode,
+    model = opts.model,
+    restore = opts.restore == true,
+  }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
+    if err ~= nil then
+      log.warn("instances.spawn: %s", err.message)
 
       if callback ~= nil then
-        callback(nil, instance)
+        callback(err, nil)
       end
+
+      return
     end
-  )
+
+    local instance = { id = result.instanceId, cwd = cwd }
+    attach(instance, show_after)
+
+    if callback ~= nil then
+      callback(nil, instance)
+    end
+  end)
 end
 
 ---Focus an instance by id-or-slug. With `ensure = true`, spawns
@@ -243,38 +246,33 @@ function M.focus(instance_id, opts, callback)
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
 
-  client.request(
-    "instances/focus",
-    {
-      instanceId = instance_id,
-      ensure = opts.ensure == true,
-      profileId = opts.profile_id,
-      agentId = opts.agent_id,
-      cwd = cwd,
-      mode = opts.mode,
-      model = opts.model,
-      restore = opts.restore == true,
-    },
-    nil,
-    function(err, result)
-      if err ~= nil then
-        log.warn("instances.focus: %s", err.message)
-
-        if callback ~= nil then
-          callback(err, nil)
-        end
-
-        return
-      end
-
-      local instance = { id = result.instanceId, name = result.name, cwd = cwd }
-      attach(instance, show_after)
+  client.request("instances/focus", {
+    instanceId = instance_id,
+    ensure = opts.ensure == true,
+    profileId = opts.profile_id,
+    agentId = opts.agent_id,
+    cwd = cwd,
+    mode = opts.mode,
+    model = opts.model,
+    restore = opts.restore == true,
+  }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
+    if err ~= nil then
+      log.warn("instances.focus: %s", err.message)
 
       if callback ~= nil then
-        callback(nil, instance)
+        callback(err, nil)
       end
+
+      return
     end
-  )
+
+    local instance = { id = result.instanceId, name = result.name, cwd = cwd }
+    attach(instance, show_after)
+
+    if callback ~= nil then
+      callback(nil, instance)
+    end
+  end)
 end
 
 ---Restart an instance daemon-side. Buffer stays put — the daemon's
@@ -294,7 +292,7 @@ function M.restart(instance_id, callback)
     return
   end
 
-  client.request("instances/restart", { instanceId = id }, nil, function(err, result)
+  client.request("instances/restart", { instanceId = id }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then
       if callback ~= nil then
         callback(err, nil)
