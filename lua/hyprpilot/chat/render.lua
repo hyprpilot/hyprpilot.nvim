@@ -1134,45 +1134,12 @@ local function render_plan(state, record)
   end
 end
 
----Pick the "default" option index for a fresh permission prompt.
----Captain wants Allow / Accept / Proceed pre-focused so a bare `<CR>`
----is the safe-path; falls back to the first option when the prompt
----doesn't include an allow-shaped option.
----@param options table[]
----@return integer
-local function default_focused_idx(options)
-  for i, opt in ipairs(options) do
-    local id = string.lower(tostring(opt.optionId or ""))
-    local name = string.lower(tostring(opt.name or ""))
-    if id:match("^allow") or id:match("^accept") or id:match("^proceed") or name:match("^allow") or name:match("^accept") or name:match("^proceed") then
-      return i
-    end
-  end
-  return 1
-end
-
----Compose the button line shown at the bottom of a permission block.
----@param options table[]
----@param focused_idx integer
----@return string
-local function permission_button_line(options, focused_idx)
-  local parts = {}
-  for i, opt in ipairs(options) do
-    local label = tostring(opt.name or opt.optionId or "?")
-    local cell
-    if i == focused_idx then
-      cell = "[> " .. label .. " <]"
-    else
-      cell = "[ " .. label .. " ]"
-    end
-    table.insert(parts, cell)
-  end
-  return "  " .. table.concat(parts, "  ")
-end
-
----Render a permission_request block (header + tool details + button
----line). Registers the block in `state.permissions` so live
----`permission_resolved` events can dim the row.
+---Forward a permission request to the pinned permission row. Chat
+---buffer stays untouched on purpose — the captain doesn't want
+---permission prompts cluttering the conversation history; the row
+---is the single interaction surface (auto-grows up to 40% vh,
+---default-focuses the Allow-shaped option, exposes Tab/CR/g/d
+---keymaps).
 ---@param state hyprpilot.render.State
 ---@param record table
 local function render_permission_request(state, record)
@@ -1181,70 +1148,22 @@ local function render_permission_request(state, record)
     return
   end
 
-  local existing_id = state.permissions[record.requestId]
-  if existing_id ~= nil and state.blocks[existing_id] ~= nil then
-    log.debug("render.permission_request: requestId=%s already rendered", record.requestId)
+  if state.permissions[record.requestId] ~= nil then
+    log.debug("render.permission_request: requestId=%s already enqueued", record.requestId)
     return
   end
 
-  state.active_text_block = nil
+  -- Track the request id with a sentinel value so resolution events
+  -- can find it. We don't create a chat-buffer block.
+  state.permissions[record.requestId] = "row:" .. record.requestId
 
-  local header = string.format("? permission · %s", record.tool or record.toolKind or "tool")
-  local body = tool_body_lines(record.formatted, record.toolKind)
-  local options = type(record.options) == "table" and record.options or {}
-  local default_idx = default_focused_idx(options)
-  local button_line = permission_button_line(options, default_idx)
-
-  local lines = vim.list_extend({ header }, body)
-  table.insert(lines, "")
-  table.insert(lines, button_line)
-
-  local first_row
-  chat_buffer.with_buffer(state.bufnr, function()
-    first_row = append_lines(state, lines)
-  end)
-
-  local block = track_block(state, "perm:" .. record.requestId, "permission_request", first_row, first_row + #lines - 1)
-  block.request_id = record.requestId
-  block.button_row = #lines - 1
-  block.option_count = #options
-  block.focused_idx = default_idx
-
-  state.permissions[record.requestId] = block.id
-
-  apply_line_hl(state, first_row, "HyprpilotPermissionHeader")
-  apply_line_hl(state, first_row + #lines - 1, "HyprpilotPermissionButton")
-
-  require("hyprpilot.ui.permissions").register(state.bufnr, block, options)
-  require("hyprpilot.chat.permission_row").enqueue(state.instance_id, record.requestId, record.tool or record.toolKind or "tool", options)
-end
-
----Re-render the button line of a permission block (focus change or
----resolution). When `resolved_label` is non-nil the buttons are
----replaced with a dim "resolved: <label>" marker.
----@param state hyprpilot.render.State
----@param block hyprpilot.render.Block
----@param options? table[]
----@param focused_idx? integer
----@param resolved_label? string
-function M.update_permission_buttons(state, block, options, focused_idx, resolved_label)
-  local _, button_row = block_range(state, block)
-  local new_line
-
-  if resolved_label ~= nil then
-    new_line = "  (resolved: " .. resolved_label .. ")"
-  else
-    new_line = permission_button_line(options or {}, focused_idx or block.focused_idx or 1)
-    block.focused_idx = focused_idx or block.focused_idx
-  end
-
-  chat_buffer.with_buffer(state.bufnr, function()
-    local existing = vim.api.nvim_buf_get_lines(state.bufnr, button_row, button_row + 1, false)[1] or ""
-    vim.api.nvim_buf_set_text(state.bufnr, button_row, 0, button_row, #existing, { new_line })
-  end)
-
-  clear_range_hl(state, button_row, button_row)
-  apply_line_hl(state, button_row, resolved_label ~= nil and "HyprpilotPermissionResolved" or "HyprpilotPermissionButton")
+  require("hyprpilot.chat.permission_row").enqueue(state.instance_id, {
+    request_id = record.requestId,
+    tool = record.tool or record.toolKind or "tool",
+    tool_kind = record.toolKind,
+    options = type(record.options) == "table" and record.options or {},
+    formatted = record.formatted,
+  })
 end
 
 ---Drop a permission block from the registry once resolved. The
@@ -1253,42 +1172,13 @@ end
 ---@param request_id string
 ---@param resolved_label? string
 function M.mark_permission_resolved(state, request_id, resolved_label)
-  local block_id = state.permissions[request_id]
-  local block = block_id ~= nil and state.blocks[block_id] or nil
-
-  if block == nil then
-    log.debug("render.mark_permission_resolved: no block for requestId=%s", request_id)
+  if state.permissions[request_id] == nil then
+    log.debug("render.mark_permission_resolved: no pending request for id=%s", request_id)
     return
   end
 
-  -- Replace the button line with a dimmed "(resolved: <label>)" mark
-  -- AND surface the same outcome as a stat-style chip on the
-  -- permission block's header, e.g. `? permission · Bash [allow-once]`.
-  -- The chip is the at-a-glance signal once the block folds (the
-  -- inline marker is hidden inside the fold).
-  M.update_permission_buttons(state, block, nil, nil, resolved_label or "ok")
-
-  if resolved_label ~= nil and resolved_label ~= "" then
-    local head_row = block_range(state, block)
-    local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-    -- Strip any existing chip suffix (handles double-resolution e.g.
-    -- a resolved → resolved replay during re-hydrate) before appending
-    -- the new one.
-    local base = existing:match("^(.-)%s*%[[^%]]*%]%s*$") or existing
-    local new_line = base .. stats.format_pills({ tostring(resolved_label) })
-    if new_line ~= existing then
-      chat_buffer.with_buffer(state.bufnr, function()
-        vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { new_line })
-      end)
-    end
-  end
-
   state.permissions[request_id] = nil
-
-  require("hyprpilot.ui.permissions").unregister(state.bufnr, request_id)
-  require("hyprpilot.chat.permission_row").resolve(request_id)
-
-  fold_block(state, block)
+  require("hyprpilot.chat.permission_row").resolve(request_id, resolved_label)
 end
 
 ---Render one transcript item (from snapshot or live transcript event).
@@ -1369,7 +1259,6 @@ function M.hydrate(state, snapshot)
   state.turn_layouts = {}
   state.pending_fold_rows = {}
 
-  require("hyprpilot.ui.permissions").reset(state.bufnr)
   require("hyprpilot.chat.permission_row").reset()
 
   for _, entry in ipairs(items) do

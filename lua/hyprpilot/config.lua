@@ -7,6 +7,10 @@ local M = {}
 ---@field mcp? hyprpilot.ConfigMcp
 ---@field client? hyprpilot.ConfigClient
 ---@field composer? hyprpilot.ConfigComposer
+---@field permission_row? hyprpilot.ConfigPermissionRow
+
+---@class hyprpilot.ConfigPermissionRow
+---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 40% vh)
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -21,7 +25,8 @@ local M = {}
 ---@field retry_delay_ms? integer    -- delay between connect attempts
 
 ---@class hyprpilot.ConfigComposer
----@field height? integer | (fun(lines: number): number?)
+---@field min_height? integer | (fun(lines: number): number?)  -- minimum / initial composer rows
+---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for auto-grow (default 40% vh)
 ---@field keymaps? hyprpilot.ConfigComposerKeymaps
 
 ---@class hyprpilot.ConfigComposerKeymaps
@@ -55,8 +60,16 @@ local defaults = {
     connect_attempts = 3,
     retry_delay_ms = 1000,
   },
+  permission_row = {
+    max_height = function(lines)
+      return math.max(3, math.floor(lines * 0.4))
+    end,
+  },
   composer = {
-    height = 5,
+    min_height = 8,
+    max_height = function(lines)
+      return math.max(8, math.floor(lines * 0.4))
+    end,
     keymaps = {
       submit = { normal = "<C-CR>", insert = "<C-CR>" },
       cancel = { normal = "<C-c>", insert = "<C-c>" },
