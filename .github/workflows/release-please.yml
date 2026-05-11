@@ -16,6 +16,13 @@
 #   `perf!: replace Y`  → major
 #   `fix!: rewire Z`    → major
 #   plain commit body containing `BREAKING CHANGE: <text>` → major
+#
+# Tag shape: ONE shared tag covers both packages — `vX.Y.Z`.
+# `release-please-config.json` sets `include-component-in-tag: false`
+# and uses the `linked-versions` plugin so `hyprpilot.nvim` and
+# `hyprpilot-nvim-mcp` always share the same version. The release PR
+# is also combined (`separate-pull-requests: false`) so a single PR
+# bumps both packages at once.
 
 name: Release Please
 
@@ -34,7 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: googleapis/release-please-action@v5
+      # Pinned to the v5.0.0 SHA for supply-chain safety; Renovate /
+      # Dependabot can track this with the trailing `# v5.0.0` comment.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/release-please-config.json
