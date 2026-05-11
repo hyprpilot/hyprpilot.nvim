@@ -48,6 +48,10 @@ M.LINKS = {
 
   -- Header buffer (pinned single-line bar above the chat split)
   HyprpilotHeader = "StatusLine",
+
+  -- Permission row (pinned single-line bar between chat and composer
+  -- while at least one permission is pending)
+  HyprpilotPermissionRow = "WarningMsg",
 }
 
 ---Apply (or re-apply) every default highlight link. Idempotent —

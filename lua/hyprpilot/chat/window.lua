@@ -207,6 +207,7 @@ function M.hide()
 
   require("hyprpilot.ui.composer").close()
   require("hyprpilot.chat.header").close()
+  require("hyprpilot.chat.permission_row").close()
 
   pcall(vim.api.nvim_win_close, M._winid, true)
   M._winid = nil

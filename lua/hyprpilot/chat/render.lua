@@ -846,6 +846,7 @@ local function render_permission_request(state, record)
   apply_line_hl(state, first_row + #lines - 1, "HyprpilotPermissionButton")
 
   require("hyprpilot.ui.permissions").register(state.bufnr, block, options)
+  require("hyprpilot.chat.permission_row").enqueue(state.instance_id, record.requestId, record.tool or record.toolKind or "tool", options)
 end
 
 ---Re-render the button line of a permission block (focus change or
@@ -894,6 +895,7 @@ function M.mark_permission_resolved(state, request_id, resolved_label)
   state.permissions[request_id] = nil
 
   require("hyprpilot.ui.permissions").unregister(state.bufnr, request_id)
+  require("hyprpilot.chat.permission_row").resolve(request_id)
 
   fold_block(state, block)
 end
@@ -976,6 +978,7 @@ function M.hydrate(state, snapshot)
   state.pending_fold_rows = {}
 
   require("hyprpilot.ui.permissions").reset(state.bufnr)
+  require("hyprpilot.chat.permission_row").reset()
 
   for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)
