@@ -124,6 +124,7 @@ local function dispatch(raw)
     winbar.update_mode(event.instanceId, event.currentModeId)
   elseif event.event == "usage_update" then
     winbar.update_usage(event.instanceId, event.used, event.size, event.cost)
+    render.handle_usage_update(event)
   elseif event.event == "session_info_update" then
     winbar.update_session(event.instanceId, event.title)
   elseif event.event == "state" then

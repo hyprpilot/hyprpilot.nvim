@@ -254,14 +254,16 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   local pilot = index_of(function(l)
     return l == "## pilot"
   end)
+  -- Section headers carry a `[N <unit>]` chip after the first item
+  -- lands, so match by prefix rather than exact string.
   local tasks = index_of(function(l)
-    return l == "### tasks"
+    return l:find("^### tasks") ~= nil
   end)
   local thoughts = index_of(function(l)
-    return l == "### thoughts"
+    return l:find("^### thoughts") ~= nil
   end)
   local tools = index_of(function(l)
-    return l == "### tools"
+    return l:find("^### tools") ~= nil
   end)
   local prose = index_of(function(l)
     return l:find("early prose", 1, true) ~= nil
@@ -282,6 +284,93 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   MiniTest.expect.equality(thoughts < tools, true)
   MiniTest.expect.equality(tools < prose, true)
   MiniTest.expect.equality(prose < prose_tail, true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["pilot header repaints with usage / elapsed chips on live updates"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  render.state(id, bufnr)
+
+  -- Wall-clock start + later end so the elapsed chip is meaningful;
+  -- we just want SOME duration in the header, not the exact value.
+  local start_ms = (os.time() - 5) * 1000
+  render.handle_turn_started({ instanceId = id, turnId = "t1", startedAt = start_ms })
+  render.handle_transcript({ instanceId = id, turnId = "t1", item = { kind = "agent_text", text = "hello" } })
+
+  -- Usage_update fires; pilot header should grow `120k/200k` + `$0.74` chips.
+  render.handle_usage_update({
+    instanceId = id,
+    used = 120000,
+    size = 200000,
+    cost = { amount = 0.74, currency = "USD" },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local pilot_line
+  for _, l in ipairs(lines) do
+    if l:find("^## pilot") then
+      pilot_line = l
+      break
+    end
+  end
+
+  MiniTest.expect.equality(pilot_line ~= nil, true)
+  MiniTest.expect.equality(pilot_line:find("[120k/200k]", 1, true) ~= nil, true)
+  MiniTest.expect.equality(pilot_line:find("[$0.74]", 1, true) ~= nil, true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["section headers carry `[N <unit>]` chips that grow with item_count"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-1",
+          toolKind = "execute",
+          title = "ls",
+          state = "completed",
+          formatted = { title = "ls", stats = {}, fields = { { label = "command", value = "ls" } } },
+        },
+      },
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-2",
+          toolKind = "execute",
+          title = "echo",
+          state = "completed",
+          formatted = { title = "echo hi", stats = {}, fields = { { label = "command", value = "echo hi" } } },
+        },
+      },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local tools_line
+  for _, l in ipairs(lines) do
+    if l:find("^### tools") then
+      tools_line = l
+      break
+    end
+  end
+
+  MiniTest.expect.equality(tools_line ~= nil, true)
+  -- Two tool_calls registered → `[2 calls]` chip.
+  MiniTest.expect.equality(tools_line:find("[2 calls]", 1, true) ~= nil, true)
 
   helpers.cleanup_instance(id)
 end

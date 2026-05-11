@@ -18,6 +18,7 @@
 
 local chat_buffer = require("hyprpilot.chat.buffer")
 local log = require("hyprpilot.log")
+local stats = require("hyprpilot.chat.stats")
 
 local M = {}
 
@@ -47,12 +48,17 @@ local M = {}
 ---@field head_mark integer                     -- extmark on the `### tasks` / `### thoughts` / `### tools` header row
 ---@field tail_mark integer                     -- extmark on the section's trailing blank row (visual separator)
 ---@field block_ids string[]                    -- ids of blocks that belong to this section (ordered)
+---@field item_count integer                    -- number of inner blocks rendered so far (drives `[N]` chip on header)
 
 ---@class hyprpilot.render.TurnLayout
 ---@field turn_id string
+---@field pilot_header_mark integer             -- extmark on the `## pilot` header row so we can re-render stats
 ---@field section_anchor_mark integer           -- new sections insert at this row; stays put when prose grows
 ---@field prose_anchor_mark integer             -- agent_text appends at this extmark; moves down as prose grows
 ---@field sections table<string, hyprpilot.render.Section>  -- "tasks" | "thoughts" | "tools" → section
+---@field started_at_ms? integer                -- turn_started timestamp (daemon-side, ms since epoch)
+---@field ended_at_ms? integer                  -- turn_ended timestamp (set on handle_turn_ended)
+---@field usage? { used?: integer, size?: integer, cost?: table }  -- latest usage_update reading
 
 ---@class hyprpilot.render.State
 ---@field bufnr integer
@@ -412,6 +418,7 @@ local function append_turn_header(state, role, turn_id)
   emitted[role] = true
 
   local label = role == "agent" and "pilot" or "captain"
+  local header_row
   local prose_anchor_row
 
   chat_buffer.with_buffer(state.bufnr, function()
@@ -424,6 +431,9 @@ local function append_turn_header(state, role, turn_id)
     -- the header as before.
     local lines = prepend_blank and { "", "## " .. label, "" } or { "## " .. label, "" }
     local first_row = append_lines(state, lines)
+    -- The "## <label>" line is the second-to-last line we inserted
+    -- (the trailing blank is the prose anchor row).
+    header_row = first_row + #lines - 2
     prose_anchor_row = first_row + #lines - 1
   end)
 
@@ -437,16 +447,113 @@ local function append_turn_header(state, role, turn_id)
       -- false attaches the mark to the LEFT of the insertion boundary).
       -- prose_anchor uses gravity=true so it follows the prose tail
       -- down as more chunks stream in.
+      local pilot_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row, 0, { right_gravity = true })
       local section_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, prose_anchor_row, 0, { right_gravity = false })
       local prose_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, prose_anchor_row, 0, { right_gravity = true })
+      local pending = state._pending_turn_started and state._pending_turn_started[turn_id] or nil
       state.turn_layouts[turn_id] = {
         turn_id = turn_id,
+        pilot_header_mark = pilot_mark,
         section_anchor_mark = section_mark,
         prose_anchor_mark = prose_mark,
         sections = {},
+        started_at_ms = pending,
       }
+      if state._pending_turn_started ~= nil then
+        state._pending_turn_started[turn_id] = nil
+      end
     end
   end
+end
+
+---Compose the `## pilot` header line including stat pills. Pills are
+---driven by the turn's accumulated metadata (started_at / usage /
+---ended_at). Idempotent — re-rendering with the same inputs produces
+---the same string.
+---@param layout hyprpilot.render.TurnLayout
+---@return string
+local function pilot_header_line(layout)
+  -- Wall-clock `now` for live elapsed (matches the daemon's
+  -- started_at_ms which is also wall-clock). `os.time()` returns
+  -- seconds; we multiply for ms parity.
+  local pills = stats.turn_pills({
+    started_at_ms = layout.started_at_ms,
+    ended_at_ms = layout.ended_at_ms,
+    now_ms = os.time() * 1000,
+    usage = layout.usage,
+  })
+  return "## pilot" .. stats.format_pills(pills)
+end
+
+---Re-paint the `## pilot` header for `layout` with current stat pills
+---in place. Cheap; called whenever usage_update or turn_ended changes
+---the metadata.
+---@param state hyprpilot.render.State
+---@param layout hyprpilot.render.TurnLayout
+local function repaint_pilot_header(state, layout)
+  if layout.pilot_header_mark == nil then
+    return
+  end
+  local row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, layout.pilot_header_mark, {})[1]
+  if row == nil then
+    return
+  end
+
+  local existing = vim.api.nvim_buf_get_lines(state.bufnr, row, row + 1, false)[1] or ""
+  local new_line = pilot_header_line(layout)
+  if new_line == existing then
+    return
+  end
+
+  chat_buffer.with_buffer(state.bufnr, function()
+    vim.api.nvim_buf_set_text(state.bufnr, row, 0, row, #existing, { new_line })
+  end)
+end
+
+---Compose a section header line with the item-count pill.
+---@param kind string
+---@param item_count integer
+---@return string
+local function section_header_line(kind, item_count)
+  local base = SECTION_HEADER[kind] or ("### " .. kind)
+  if item_count == nil or item_count <= 0 then
+    return base
+  end
+
+  local unit
+  if kind == "tasks" then
+    unit = item_count == 1 and "plan" or "plans"
+  elseif kind == "thoughts" then
+    unit = item_count == 1 and "thought" or "thoughts"
+  elseif kind == "tools" then
+    unit = item_count == 1 and "call" or "calls"
+  else
+    unit = "items"
+  end
+
+  return base .. stats.format_pills({ string.format("%d %s", item_count, unit) })
+end
+
+---Re-paint a section header line in place after its item_count
+---changes (called whenever a new block is appended to the section).
+---@param state hyprpilot.render.State
+---@param kind string
+---@param section hyprpilot.render.Section
+local function repaint_section_header(state, kind, section)
+  local row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})[1]
+  if row == nil then
+    return
+  end
+
+  local existing = vim.api.nvim_buf_get_lines(state.bufnr, row, row + 1, false)[1] or ""
+  local new_line = section_header_line(kind, section.item_count or 0)
+  if new_line == existing then
+    return
+  end
+
+  chat_buffer.with_buffer(state.bufnr, function()
+    vim.api.nvim_buf_set_text(state.bufnr, row, 0, row, #existing, { new_line })
+  end)
 end
 
 ---Ensure the `### tasks` / `### thoughts` / `### tools` section exists
@@ -469,7 +576,7 @@ local function ensure_section(state, turn_id, kind)
   end
 
   local insert_row = find_section_insert_row(state, layout, kind)
-  local header = SECTION_HEADER[kind] or ("### " .. kind)
+  local header = section_header_line(kind, 0)
 
   -- Add a leading blank only when the row immediately above isn't
   -- already blank (e.g. first section under `## pilot`). When the
@@ -504,7 +611,7 @@ local function ensure_section(state, turn_id, kind)
   local tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, tail_row, 0, { right_gravity = true })
   apply_line_hl(state, header_row, "HyprpilotSectionHeader")
 
-  layout.sections[kind] = { head_mark = head_mark, tail_mark = tail_mark, block_ids = {} }
+  layout.sections[kind] = { head_mark = head_mark, tail_mark = tail_mark, block_ids = {}, item_count = 0 }
   return layout.sections[kind]
 end
 
@@ -545,6 +652,20 @@ local function insert_block_into_section(state, turn_id, kind, block_id, block_k
   }
   state.blocks[block_id] = block
   table.insert(section.block_ids, block_id)
+  section.item_count = (section.item_count or 0) + 1
+
+  -- Find which kind this section is so we can repaint its `[N items]`
+  -- chip. The section table doesn't store its own kind; lookup by
+  -- comparing references in the layout's sections map.
+  local layout = get_layout(state, turn_id)
+  if layout ~= nil then
+    for kind_lookup, candidate in pairs(layout.sections) do
+      if candidate == section then
+        repaint_section_header(state, kind_lookup, section)
+        break
+      end
+    end
+  end
 
   return block, insert_row
 end
@@ -699,31 +820,6 @@ local function tool_status_badge(state_str)
   return "[run]"
 end
 
----Format a `Stat` entry from the `formatted.stats` array.
----@param stat table
----@return string?
-local function format_stat(stat)
-  if type(stat) ~= "table" or type(stat.kind) ~= "string" then
-    return nil
-  end
-
-  if stat.kind == "text" then
-    return tostring(stat.value or "")
-  elseif stat.kind == "diff" then
-    return string.format("+%d -%d", stat.added or 0, stat.removed or 0)
-  elseif stat.kind == "duration" then
-    local ms = tonumber(stat.ms) or 0
-    if ms < 1000 then
-      return string.format("%dms", ms)
-    elseif ms < 60000 then
-      return string.format("%.1fs", ms / 1000)
-    end
-    return string.format("%dm%ds", math.floor(ms / 60000), math.floor((ms % 60000) / 1000))
-  end
-
-  return nil
-end
-
 ---Heuristic: pick a fenced-code language hint for a tool's output
 ---based on its kind. Terminals dump shell output (`console`); read /
 ---fetch / write / edit fall back to plain text (no language).
@@ -830,20 +926,13 @@ local function tool_header_line(record)
   local title = (record.formatted and record.formatted.title) or record.title or record.toolKind or "tool"
   local badge = tool_status_badge(record.state)
   local icon = tool_icon(record.toolKind)
-  local stats_parts = {}
+  local pill_labels = {}
 
   if record.formatted and type(record.formatted.stats) == "table" then
-    for _, stat in ipairs(record.formatted.stats) do
-      local s = format_stat(stat)
-      if s ~= nil then
-        table.insert(stats_parts, s)
-      end
-    end
+    pill_labels = stats.from_wire_stats(record.formatted.stats)
   end
 
-  local stats = #stats_parts > 0 and (" · " .. table.concat(stats_parts, " ")) or ""
-
-  return string.format("%s %s %s%s", icon, badge, title, stats)
+  return string.format("%s %s %s", icon, badge, title) .. stats.format_pills(pill_labels)
 end
 
 ---Render a tool-call block (initial). Body holds description + fields
@@ -1332,7 +1421,49 @@ function M.handle_turn_started(event)
     return
   end
 
-  log.debug("render.handle_turn_started: instance=%s turnId=%s", event.instanceId, event.turnId)
+  log.debug("render.handle_turn_started: instance=%s turnId=%s started_at=%s", event.instanceId, event.turnId, tostring(event.startedAt))
+
+  -- Record the turn's start time on the layout so the pilot header
+  -- can render its `[<elapsed>]` chip. The layout itself is created
+  -- lazily by `append_turn_header` on the first agent-side item; if
+  -- it doesn't exist yet, we stash on a pending table keyed by turn
+  -- id and apply when the layout shows up.
+  local started_at = event.startedAt or event.started_at
+  if type(started_at) == "number" and event.turnId ~= nil then
+    state._pending_turn_started = state._pending_turn_started or {}
+    state._pending_turn_started[event.turnId] = started_at
+
+    local layout = state.turn_layouts[event.turnId]
+    if layout ~= nil then
+      layout.started_at_ms = started_at
+      repaint_pilot_header(state, layout)
+    end
+  end
+end
+
+---Live `usage_update` event. Attaches the latest reading to the
+---active turn's layout and repaints the pilot header chips.
+---@param event table
+function M.handle_usage_update(event)
+  local state = M._states[event.instanceId]
+  if state == nil then
+    log.debug("render.handle_usage_update: no state for instance=%s", tostring(event.instanceId))
+    return
+  end
+
+  local turn_id = state.current_turn
+  if turn_id == nil then
+    log.debug("render.handle_usage_update: no active turn for instance=%s", tostring(event.instanceId))
+    return
+  end
+
+  local layout = state.turn_layouts[turn_id]
+  if layout == nil then
+    return
+  end
+
+  layout.usage = { used = event.used, size = event.size, cost = event.cost }
+  repaint_pilot_header(state, layout)
 end
 
 ---Live `turn_ended` event handler. Stamps a stop-reason chip on the
@@ -1356,6 +1487,15 @@ function M.handle_turn_ended(event)
 
   if state.current_turn == event.turnId then
     state.current_turn = nil
+  end
+
+  -- Stamp the turn's end timestamp + repaint the pilot header so the
+  -- elapsed chip freezes at its final value.
+  local layout = state.turn_layouts[event.turnId]
+  if layout ~= nil then
+    local ended_at = event.endedAt or event.ended_at or (os.time() * 1000)
+    layout.ended_at_ms = ended_at
+    repaint_pilot_header(state, layout)
   end
 
   local chip
@@ -1390,7 +1530,6 @@ function M.handle_turn_ended(event)
   -- tool / terminal / permission blocks have already auto-folded
   -- themselves at their terminal state; the outer section fold sits
   -- on top of those (nested manual folds work fine in Neovim).
-  local layout = state.turn_layouts[event.turnId]
   if layout ~= nil then
     for _, section in pairs(layout.sections) do
       local head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})[1]
