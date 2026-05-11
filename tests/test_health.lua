@@ -51,24 +51,6 @@ T["check reports nvim version"] = function()
   MiniTest.expect.equality(find_message(records, "ok", "Neovim") ~= nil, true)
 end
 
-T["check warns when uvx missing (and otherwise OKs it)"] = function()
-  local health_mod = require("hyprpilot.health")
-  local original_executable = vim.fn.executable
-
-  vim.fn.executable = function(name)
-    if name == "uvx" then
-      return 0
-    end
-    return original_executable(name)
-  end
-
-  local records = capture_health(health_mod.check)
-
-  vim.fn.executable = original_executable
-
-  MiniTest.expect.equality(find_message(records, "warn", "uvx") ~= nil, true)
-end
-
 T["check warns when daemon socket missing"] = function()
   -- Override the configured socket to a path that definitely does
   -- not exist so the file-stat check fails predictably.

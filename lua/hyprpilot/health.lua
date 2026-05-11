@@ -143,18 +143,6 @@ local function check_listen_socket()
   health.ok("`NVIM_LISTEN_ADDRESS` matches the listen socket")
 end
 
-local function check_uvx()
-  if vim.fn.executable("uvx") == 1 then
-    health.ok("`uvx` is on $PATH")
-    return
-  end
-
-  health.warn("`uvx` not found on $PATH", {
-    "Install via `pipx install uv` or `brew install uv`.",
-    "The hyprpilot daemon spawns the MCP bridge via `uvx hyprpilot-nvim-mcp`; without `uvx` on the daemon's $PATH the bridge will not start.",
-  })
-end
-
 local function check_mcp()
   local config = require("hyprpilot.config").options.mcp or {}
 
@@ -191,7 +179,6 @@ function M.check()
   check_socket()
   check_daemon_version()
   check_listen_socket()
-  check_uvx()
   check_mcp()
 end
 
