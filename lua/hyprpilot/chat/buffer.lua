@@ -95,7 +95,7 @@ function M.placeholder()
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
       "# hyprpilot",
       "",
-      "No instances. Spawn one via `require('hyprpilot').spawn({})`.",
+      "No instances. Spawn one via `require('hyprpilot.instances').spawn({})`.",
     })
   end)
 
