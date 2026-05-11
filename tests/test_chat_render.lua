@@ -202,6 +202,90 @@ T["permission_request renders button row, resolved replaces it"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["pilot turn aggregates plan/thought/tool into ### sections in priority order with prose below"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  -- Drive the items in arrival-order opposite to canonical section
+  -- priority (tools first, then thought, then plan) — the canonical
+  -- order tasks → thoughts → tools should still emerge in the buffer.
+  -- Prose lands at the very end regardless of arrival order, even
+  -- though more sections show up after it.
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "agent_text", text = "early prose" } },
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-1",
+          toolKind = "execute",
+          title = "ls",
+          state = "completed",
+          formatted = { title = "ls", stats = {}, fields = { { label = "command", value = "ls" } } },
+        },
+      },
+      { turnId = "t1", item = { kind = "agent_thought", text = "thinking" } },
+      {
+        turnId = "t1",
+        item = {
+          kind = "plan",
+          steps = { { content = "A", status = "completed" } },
+        },
+      },
+      { turnId = "t1", item = { kind = "agent_text", text = " continued" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  local function index_of(predicate)
+    for i, l in ipairs(lines) do
+      if predicate(l) then
+        return i
+      end
+    end
+    return nil
+  end
+
+  local pilot = index_of(function(l)
+    return l == "## pilot"
+  end)
+  local tasks = index_of(function(l)
+    return l == "### tasks"
+  end)
+  local thoughts = index_of(function(l)
+    return l == "### thoughts"
+  end)
+  local tools = index_of(function(l)
+    return l == "### tools"
+  end)
+  local prose = index_of(function(l)
+    return l:find("early prose", 1, true) ~= nil
+  end)
+  local prose_tail = index_of(function(l)
+    return l:find("continued", 1, true) ~= nil
+  end)
+
+  MiniTest.expect.equality(pilot ~= nil, true)
+  MiniTest.expect.equality(tasks ~= nil, true)
+  MiniTest.expect.equality(thoughts ~= nil, true)
+  MiniTest.expect.equality(tools ~= nil, true)
+  MiniTest.expect.equality(prose ~= nil, true)
+  MiniTest.expect.equality(prose_tail ~= nil, true)
+  -- Canonical order: pilot < tasks < thoughts < tools < prose < prose_tail.
+  MiniTest.expect.equality(pilot < tasks, true)
+  MiniTest.expect.equality(tasks < thoughts, true)
+  MiniTest.expect.equality(thoughts < tools, true)
+  MiniTest.expect.equality(tools < prose, true)
+  MiniTest.expect.equality(prose < prose_tail, true)
+
+  helpers.cleanup_instance(id)
+end
+
 T["unknown wire kind logs warn but doesn't crash render"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")

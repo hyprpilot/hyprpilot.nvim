@@ -31,6 +31,9 @@ M.LINKS = {
   HyprpilotThoughtHeader = "Conceal",
   HyprpilotThoughtBody = "Comment",
 
+  -- Per-turn section headers (### tasks / ### thoughts / ### tools)
+  HyprpilotSectionHeader = "Title",
+
   -- Permission block
   HyprpilotPermissionHeader = "WarningMsg",
   HyprpilotPermissionBody = "Comment",

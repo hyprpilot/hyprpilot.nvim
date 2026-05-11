@@ -43,6 +43,16 @@ local M = {}
 ---@field option_count? integer
 ---@field focused_idx? integer
 
+---@class hyprpilot.render.Section
+---@field head_mark integer                     -- extmark on the `### tasks` / `### thoughts` / `### tools` header row
+---@field block_ids string[]                    -- ids of blocks that belong to this section (ordered)
+
+---@class hyprpilot.render.TurnLayout
+---@field turn_id string
+---@field section_anchor_mark integer           -- new sections insert at this row; stays put when prose grows
+---@field prose_anchor_mark integer             -- agent_text appends at this extmark; moves down as prose grows
+---@field sections table<string, hyprpilot.render.Section>  -- "tasks" | "thoughts" | "tools" → section
+
 ---@class hyprpilot.render.State
 ---@field bufnr integer
 ---@field instance_id string
@@ -54,6 +64,7 @@ local M = {}
 ---@field permissions table<string, string>     -- request id → block id
 ---@field terminals table<string, hyprpilot.render.TerminalState>  -- terminal id → state
 ---@field headers_emitted table<string, table<string, boolean>>  -- turn_id → { user?, agent? } so each (turn, role) header drops at most once
+---@field turn_layouts table<string, hyprpilot.render.TurnLayout>  -- per-turn section anchors + prose anchor (only pilot turns)
 ---@field pending_fold_rows integer[]           -- 0-indexed rows whose fold should close on next window-show
 ---@field oldest_seq? integer                   -- snapshot's oldestSeq cursor; nil when transcript is empty
 ---@field has_more boolean                      -- true when the daemon reported more items beyond what we fetched
@@ -81,6 +92,7 @@ local HL_NS = vim.api.nvim_create_namespace("hyprpilot.render.hl")
 -- the line it's declared on.
 local close_fold_at
 local fold_block
+local fold_range
 
 ---Get-or-create the per-instance render state.
 ---@param instance_id string
@@ -107,6 +119,7 @@ function M.state(instance_id, bufnr)
     permissions = {},
     terminals = {},
     headers_emitted = {},
+    turn_layouts = {},
     pending_fold_rows = {},
     has_more = false,
     snapshot_limit = 100,
@@ -233,6 +246,84 @@ local function clear_range_hl(state, start_row, end_row)
   vim.api.nvim_buf_clear_namespace(state.bufnr, HL_NS, start_row, end_row + 1)
 end
 
+---Per-turn section ordering. Sections appear in this order (top to
+---bottom) between the `## pilot` header and the prose. The values
+---double as priority ranks for new-section insertion.
+local SECTION_ORDER = { tasks = 1, thoughts = 2, tools = 3 }
+
+local SECTION_HEADER = {
+  tasks = "### tasks",
+  thoughts = "### thoughts",
+  tools = "### tools",
+}
+
+---Resolve the turn layout for `turn_id`, or nil when this isn't a
+---pilot turn (captain prompts don't get sections — they're just text).
+---@param state hyprpilot.render.State
+---@param turn_id? string
+---@return hyprpilot.render.TurnLayout?
+local function get_layout(state, turn_id)
+  if turn_id == nil then
+    return nil
+  end
+  return state.turn_layouts[turn_id]
+end
+
+---Resolve `(head_row, tail_row)` for a block via its tracked extmarks.
+---Forward-declared so `section_end_row` (below) can call it before its
+---definition further down. Don't reorder — the original definition
+---still lands later for the bulk of consumers.
+local block_range_fn
+
+---Resolve the row JUST BELOW the last visible content of a section
+---(i.e., where the next inner block should insert). Returns
+---`head_row` when the section has no body yet.
+---@param state hyprpilot.render.State
+---@param section hyprpilot.render.Section
+---@return integer
+local function section_end_row(state, section)
+  local head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})[1]
+  local end_row = head_row
+
+  for _, block_id in ipairs(section.block_ids) do
+    local block = state.blocks[block_id]
+    if block ~= nil then
+      local _, tail = block_range_fn(state, block)
+      if tail > end_row then
+        end_row = tail
+      end
+    end
+  end
+
+  return end_row
+end
+
+---Find the row at which a NEW section of `kind` should insert: just
+---above the next-priority existing section (so the canonical order
+---tasks → thoughts → tools is preserved), or the section_anchor row
+---when no higher-priority section exists yet. Falls back to
+---prose_anchor when the section anchor isn't set (legacy turns).
+---@param state hyprpilot.render.State
+---@param layout hyprpilot.render.TurnLayout
+---@param kind string
+---@return integer
+local function find_section_insert_row(state, layout, kind)
+  local order = SECTION_ORDER[kind]
+  local anchor_mark = layout.section_anchor_mark or layout.prose_anchor_mark
+  local insert_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, anchor_mark, {})[1]
+
+  for other_kind, other in pairs(layout.sections) do
+    if SECTION_ORDER[other_kind] > order then
+      local other_head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, other.head_mark, {})[1]
+      if other_head_row < insert_row then
+        insert_row = other_head_row
+      end
+    end
+  end
+
+  return insert_row
+end
+
 ---Resolve the highlight group for a tool-call header row by state.
 ---@param tool_state? string
 ---@return string
@@ -271,6 +362,9 @@ local function block_range(state, block)
 
   return head[1], tail[1]
 end
+
+-- Wire the forward-declared alias (declared above `section_end_row`).
+block_range_fn = block_range
 
 ---Replace the body lines of a block (everything from `head_row + 1`
 ---through `tail_row`). Header line stays put. Re-anchors the tail
@@ -316,23 +410,136 @@ local function append_turn_header(state, role, turn_id)
   emitted[role] = true
 
   local label = role == "agent" and "pilot" or "captain"
+  local prose_anchor_row
 
   chat_buffer.with_buffer(state.bufnr, function()
     local total = vim.api.nvim_buf_line_count(state.bufnr)
     local prepend_blank = not (total == 1 and vim.api.nvim_buf_get_lines(state.bufnr, 0, 1, false)[1] == "")
 
+    -- For pilot turns: the trailing blank row IS the prose anchor —
+    -- agent_text inserts there, sections insert above it. For captain
+    -- turns we don't need a layout; the user_prompt text appends below
+    -- the header as before.
     local lines = prepend_blank and { "", "## " .. label, "" } or { "## " .. label, "" }
-    append_lines(state, lines)
+    local first_row = append_lines(state, lines)
+    prose_anchor_row = first_row + #lines - 1
   end)
 
   state.active_text_block = nil
 
   if role == "agent" then
     state.current_turn = turn_id
+    if turn_id ~= nil and state.turn_layouts[turn_id] == nil and prose_anchor_row ~= nil then
+      -- section_anchor uses gravity=false so it STAYS at the topmost
+      -- section row even when prose inserts at the same row (gravity-
+      -- false attaches the mark to the LEFT of the insertion boundary).
+      -- prose_anchor uses gravity=true so it follows the prose tail
+      -- down as more chunks stream in.
+      local section_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, prose_anchor_row, 0, { right_gravity = false })
+      local prose_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, prose_anchor_row, 0, { right_gravity = true })
+      state.turn_layouts[turn_id] = {
+        turn_id = turn_id,
+        section_anchor_mark = section_mark,
+        prose_anchor_mark = prose_mark,
+        sections = {},
+      }
+    end
   end
 end
 
----Append `text` to the buffer's current `agent_text` block.
+---Ensure the `### tasks` / `### thoughts` / `### tools` section exists
+---in `turn_id`'s layout, inserting the header line at the correct
+---priority-ordered position. Returns the section table (head_mark +
+---block_ids), or `nil` when no layout is registered for the turn
+---(captain turn / spontaneous item).
+---@param state hyprpilot.render.State
+---@param turn_id? string
+---@param kind string
+---@return hyprpilot.render.Section?
+local function ensure_section(state, turn_id, kind)
+  local layout = get_layout(state, turn_id)
+  if layout == nil then
+    return nil
+  end
+
+  if layout.sections[kind] ~= nil then
+    return layout.sections[kind]
+  end
+
+  local insert_row = find_section_insert_row(state, layout, kind)
+  local header = SECTION_HEADER[kind] or ("### " .. kind)
+
+  chat_buffer.with_buffer(state.bufnr, function()
+    vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, { header })
+  end)
+
+  local head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, insert_row, 0, { right_gravity = true })
+  apply_line_hl(state, insert_row, "HyprpilotSectionHeader")
+
+  layout.sections[kind] = { head_mark = head_mark, block_ids = {} }
+  return layout.sections[kind]
+end
+
+---Insert `lines` into `kind`'s section as a single block tracked by
+---`block_id`. Returns the block (with head_mark / tail_mark wired) and
+---the row where the block's header now lives. Returns `nil, nil` when
+---the turn has no layout (caller falls back to legacy append).
+---@param state hyprpilot.render.State
+---@param turn_id? string
+---@param kind string                     -- section kind ("tasks" / "thoughts" / "tools")
+---@param block_id string
+---@param block_kind hyprpilot.render.BlockKind
+---@param lines string[]
+---@return hyprpilot.render.Block?
+---@return integer?
+local function insert_block_into_section(state, turn_id, kind, block_id, block_kind, lines)
+  local section = ensure_section(state, turn_id, kind)
+  if section == nil then
+    return nil, nil
+  end
+
+  local end_row = section_end_row(state, section)
+  local insert_row = end_row + 1
+
+  chat_buffer.with_buffer(state.bufnr, function()
+    vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, lines)
+  end)
+
+  local block = {
+    id = block_id,
+    kind = block_kind,
+    turn_id = state.current_turn,
+    head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, insert_row, 0, { right_gravity = true }),
+    tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, insert_row + #lines - 1, 0, { right_gravity = true }),
+  }
+  state.blocks[block_id] = block
+  table.insert(section.block_ids, block_id)
+
+  return block, insert_row
+end
+
+---Insert `lines` directly under the prose anchor of `turn_id`, growing
+---the prose region. Returns the first row of the inserted content.
+---When no layout is registered, falls back to appending at the end.
+---@param state hyprpilot.render.State
+---@param turn_id? string
+---@param lines string[]
+---@return integer
+local function insert_at_prose_anchor(state, turn_id, lines)
+  local layout = get_layout(state, turn_id)
+  if layout == nil then
+    return append_lines(state, lines)
+  end
+
+  local anchor_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, layout.prose_anchor_mark, {})[1]
+  vim.api.nvim_buf_set_lines(state.bufnr, anchor_row, anchor_row, false, lines)
+  return anchor_row
+end
+
+---Append `text` to the buffer's current `agent_text` block. Prose
+---lands at the turn's prose-anchor (just below the section block),
+---so streaming text never gets pushed below new tools / thoughts /
+---plans that arrive afterwards.
 ---@param state hyprpilot.render.State
 ---@param text string
 local function append_agent_text(state, text)
@@ -340,25 +547,41 @@ local function append_agent_text(state, text)
     return
   end
 
+  local turn_id = state.current_turn
+  local layout = get_layout(state, turn_id)
+
   chat_buffer.with_buffer(state.bufnr, function()
     local bufnr = state.bufnr
+    local chunks = vim.split(text, "\n", { plain = true })
 
     if state.active_text_block == nil then
-      append_lines(state, vim.split(text, "\n", { plain = true }))
-
-      state.active_text_block = { kind = "agent_text", turn_id = state.current_turn }
-
+      -- First chunk of prose for this turn: insert all chunks at the
+      -- prose anchor (or end-of-buffer when no layout exists).
+      insert_at_prose_anchor(state, turn_id, chunks)
+      state.active_text_block = { kind = "agent_text", turn_id = turn_id }
       return
     end
 
-    local chunks = vim.split(text, "\n", { plain = true })
-    local last_row = vim.api.nvim_buf_line_count(bufnr) - 1
-    local last_line = vim.api.nvim_buf_get_lines(bufnr, last_row, last_row + 1, false)[1] or ""
+    -- Continuation: append `chunks[1]` to the previous last-prose row,
+    -- then insert any remaining chunks at the prose anchor.
+    local last_prose_row
+    if layout ~= nil then
+      local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
+      last_prose_row = anchor_row - 1
+    else
+      last_prose_row = vim.api.nvim_buf_line_count(bufnr) - 1
+    end
 
-    vim.api.nvim_buf_set_lines(bufnr, last_row, last_row + 1, false, { last_line .. chunks[1] })
+    if last_prose_row < 0 then
+      insert_at_prose_anchor(state, turn_id, chunks)
+      return
+    end
+
+    local last_line = vim.api.nvim_buf_get_lines(bufnr, last_prose_row, last_prose_row + 1, false)[1] or ""
+    vim.api.nvim_buf_set_lines(bufnr, last_prose_row, last_prose_row + 1, false, { last_line .. chunks[1] })
 
     if #chunks > 1 then
-      vim.api.nvim_buf_set_lines(bufnr, last_row + 1, last_row + 1, false, vim.list_slice(chunks, 2))
+      insert_at_prose_anchor(state, turn_id, vim.list_slice(chunks, 2))
     end
   end)
 end
@@ -612,13 +835,17 @@ local function render_tool_call(state, record)
 
   local header = tool_header_line(record)
   local body = tool_body_lines(record.formatted, record.toolKind)
-  local first_row
+  local lines = vim.list_extend({ header }, body)
+  local block, first_row = insert_block_into_section(state, state.current_turn, "tools", record.id, "tool_call", lines)
 
-  chat_buffer.with_buffer(state.bufnr, function()
-    first_row = append_lines(state, vim.list_extend({ header }, body))
-  end)
+  if block == nil then
+    -- No turn layout (orphan tool call): legacy append at end.
+    chat_buffer.with_buffer(state.bufnr, function()
+      first_row = append_lines(state, lines)
+    end)
+    block = track_block(state, record.id, "tool_call", first_row, first_row + #body)
+  end
 
-  local block = track_block(state, record.id, "tool_call", first_row, first_row + #body)
   block.tool_call_id = record.id
   state.tool_calls[record.id] = block.id
 
@@ -689,26 +916,36 @@ end
 local function render_thought(state, text)
   state.active_text_block = nil
 
+  local lines
   if text == "" then
+    lines = { "* (empty thought)" }
+  else
+    local body = { "---" }
+    for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
+      table.insert(body, l)
+    end
+    table.insert(body, "---")
+    lines = vim.list_extend({ "* thought" }, body)
+  end
+
+  -- Route through the per-turn `### thoughts` section. Block IDs are
+  -- per-turn-counter to stay unique across re-renders that drop and
+  -- re-insert thoughts at the same row.
+  local layout = get_layout(state, state.current_turn)
+  if layout ~= nil then
+    layout._thought_seq = (layout._thought_seq or 0) + 1
+  end
+  local block_id = "thought:" .. (layout and layout._thought_seq or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+
+  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", lines)
+
+  if first_row == nil then
+    -- Fallback for spontaneous thoughts (no turn layout).
     chat_buffer.with_buffer(state.bufnr, function()
-      append_lines(state, { "* (empty thought)" })
+      first_row = append_lines(state, lines)
     end)
-    return
+    track_block(state, block_id, "agent_thought", first_row, first_row + #lines - 1)
   end
-
-  local body = { "---" }
-  for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
-    table.insert(body, l)
-  end
-  table.insert(body, "---")
-
-  local first_row
-  chat_buffer.with_buffer(state.bufnr, function()
-    first_row = append_lines(state, vim.list_extend({ "* thought" }, body))
-  end)
-
-  local block_id = "thought:" .. tostring(first_row)
-  track_block(state, block_id, "agent_thought", first_row, first_row + #body)
 
   -- Header gets the conceal-style highlight; body lines stay plain so
   -- the markdown highlighter handles them (matches tool / terminal).
@@ -750,13 +987,22 @@ local function render_plan(state, record)
     end
   end
 
-  local first_row
-  chat_buffer.with_buffer(state.bufnr, function()
-    first_row = append_lines(state, vim.list_extend({ header }, body))
-  end)
+  local lines = vim.list_extend({ header }, body)
 
-  local block_id = "plan:" .. tostring(first_row)
-  track_block(state, block_id, "plan", first_row, first_row + #body)
+  local layout = get_layout(state, state.current_turn)
+  if layout ~= nil then
+    layout._plan_seq = (layout._plan_seq or 0) + 1
+  end
+  local block_id = "plan:" .. (layout and layout._plan_seq or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+
+  local _, first_row = insert_block_into_section(state, state.current_turn, "tasks", block_id, "plan", lines)
+
+  if first_row == nil then
+    chat_buffer.with_buffer(state.bufnr, function()
+      first_row = append_lines(state, lines)
+    end)
+    track_block(state, block_id, "plan", first_row, first_row + #lines - 1)
+  end
 
   apply_line_hl(state, first_row, "HyprpilotPlanHeader")
   for i, step in ipairs(steps) do
@@ -975,6 +1221,7 @@ function M.hydrate(state, snapshot)
   state.permissions = {}
   state.terminals = {}
   state.headers_emitted = {}
+  state.turn_layouts = {}
   state.pending_fold_rows = {}
 
   require("hyprpilot.ui.permissions").reset(state.bufnr)
@@ -1107,14 +1354,32 @@ function M.handle_turn_ended(event)
     })
   end
 
-  -- Fold plans / thoughts belonging to this turn. Tool calls and
-  -- terminal blocks fold themselves on completion / exit; permission
-  -- blocks fold on resolution. Plans + thoughts have no per-block
-  -- terminal signal, so the turn boundary is the natural collapse
-  -- point.
+  -- Fold each section (tasks / thoughts / tools) belonging to this
+  -- turn so the chat tightens up after the pilot finishes. Individual
+  -- tool / terminal / permission blocks have already auto-folded
+  -- themselves at their terminal state; the outer section fold sits
+  -- on top of those (nested manual folds work fine in Neovim).
+  local layout = state.turn_layouts[event.turnId]
+  if layout ~= nil then
+    for _, section in pairs(layout.sections) do
+      local head_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})[1]
+      local end_row = section_end_row(state, section)
+      if end_row > head_row then
+        fold_range(state, head_row, end_row)
+      end
+    end
+  end
+
+  -- Legacy fallback for turns that never got a layout (captain-only or
+  -- spontaneous items): fold any orphan plan / thought blocks the way
+  -- we used to.
   for _, block in pairs(state.blocks) do
     if block.turn_id == event.turnId and (block.kind == "plan" or block.kind == "agent_thought") then
-      fold_block(state, block)
+      local _, tail = block_range(state, block)
+      local head, _ = block_range(state, block)
+      if layout == nil or layout.sections[block.kind == "plan" and "tasks" or "thoughts"] == nil then
+        fold_range(state, head, tail)
+      end
     end
   end
 end
@@ -1186,13 +1451,17 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
 
     local block_id = "term:" .. terminal_id
     local header = terminal_header_line(terminal_id, nil, nil)
-    local first_row
+    local lines = { header, "---", "(no output yet)", "---" }
 
-    chat_buffer.with_buffer(state.bufnr, function()
-      first_row = append_lines(state, { header, "---", "(no output yet)", "---" })
-    end)
+    local block, first_row = insert_block_into_section(state, state.current_turn, "tools", block_id, "tool_call", lines)
 
-    local block = track_block(state, block_id, "tool_call", first_row, first_row + 3)
+    if block == nil then
+      chat_buffer.with_buffer(state.bufnr, function()
+        first_row = append_lines(state, lines)
+      end)
+      block = track_block(state, block_id, "tool_call", first_row, first_row + 3)
+    end
+
     apply_line_hl(state, first_row, "HyprpilotToolStatusRunning")
 
     term = { block_id = block_id, output = "" }
@@ -1253,7 +1522,7 @@ end
 ---@param state hyprpilot.render.State
 ---@param start_row integer
 ---@param end_row integer
-local function fold_range(state, start_row, end_row)
+function fold_range(state, start_row, end_row)
   if end_row < start_row then
     return
   end
