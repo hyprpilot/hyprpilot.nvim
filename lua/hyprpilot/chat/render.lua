@@ -60,6 +60,10 @@ local M = {}
 M._states = {}
 
 local NS = vim.api.nvim_create_namespace("hyprpilot.render")
+-- Highlights live in a sibling namespace so a `clear_namespace` for a
+-- block's range can wipe `line_hl_group` extmarks without disturbing
+-- the block's head/tail tracking marks (which live in `NS`).
+local HL_NS = vim.api.nvim_create_namespace("hyprpilot.render.hl")
 
 -- Forward-declared helpers (definitions live further down so the
 -- handler block above can stay close to the high-level logic).
@@ -161,6 +165,54 @@ local function track_block(state, block_id, kind, first_row, last_row)
   state.blocks[block_id] = block
 
   return block
+end
+
+---Tag `row` with `hl_group` via a `line_hl_group` extmark in HL_NS.
+---No-op when `hl_group` is nil.
+---@param state hyprpilot.render.State
+---@param row integer
+---@param hl_group? string
+local function apply_line_hl(state, row, hl_group)
+  if hl_group == nil then
+    return
+  end
+  vim.api.nvim_buf_set_extmark(state.bufnr, HL_NS, row, 0, { line_hl_group = hl_group })
+end
+
+---Clear every HL_NS extmark from `start_row` through `end_row`
+---(inclusive). Used before re-applying highlights after content
+---changes (tool_call_update, permission button repaint).
+---@param state hyprpilot.render.State
+---@param start_row integer
+---@param end_row integer
+local function clear_range_hl(state, start_row, end_row)
+  vim.api.nvim_buf_clear_namespace(state.bufnr, HL_NS, start_row, end_row + 1)
+end
+
+---Resolve the highlight group for a tool-call header row by state.
+---@param tool_state? string
+---@return string
+local function tool_status_hl(tool_state)
+  if tool_state == "completed" then
+    return "HyprpilotToolStatusOk"
+  elseif tool_state == "failed" then
+    return "HyprpilotToolStatusFail"
+  elseif tool_state == "pending" then
+    return "HyprpilotToolStatusPending"
+  end
+  return "HyprpilotToolStatusRunning"
+end
+
+---Resolve the highlight group for a plan-step row by status.
+---@param step_status? string
+---@return string
+local function plan_step_hl(step_status)
+  if step_status == "completed" then
+    return "HyprpilotPlanStepDone"
+  elseif step_status == "in_progress" then
+    return "HyprpilotPlanStepInProgress"
+  end
+  return "HyprpilotPlanStepPending"
 end
 
 ---Resolve the `[head_row, tail_row]` line range for a block via its
@@ -443,6 +495,11 @@ local function render_tool_call(state, record)
   block.tool_call_id = record.id
   state.tool_calls[record.id] = block.id
 
+  apply_line_hl(state, first_row, tool_status_hl(record.state))
+  for i = 1, #body do
+    apply_line_hl(state, first_row + i, "HyprpilotToolBody")
+  end
+
   if record.state == "completed" or record.state == "failed" then
     fold_block(state, block)
   end
@@ -481,6 +538,16 @@ function M.handle_tool_call_update(instance_id, update)
 
   replace_block_body(state, block, tool_body_lines(update.formatted))
 
+  -- Re-apply highlights: header colour can flip with the new state,
+  -- and the body got rewritten via set_lines so its line_hl_group
+  -- extmarks were dropped along with the lines.
+  local head_row, tail_row = block_range(state, block)
+  clear_range_hl(state, head_row, tail_row)
+  apply_line_hl(state, head_row, tool_status_hl(update.state))
+  for row = head_row + 1, tail_row do
+    apply_line_hl(state, row, "HyprpilotToolBody")
+  end
+
   if update.state == "completed" or update.state == "failed" then
     fold_block(state, block)
   end
@@ -513,6 +580,11 @@ local function render_thought(state, text)
 
   local block_id = "thought:" .. tostring(first_row)
   track_block(state, block_id, "agent_thought", first_row, first_row + #body)
+
+  apply_line_hl(state, first_row, "HyprpilotThoughtHeader")
+  for i = 1, #body do
+    apply_line_hl(state, first_row + i, "HyprpilotThoughtBody")
+  end
 end
 
 ---Render a plan block — checklist of steps with priority annotations.
@@ -557,6 +629,11 @@ local function render_plan(state, record)
 
   local block_id = "plan:" .. tostring(first_row)
   track_block(state, block_id, "plan", first_row, first_row + #body)
+
+  apply_line_hl(state, first_row, "HyprpilotPlanHeader")
+  for i, step in ipairs(steps) do
+    apply_line_hl(state, first_row + i, plan_step_hl(step.status))
+  end
 end
 
 ---Compose the button line shown at the bottom of a permission block.
@@ -619,6 +696,12 @@ local function render_permission_request(state, record)
 
   state.permissions[record.requestId] = block.id
 
+  apply_line_hl(state, first_row, "HyprpilotPermissionHeader")
+  for i = 1, #body do
+    apply_line_hl(state, first_row + i, "HyprpilotPermissionBody")
+  end
+  apply_line_hl(state, first_row + #lines - 1, "HyprpilotPermissionButton")
+
   require("hyprpilot.ui.permissions").register(state.bufnr, block, options)
 end
 
@@ -645,6 +728,9 @@ function M.update_permission_buttons(state, block, options, focused_idx, resolve
     local existing = vim.api.nvim_buf_get_lines(state.bufnr, button_row, button_row + 1, false)[1] or ""
     vim.api.nvim_buf_set_text(state.bufnr, button_row, 0, button_row, #existing, { new_line })
   end)
+
+  clear_range_hl(state, button_row, button_row)
+  apply_line_hl(state, button_row, resolved_label ~= nil and "HyprpilotPermissionResolved" or "HyprpilotPermissionButton")
 end
 
 ---Drop a permission block from the registry once resolved. The
@@ -730,6 +816,7 @@ function M.hydrate(state, snapshot)
   chat_buffer.with_buffer(state.bufnr, function()
     vim.api.nvim_buf_set_lines(state.bufnr, 0, -1, false, {})
     vim.api.nvim_buf_clear_namespace(state.bufnr, NS, 0, -1)
+    vim.api.nvim_buf_clear_namespace(state.bufnr, HL_NS, 0, -1)
   end)
 
   state.current_turn = nil
@@ -840,10 +927,13 @@ function M.handle_turn_ended(event)
   end
 
   local chip
+  local chip_hl
   if event.error ~= nil then
     chip = "x " .. event.error
+    chip_hl = "HyprpilotTurnEndError"
   elseif event.stopReason ~= nil then
     chip = "ok " .. event.stopReason
+    chip_hl = "HyprpilotTurnEndOk"
   end
 
   if chip == nil then
@@ -855,7 +945,7 @@ function M.handle_turn_ended(event)
   local row = math.max(0, total - 1)
 
   pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
-    virt_text = { { " " .. chip, "Comment" } },
+    virt_text = { { " " .. chip, chip_hl } },
     virt_text_pos = "eol",
   })
 
