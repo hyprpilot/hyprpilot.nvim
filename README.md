@@ -125,6 +125,12 @@ instances.focus(instance_id, opts?, callback?)
 instances.restart(instance_id, callback?)
 instances.shutdown(instance_id, callback?)
 instances.rename(instance_id, name, callback?)
+
+-- Setters — ids come from the meta payload (`available_modes` /
+-- `available_models` on `acp:instance-meta` and `instance/snapshot/meta`).
+instances.set_mode(instance_id, mode_id, callback?)
+instances.set_model(instance_id, model_id, callback?)
+instances.set_option(instance_id, config_id, value, callback?)
 ```
 
 `spawn` auto-shows the chat split and focuses the composer in insert
@@ -343,6 +349,41 @@ set("n", "<leader>ai", function()
     end)
   end)
 end, { desc = "hyprpilot: pick instance" })
+
+-- Mode picker — drive `instances.set_mode` from the active instance's
+-- advertised `available_modes` (read off the meta snapshot).
+set("n", "<leader>am", function()
+  local id = hp.active_instance()
+  if id == nil then return end
+  instances.info(id, function(err, info)
+    if err ~= nil or info == nil then return end
+    local modes = info.availableModes or info.available_modes or {}
+    if #modes == 0 then return end
+    vim.ui.select(modes, {
+      prompt = "hyprpilot mode",
+      format_item = function(m) return m.name or m.id end,
+    }, function(choice)
+      if choice ~= nil then instances.set_mode(id, choice.id) end
+    end)
+  end)
+end, { desc = "hyprpilot: pick mode" })
+
+-- Model picker — same shape, swaps to `available_models` + `set_model`.
+set("n", "<leader>aM", function()
+  local id = hp.active_instance()
+  if id == nil then return end
+  instances.info(id, function(err, info)
+    if err ~= nil or info == nil then return end
+    local models = info.availableModels or info.available_models or {}
+    if #models == 0 then return end
+    vim.ui.select(models, {
+      prompt = "hyprpilot model",
+      format_item = function(m) return m.name or m.id end,
+    }, function(choice)
+      if choice ~= nil then instances.set_model(id, choice.id) end
+    end)
+  end)
+end, { desc = "hyprpilot: pick model" })
 ```
 
 ## Limitations

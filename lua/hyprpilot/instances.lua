@@ -298,4 +298,83 @@ function M.rename(instance_id, name, callback)
   end)
 end
 
+---@alias hyprpilot.SetterCallback fun(err: hyprpilot.client.RpcError?, result: any?): nil
+
+---Switch the instance to `mode_id`. Mode ids come from the
+---`available_modes[].id` advertised on `acp:instance-meta` /
+---`instance/snapshot/meta` (also rendered in the chat winbar).
+---@param instance_id string
+---@param mode_id string
+---@param callback? hyprpilot.SetterCallback
+function M.set_mode(instance_id, mode_id, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.set_mode: instance_id must be a non-empty string")
+    return
+  end
+
+  if type(mode_id) ~= "string" or mode_id == "" then
+    log.warn("instances.set_mode: mode_id must be a non-empty string")
+    return
+  end
+
+  client.request("instances/setMode", { instanceId = instance_id, modeId = mode_id }, nil, function(err, result)
+    if callback ~= nil then
+      callback(err, result)
+    end
+  end)
+end
+
+---Switch the instance to `model_id`. Model ids come from
+---`available_models[].id` on the instance meta.
+---@param instance_id string
+---@param model_id string
+---@param callback? hyprpilot.SetterCallback
+function M.set_model(instance_id, model_id, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.set_model: instance_id must be a non-empty string")
+    return
+  end
+
+  if type(model_id) ~= "string" or model_id == "" then
+    log.warn("instances.set_model: model_id must be a non-empty string")
+    return
+  end
+
+  client.request("instances/setModel", { instanceId = instance_id, modelId = model_id }, nil, function(err, result)
+    if callback ~= nil then
+      callback(err, result)
+    end
+  end)
+end
+
+---Set a session config option (e.g. `effort = high` for claude-agent-acp
+---0.21+). `config_id` and `value` come from the agent's advertised
+---`configOptions[]` shape.
+---@param instance_id string
+---@param config_id string
+---@param value string
+---@param callback? hyprpilot.SetterCallback
+function M.set_option(instance_id, config_id, value, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.set_option: instance_id must be a non-empty string")
+    return
+  end
+
+  if type(config_id) ~= "string" or config_id == "" then
+    log.warn("instances.set_option: config_id must be a non-empty string")
+    return
+  end
+
+  if type(value) ~= "string" then
+    log.warn("instances.set_option: value must be a string")
+    return
+  end
+
+  client.request("instances/setOption", { instanceId = instance_id, configId = config_id, value = value }, nil, function(err, result)
+    if callback ~= nil then
+      callback(err, result)
+    end
+  end)
+end
+
 return M
