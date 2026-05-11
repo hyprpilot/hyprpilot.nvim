@@ -1081,20 +1081,22 @@ function M.handle_tool_call_update(instance_id, update)
 end
 
 ---Render an agent thought block — header + folded body so the chat
----transcript stays compact. Falls back to a placeholder for empty
----thoughts.
+---transcript stays compact. Empty thoughts are dropped entirely (no
+---placeholder, no section header) so a turn that streams an empty
+---thought event doesn't get a vestigial `### thoughts` section
+---hanging around with nothing inside it.
 ---@param state hyprpilot.render.State
 ---@param text string
 local function render_thought(state, text)
+  if text == "" then
+    log.debug("render_thought: dropping empty thought (no placeholder)")
+    return
+  end
+
   state.active_text_block = nil
 
-  local lines
-  if text == "" then
-    lines = { "* (empty thought)" }
-  else
-    local body = wrap_in_rules({ vim.split(text, "\n", { plain = true }) })
-    lines = vim.list_extend({ "* thought" }, body)
-  end
+  local body = wrap_in_rules({ vim.split(text, "\n", { plain = true }) })
+  local lines = vim.list_extend({ "* thought" }, body)
 
   -- Route through the per-turn `### thoughts` section. Block IDs are
   -- per-turn-counter to stay unique across re-renders that drop and

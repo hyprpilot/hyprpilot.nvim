@@ -398,6 +398,31 @@ T["section headers carry `[N <unit>]` chips that grow with item_count"] = functi
   helpers.cleanup_instance(id)
 end
 
+T["empty agent_thought drops the event (no placeholder, no section)"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "agent_text", text = "hello" } },
+      { turnId = "t1", item = { kind = "agent_thought", text = "" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  -- No `### thoughts` header, no `* (empty thought)` placeholder, no
+  -- vestigial `* thought` line. The empty event was a no-op.
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "### thoughts"), false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "thought"), false)
+  -- The agent_text that came WITH the empty thought still landed.
+  MiniTest.expect.equality(helpers.has_line(lines, "hello"), true)
+
+  helpers.cleanup_instance(id)
+end
+
 T["unknown wire kind logs warn but doesn't crash render"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
