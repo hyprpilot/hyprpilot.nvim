@@ -53,8 +53,7 @@ local M = {}
 ---@field tool_calls table<string, string>      -- daemon tool-call id → block id
 ---@field permissions table<string, string>     -- request id → block id
 ---@field terminals table<string, hyprpilot.render.TerminalState>  -- terminal id → state
----@field turn_anchors table<string, integer>   -- turn id → extmark id of the turn header row
----@field turn_separators integer[]             -- extmark ids on blank rows that mark turn boundaries (foldexpr returns "<1")
+---@field headers_emitted table<string, table<string, boolean>>  -- turn_id → { user?, agent? } so each (turn, role) header drops at most once
 ---@field pending_fold_rows integer[]           -- 0-indexed rows whose fold should close on next window-show
 ---@field oldest_seq? integer                   -- snapshot's oldestSeq cursor; nil when transcript is empty
 ---@field has_more boolean                      -- true when the daemon reported more items beyond what we fetched
@@ -81,8 +80,6 @@ local HL_NS = vim.api.nvim_create_namespace("hyprpilot.render.hl")
 -- locals at parse time, since each `local` only enters scope after
 -- the line it's declared on.
 local close_fold_at
-local collapse_old_turns
-local fold_turn
 local fold_block
 
 ---Get-or-create the per-instance render state.
@@ -109,8 +106,7 @@ function M.state(instance_id, bufnr)
     tool_calls = {},
     permissions = {},
     terminals = {},
-    turn_anchors = {},
-    turn_separators = {},
+    headers_emitted = {},
     pending_fold_rows = {},
     has_more = false,
     snapshot_limit = 100,
@@ -259,45 +255,41 @@ local function replace_block_body(state, block, body_lines)
 end
 
 ---Append a turn header (`## agent`, `## user`) and reset the active
----text block tracker. When `turn_id` is non-nil, anchor an extmark on
----the header row so foldexpr can express the per-turn fold and
----`turn_ended` can collapse the right one.
+---text block tracker. Idempotent per (turn_id, role): the daemon's
+---broadcast order for transcript / turn_started events is not
+---guaranteed (user_prompt and turn_started can arrive in either
+---order), so each role-per-turn must drop one header at most no
+---matter how many times the renderer asks for it.
 ---@param state hyprpilot.render.State
 ---@param role "agent" | "user"
 ---@param turn_id? string
 local function append_turn_header(state, role, turn_id)
-  local header_row
+  -- Idempotency key: turn_id (or "" for spontaneous items without a
+  -- turn). One slot per role per turn.
+  local key = turn_id or ""
+  local emitted = state.headers_emitted[key]
+  if emitted == nil then
+    emitted = {}
+    state.headers_emitted[key] = emitted
+  end
+
+  if emitted[role] then
+    return
+  end
+  emitted[role] = true
 
   chat_buffer.with_buffer(state.bufnr, function()
     local total = vim.api.nvim_buf_line_count(state.bufnr)
     local prepend_blank = not (total == 1 and vim.api.nvim_buf_get_lines(state.bufnr, 0, 1, false)[1] == "")
 
     local lines = prepend_blank and { "", "## " .. role, "" } or { "## " .. role, "" }
-    local first = append_lines(state, lines)
-    header_row = prepend_blank and (first + 1) or first
+    append_lines(state, lines)
   end)
 
   state.active_text_block = nil
 
   if role == "agent" then
     state.current_turn = turn_id
-  end
-
-  if turn_id ~= nil and state.turn_anchors[turn_id] == nil then
-    state.turn_anchors[turn_id] = vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row, 0, { right_gravity = true })
-
-    -- The blank line we prepended (when there was prior content) is
-    -- the turn boundary that foldexpr uses to terminate the previous
-    -- turn fold. Without this Vim treats consecutive `>1` lines as
-    -- one continuous fold instead of two adjacent ones.
-    --
-    -- Right-gravity matches the pattern used for block head/tail
-    -- marks: when an earlier block grows by replacing its body, the
-    -- delete+insert pair would otherwise strand left-gravity marks
-    -- inside the inserted range.
-    if header_row > 0 then
-      table.insert(state.turn_separators, vim.api.nvim_buf_set_extmark(state.bufnr, NS, header_row - 1, 0, { right_gravity = true }))
-    end
   end
 end
 
@@ -811,10 +803,11 @@ function M.render_item(state, turn_id, item)
   local kind = item.kind
   local is_user_kind = kind == "user_prompt" or kind == "user_text"
 
-  -- Lazy agent header: only insert when the next item is actually
-  -- agent-side. A snapshot replay that leads with `user_prompt` would
-  -- otherwise render an empty `## agent` block above the user line.
-  if turn_id ~= nil and turn_id ~= state.current_turn and not is_user_kind then
+  -- Lazy headers — `append_turn_header` is idempotent per (turn_id,
+  -- role), so the daemon's broadcast order between user_prompt and
+  -- turn_started doesn't matter. Whichever side arrives first lands
+  -- its header; the other side's header lands on its first item.
+  if turn_id ~= nil and not is_user_kind then
     append_turn_header(state, "agent", turn_id)
   end
 
@@ -871,8 +864,7 @@ function M.hydrate(state, snapshot)
   state.tool_calls = {}
   state.permissions = {}
   state.terminals = {}
-  state.turn_anchors = {}
-  state.turn_separators = {}
+  state.headers_emitted = {}
   state.pending_fold_rows = {}
 
   require("hyprpilot.ui.permissions").reset(state.bufnr)
@@ -880,8 +872,6 @@ function M.hydrate(state, snapshot)
   for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)
   end
-
-  collapse_old_turns(state)
 end
 
 ---Live `transcript` event handler.
@@ -938,7 +928,10 @@ function M.handle_permission_resolved(event)
   M.mark_permission_resolved(state, event.requestId, event.optionId)
 end
 
----Live `turn_started` event handler.
+---Live `turn_started` event handler. Status / activity bookkeeping
+---is the events module's job; rendering-side, the `## agent` header
+---is added lazily by `render_item` on the first agent-side item, so
+---this handler doesn't need to write anything to the buffer.
 ---@param event table
 function M.handle_turn_started(event)
   local state = M._states[event.instanceId]
@@ -949,12 +942,14 @@ function M.handle_turn_started(event)
   end
 
   log.debug("render.handle_turn_started: instance=%s turnId=%s", event.instanceId, event.turnId)
-
-  append_turn_header(state, "agent", event.turnId)
 end
 
----Live `turn_ended` event handler. Closes the matching turn fold so
----the chat collapses the moment the agent finishes streaming.
+---Live `turn_ended` event handler. Stamps a stop-reason chip on the
+---last line of the turn and folds the *inner* blocks (plans /
+---thoughts) belonging to that turn so the chat tightens up after the
+---agent finishes. The turn itself is NOT folded — the captain still
+---wants the conversation flow visible top-to-bottom; only the
+---expandable inner blocks collapse.
 ---@param event table
 function M.handle_turn_ended(event)
   local state = M._states[event.instanceId]
@@ -988,21 +983,26 @@ function M.handle_turn_ended(event)
     end
   end
 
-  if chip == nil then
-    return
+  if chip ~= nil then
+    local bufnr = state.bufnr
+    local total = vim.api.nvim_buf_line_count(bufnr)
+    local row = math.max(0, total - 1)
+
+    pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
+      virt_text = { { " " .. chip, chip_hl } },
+      virt_text_pos = "eol",
+    })
   end
 
-  local bufnr = state.bufnr
-  local total = vim.api.nvim_buf_line_count(bufnr)
-  local row = math.max(0, total - 1)
-
-  pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
-    virt_text = { { " " .. chip, chip_hl } },
-    virt_text_pos = "eol",
-  })
-
-  if state.turn_anchors[event.turnId] ~= nil then
-    fold_turn(state, event.turnId)
+  -- Fold plans / thoughts belonging to this turn. Tool calls and
+  -- terminal blocks fold themselves on completion / exit; permission
+  -- blocks fold on resolution. Plans + thoughts have no per-block
+  -- terminal signal, so the turn boundary is the natural collapse
+  -- point.
+  for _, block in pairs(state.blocks) do
+    if block.turn_id == event.turnId and (block.kind == "plan" or block.kind == "agent_thought") then
+      fold_block(state, block)
+    end
   end
 end
 
@@ -1120,35 +1120,6 @@ function M.handle_terminal(event)
 end
 
 ---Resolve the row range a turn covers — from its anchor row down to
----one row before the next turn anchor, or to the end of the buffer
----when this is the latest turn. Both rows 0-indexed, inclusive.
----@param state hyprpilot.render.State
----@param turn_id string
----@return integer? start_row
----@return integer? end_row
-local function turn_range(state, turn_id)
-  local mark = state.turn_anchors[turn_id]
-  if mark == nil then
-    return nil, nil
-  end
-
-  local start_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, mark, {})[1]
-  local next_row = nil
-
-  for other_id, other_mark in pairs(state.turn_anchors) do
-    if other_id ~= turn_id then
-      local other_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, other_mark, {})[1]
-      if other_row > start_row and (next_row == nil or other_row < next_row) then
-        next_row = other_row
-      end
-    end
-  end
-
-  local end_row = next_row ~= nil and (next_row - 1) or (vim.api.nvim_buf_line_count(state.bufnr) - 1)
-
-  return start_row, end_row
-end
-
 ---Run `:N,Mfold` in every window currently showing `bufnr`. Manual
 ---folds are created closed by default — exactly what we want for the
 ---auto-collapse-on-finalize behaviour. Queues the operation when no
@@ -1193,18 +1164,6 @@ function fold_block(state, block)
   fold_range(state, head_row, tail_row)
 end
 
----Fold an entire turn by id (covers the header line through the row
----before the next turn).
----@param state hyprpilot.render.State
----@param turn_id string
-function fold_turn(state, turn_id)
-  local start_row, end_row = turn_range(state, turn_id)
-  if start_row == nil then
-    return
-  end
-  fold_range(state, start_row, end_row)
-end
-
 ---Apply queued fold-close requests to the window that just opened
 ---`bufnr` (called from `chat.window` on show / switch).
 ---@param bufnr integer
@@ -1228,31 +1187,6 @@ function M.apply_pending_folds(bufnr)
       end)
       return
     end
-  end
-end
-
----Close every turn the state knows about except the one with the
----greatest header row (the most recent — kept open so a freshly-shown
----chat lands focused on the latest exchange).
----@param state hyprpilot.render.State
-function collapse_old_turns(state)
-  local rows = {}
-
-  for turn_id, mark in pairs(state.turn_anchors) do
-    local row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, mark, {})[1]
-    table.insert(rows, { id = turn_id, row = row })
-  end
-
-  if #rows < 2 then
-    return
-  end
-
-  table.sort(rows, function(a, b)
-    return a.row < b.row
-  end)
-
-  for i = 1, #rows - 1 do
-    fold_turn(state, rows[i].id)
   end
 end
 
