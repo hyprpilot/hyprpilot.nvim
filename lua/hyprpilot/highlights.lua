@@ -41,6 +41,7 @@ M.LINKS = {
   -- Turn-end chip
   HyprpilotTurnEndOk = "DiagnosticOk",
   HyprpilotTurnEndError = "DiagnosticError",
+  HyprpilotTurnEndCancelled = "DiagnosticWarn",
 }
 
 ---Apply (or re-apply) every default highlight link. Idempotent —
