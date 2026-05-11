@@ -83,7 +83,8 @@ function M.open(opts)
 
   client.request("sessions/list", params, nil, function(err, result)
     if err ~= nil then
-      log.warn("palettes.sessions: sessions/list failed: %s", err)
+      log.warn("palettes.sessions: sessions/list failed: %s", err.message)
+      log.debug("palettes.sessions: sessions/list failed: %s", vim.inspect(err))
       return
     end
 
