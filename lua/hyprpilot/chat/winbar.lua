@@ -33,6 +33,7 @@ local M = {}
 ---@field mcps_count? integer
 ---@field usage? hyprpilot.winbar.Usage
 ---@field session_title? string
+---@field instance_state? string  -- "starting" | "running" | "ended" | "error"
 
 ---@type table<string, hyprpilot.winbar.Meta>
 M._meta = {}
@@ -103,14 +104,35 @@ local function compact_num(n)
   return string.format("%.1fM", n / 1000000)
 end
 
+---@param activity? hyprpilot.Activity
+---@return string?
+local function activity_label(activity)
+  if activity == nil or activity.kind == nil or activity.kind == "idle" then
+    return nil
+  end
+
+  if activity.kind == "tool" then
+    return activity.tool_name ~= nil and ("tool · " .. activity.tool_name) or "tool"
+  elseif activity.kind == "awaiting_permission" then
+    return "permission?"
+  end
+
+  return activity.kind
+end
+
 ---@param meta? hyprpilot.winbar.Meta
+---@param activity? hyprpilot.Activity
 ---@return string
-local function format_meta(meta)
+local function format_meta(meta, activity)
   if meta == nil then
-    return " hyprpilot"
+    meta = {}
   end
 
   local parts = { "hyprpilot" }
+
+  if meta.instance_state ~= nil and meta.instance_state ~= "running" then
+    table.insert(parts, meta.instance_state)
+  end
 
   local mode = display_name(meta.current_mode_id, meta.available_modes)
   if mode ~= nil then
@@ -132,6 +154,11 @@ local function format_meta(meta)
     table.insert(parts, string.format("+%d mcps", meta.mcps_count))
   end
 
+  local label = activity_label(activity)
+  if label ~= nil then
+    table.insert(parts, label)
+  end
+
   return " " .. table.concat(parts, " · ")
 end
 
@@ -144,26 +171,71 @@ function M.render()
     return ""
   end
 
-  return format_meta(M._meta[id])
+  -- Activity is global (singleton status surface), but we only show it
+  -- when this winbar belongs to the active instance — otherwise a
+  -- spawned-but-backgrounded buffer would also pulse `streaming`.
+  local active_id = require("hyprpilot.chat.window").active_instance()
+  local activity = nil
+  if active_id == id then
+    activity = require("hyprpilot.status").get().activity
+  end
+
+  return format_meta(M._meta[id], activity)
 end
 
 ---Force a redraw on every window currently showing the chat buffer
 ---for `instance_id`. Cheap — just resets the winbar option to its
 ---current value, nudging Neovim to re-evaluate.
 ---@param instance_id string
-local function nudge(instance_id)
-  local target_name = BUFFER_PREFIX .. instance_id
-
+---Force a redraw on every window matching `predicate(bufnr) → bool`.
+---Cheap — sets `winbar` to its current value to nudge re-evaluation.
+---@param predicate fun(bufnr: integer): boolean
+local function nudge_windows(predicate)
   for _, winid in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_is_valid(winid) then
       local bufnr = vim.api.nvim_win_get_buf(winid)
-      if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == target_name then
+      if vim.api.nvim_buf_is_valid(bufnr) and predicate(bufnr) then
         pcall(function()
           vim.wo[winid].winbar = vim.wo[winid].winbar
         end)
       end
     end
   end
+end
+
+local function nudge(instance_id)
+  local target_name = BUFFER_PREFIX .. instance_id
+  nudge_windows(function(bufnr)
+    return vim.api.nvim_buf_get_name(bufnr) == target_name
+  end)
+end
+
+---Force every chat-buffer winbar to re-render. Used when the global
+---activity flips so all open chat windows pick up the change.
+function M.nudge_all()
+  nudge_windows(function(bufnr)
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    return name:sub(1, #BUFFER_PREFIX) == BUFFER_PREFIX
+  end)
+end
+
+local activity_listener_wired = false
+
+---Wire the `User HyprpilotActivityChanged` autocmd to repaint every
+---chat winbar. Idempotent.
+function M.ensure_activity_listener()
+  if activity_listener_wired then
+    return
+  end
+  activity_listener_wired = true
+
+  vim.api.nvim_create_autocmd("User", {
+    group = vim.api.nvim_create_augroup("HyprpilotWinbarActivity", { clear = true }),
+    pattern = "HyprpilotActivityChanged",
+    callback = function()
+      M.nudge_all()
+    end,
+  })
 end
 
 ---Merge `fields` into the per-instance meta, emit the
@@ -246,6 +318,13 @@ function M.forget(instance_id)
 
   log.debug("winbar.forget: instance=%s", instance_id)
   M._meta[instance_id] = nil
+end
+
+---Test-only: drop the activity-listener wire flag so a fresh autocmd
+---install can be exercised across cases.
+function M._reset()
+  activity_listener_wired = false
+  M._meta = {}
 end
 
 return M

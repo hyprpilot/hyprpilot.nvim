@@ -52,9 +52,16 @@ local M = {}
 ---@field blocks table<string, hyprpilot.render.Block>
 ---@field tool_calls table<string, string>      -- daemon tool-call id → block id
 ---@field permissions table<string, string>     -- request id → block id
+---@field terminals table<string, hyprpilot.render.TerminalState>  -- terminal id → state
 ---@field turn_anchors table<string, integer>   -- turn id → extmark id of the turn header row
 ---@field turn_separators integer[]             -- extmark ids on blank rows that mark turn boundaries (foldexpr returns "<1")
 ---@field pending_fold_rows integer[]           -- 0-indexed rows whose fold should close on next window-show
+
+---@class hyprpilot.render.TerminalState
+---@field block_id string
+---@field output string  -- accumulated stdout/stderr
+---@field exit_code? integer
+---@field signal? string
 
 ---@type table<string, hyprpilot.render.State>
 M._states = {}
@@ -98,6 +105,7 @@ function M.state(instance_id, bufnr)
     blocks = {},
     tool_calls = {},
     permissions = {},
+    terminals = {},
     turn_anchors = {},
     turn_separators = {},
     pending_fold_rows = {},
@@ -855,6 +863,7 @@ function M.hydrate(state, snapshot)
   state.blocks = {}
   state.tool_calls = {}
   state.permissions = {}
+  state.terminals = {}
   state.turn_anchors = {}
   state.turn_separators = {}
   state.pending_fold_rows = {}
@@ -962,8 +971,14 @@ function M.handle_turn_ended(event)
     chip = "x " .. event.error
     chip_hl = "HyprpilotTurnEndError"
   elseif event.stopReason ~= nil then
-    chip = "ok " .. event.stopReason
-    chip_hl = "HyprpilotTurnEndOk"
+    local reason = tostring(event.stopReason)
+    if reason:lower():find("cancel", 1, true) ~= nil then
+      chip = "[cancelled] " .. reason
+      chip_hl = "HyprpilotTurnEndCancelled"
+    else
+      chip = "ok " .. reason
+      chip_hl = "HyprpilotTurnEndOk"
+    end
   end
 
   if chip == nil then
@@ -981,6 +996,119 @@ function M.handle_turn_ended(event)
 
   if state.turn_anchors[event.turnId] ~= nil then
     fold_turn(state, event.turnId)
+  end
+end
+
+---Format the header for a terminal block.
+---@param terminal_id string
+---@param exit_code? integer
+---@param signal? string
+---@return string
+local function terminal_header_line(terminal_id, exit_code, signal)
+  local short = terminal_id
+  if #short > 8 then
+    short = short:sub(1, 8) .. "…"
+  end
+
+  local status_str
+  if signal ~= nil then
+    status_str = "signal=" .. tostring(signal)
+  elseif exit_code ~= nil then
+    status_str = "exit=" .. tostring(exit_code)
+  else
+    status_str = "running"
+  end
+
+  return string.format("$ terminal · %s · %s", short, status_str)
+end
+
+---Live `terminal` event. Each `terminal_id` gets one tracked block;
+---chunks accumulate into `state.terminals[id].output` and the body is
+---re-rendered from the running buffer. `Exit` chunks freeze the
+---header with the exit/signal status and fold the block.
+---@param event table
+function M.handle_terminal(event)
+  local state = M._states[event.instanceId]
+  if state == nil then
+    log.debug("render.handle_terminal: no state for instance=%s", tostring(event.instanceId))
+    return
+  end
+
+  local terminal_id = event.terminalId
+  if type(terminal_id) ~= "string" then
+    log.warn("render.handle_terminal: missing terminalId, dropping")
+    return
+  end
+
+  local chunk = event.chunk
+  if type(chunk) ~= "table" or type(chunk.kind) ~= "string" then
+    log.warn("render.handle_terminal: malformed chunk, dropping")
+    return
+  end
+
+  local term = state.terminals[terminal_id]
+
+  -- Bootstrap the block on first observation.
+  if term == nil then
+    state.active_text_block = nil
+
+    local block_id = "term:" .. terminal_id
+    local header = terminal_header_line(terminal_id, nil, nil)
+    local first_row
+
+    chat_buffer.with_buffer(state.bufnr, function()
+      first_row = append_lines(state, { header, "  (no output yet)" })
+    end)
+
+    local block = track_block(state, block_id, "tool_call", first_row, first_row + 1)
+    apply_line_hl(state, first_row, "HyprpilotToolStatusRunning")
+    apply_line_hl(state, first_row + 1, "HyprpilotToolBody")
+
+    term = { block_id = block_id, output = "" }
+    state.terminals[terminal_id] = term
+    -- Stash a back-pointer so the merge path below can find the block.
+    term._block = block
+  end
+
+  if chunk.kind == "output" then
+    if type(chunk.data) == "string" and chunk.data ~= "" then
+      term.output = term.output .. chunk.data
+    end
+  elseif chunk.kind == "exit" then
+    term.exit_code = chunk.exitCode
+    term.signal = chunk.signal
+  end
+
+  local body
+  if term.output == "" then
+    body = { "  (no output yet)" }
+  else
+    body = {}
+    for _, l in ipairs(vim.split(term.output, "\n", { plain = true })) do
+      table.insert(body, "  " .. l)
+    end
+  end
+
+  replace_block_body(state, term._block, body)
+  local head_row, tail_row = block_range(state, term._block)
+
+  -- Re-apply highlights: the body got replaced via set_lines above.
+  clear_range_hl(state, head_row, tail_row)
+  local header_hl = chunk.kind == "exit" and (term.exit_code == 0 and "HyprpilotToolStatusOk" or "HyprpilotToolStatusFail") or "HyprpilotToolStatusRunning"
+  apply_line_hl(state, head_row, header_hl)
+  for row = head_row + 1, tail_row do
+    apply_line_hl(state, row, "HyprpilotToolBody")
+  end
+
+  -- Refresh the header with the latest exit/signal status.
+  chat_buffer.with_buffer(state.bufnr, function()
+    local new_header = terminal_header_line(terminal_id, term.exit_code, term.signal)
+    local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
+    vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { new_header })
+  end)
+
+  if chunk.kind == "exit" then
+    fold_block(state, term._block)
   end
 end
 

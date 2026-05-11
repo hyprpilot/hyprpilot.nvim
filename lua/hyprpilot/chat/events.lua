@@ -8,7 +8,50 @@
 local client = require("hyprpilot.client")
 local log = require("hyprpilot.log")
 local render = require("hyprpilot.chat.render")
+local status = require("hyprpilot.status")
 local winbar = require("hyprpilot.chat.winbar")
+
+---Resolve the human label for an in-flight tool call.
+---@param item table
+---@return string?
+local function tool_label(item)
+  if type(item) ~= "table" then
+    return nil
+  end
+  if type(item.formatted) == "table" and type(item.formatted.title) == "string" then
+    return item.formatted.title
+  end
+  if type(item.title) == "string" then
+    return item.title
+  end
+  if type(item.toolKind) == "string" then
+    return item.toolKind
+  end
+  return nil
+end
+
+---Translate a `transcript` event's item into an activity update.
+---No-op for non-agent kinds.
+---@param item table
+local function activity_for_transcript(item)
+  if type(item) ~= "table" or type(item.kind) ~= "string" then
+    return
+  end
+
+  local kind = item.kind
+
+  if kind == "agent_text" or kind == "agent_thought" then
+    status.set_activity({ kind = "streaming" })
+  elseif kind == "tool_call" then
+    status.set_activity({ kind = "tool", tool_name = tool_label(item) })
+  elseif kind == "tool_call_update" then
+    if item.state == "completed" or item.state == "failed" then
+      status.set_activity({ kind = "streaming" })
+    else
+      status.set_activity({ kind = "tool", tool_name = tool_label(item) })
+    end
+  end
+end
 
 local M = {}
 
@@ -25,14 +68,19 @@ local function dispatch(event)
 
   if event.event == "transcript" then
     render.handle_transcript(event)
+    activity_for_transcript(event.item)
   elseif event.event == "turn_started" then
     render.handle_turn_started(event)
+    status.set_activity({ kind = "thinking", started_at_ms = vim.uv.now() })
   elseif event.event == "turn_ended" then
     render.handle_turn_ended(event)
+    status.set_activity({ kind = "idle" })
   elseif event.event == "permission_request" then
     render.handle_permission_request(event)
+    status.set_activity({ kind = "awaiting_permission", permission_request_id = event.requestId })
   elseif event.event == "permission_resolved" then
     render.handle_permission_resolved(event)
+    status.set_activity({ kind = "streaming" })
   elseif event.event == "instance_meta" then
     winbar.update_meta(event.instanceId, {
       profile_id = event.profileId,
@@ -50,6 +98,10 @@ local function dispatch(event)
     winbar.update_usage(event.instanceId, event.used, event.size, event.cost)
   elseif event.event == "session_info_update" then
     winbar.update_session(event.instanceId, event.title)
+  elseif event.event == "state" then
+    winbar.update_meta(event.instanceId, { instance_state = event.state })
+  elseif event.event == "terminal" then
+    render.handle_terminal(event)
   else
     log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
   end

@@ -136,6 +136,11 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].foldlevel = 99
   vim.wo[M._winid].foldcolumn = "1"
   vim.wo[M._winid].winbar = "%!v:lua.require'hyprpilot.chat.winbar'.render()"
+
+  -- The winbar reads `status.get().activity` for the active instance,
+  -- so make sure HyprpilotActivityChanged repaints every chat
+  -- winbar — registers once, idempotent.
+  require("hyprpilot.chat.winbar").ensure_activity_listener()
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).
