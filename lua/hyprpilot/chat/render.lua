@@ -258,12 +258,13 @@ end
 ---Per-turn section ordering. Sections appear in this order (top to
 ---bottom) between the `## pilot` header and the prose. The values
 ---double as priority ranks for new-section insertion.
-local SECTION_ORDER = { tasks = 1, thoughts = 2, tools = 3 }
+local SECTION_ORDER = { tasks = 1, thoughts = 2, tools = 3, attachments = 4 }
 
 local SECTION_HEADER = {
   tasks = "### tasks",
   thoughts = "### thoughts",
   tools = "### tools",
+  attachments = "### attachments",
 }
 
 ---Resolve the turn layout for `turn_id`, or nil when this isn't a
@@ -531,6 +532,8 @@ local function section_header_line(kind, item_count)
     unit = item_count == 1 and "thought" or "thoughts"
   elseif kind == "tools" then
     unit = item_count == 1 and "call" or "calls"
+  elseif kind == "attachments" then
+    unit = item_count == 1 and "file" or "files"
   else
     unit = "items"
   end
@@ -769,6 +772,9 @@ end
 ---`@ <title or slug> · <mime> · <path>` with the body lines available
 ---only by clicking through to the file. We don't inline image / audio
 ---content; the agent attached it for reference, not display.
+---Routes through the per-turn `### attachments` section so multiple
+---attachments cluster together below the tools section and fold as
+---one unit on turn end.
 ---@param state hyprpilot.render.State
 ---@param attachment table
 local function render_attachment(state, attachment)
@@ -786,11 +792,24 @@ local function render_attachment(state, attachment)
   end
 
   local line = table.concat(parts, " · ")
-  local first_row
+  local lines = { line }
 
-  chat_buffer.with_buffer(state.bufnr, function()
-    first_row = append_lines(state, { line })
-  end)
+  local layout = get_layout(state, state.current_turn)
+  if layout ~= nil then
+    layout._attachment_seq = (layout._attachment_seq or 0) + 1
+  end
+  local block_id = "attachment:" .. (layout and layout._attachment_seq or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+
+  local _, first_row = insert_block_into_section(state, state.current_turn, "attachments", block_id, "agent_text", lines)
+
+  if first_row == nil then
+    -- Fallback for spontaneous attachments (no turn layout): append
+    -- inline at end-of-buffer like the legacy behaviour.
+    chat_buffer.with_buffer(state.bufnr, function()
+      first_row = append_lines(state, lines)
+    end)
+    track_block(state, block_id, "agent_text", first_row, first_row)
+  end
 
   apply_line_hl(state, first_row, "HyprpilotToolBody")
 end

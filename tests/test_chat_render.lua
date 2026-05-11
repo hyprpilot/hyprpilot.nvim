@@ -398,6 +398,70 @@ T["section headers carry `[N <unit>]` chips that grow with item_count"] = functi
   helpers.cleanup_instance(id)
 end
 
+T["agent_attachment lands in ### attachments section after tools"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-1",
+          toolKind = "execute",
+          title = "ls",
+          state = "completed",
+          formatted = { title = "ls", stats = {}, fields = { { label = "command", value = "ls" } } },
+        },
+      },
+      { turnId = "t1", item = { kind = "agent_attachment", title = "report.pdf", mime = "application/pdf", path = "/tmp/report.pdf" } },
+      { turnId = "t1", item = { kind = "agent_attachment", title = "diagram.png", mime = "image/png", path = "/tmp/diagram.png" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  local function index_of(predicate)
+    for i, l in ipairs(lines) do
+      if predicate(l) then
+        return i
+      end
+    end
+    return nil
+  end
+
+  local tools = index_of(function(l)
+    return l:find("^### tools") ~= nil
+  end)
+  local attachments = index_of(function(l)
+    return l:find("^### attachments") ~= nil
+  end)
+  local first_attachment = index_of(function(l)
+    return l:find("@ report.pdf", 1, true) ~= nil
+  end)
+  local second_attachment = index_of(function(l)
+    return l:find("@ diagram.png", 1, true) ~= nil
+  end)
+
+  MiniTest.expect.equality(tools ~= nil, true)
+  MiniTest.expect.equality(attachments ~= nil, true)
+  MiniTest.expect.equality(first_attachment ~= nil, true)
+  MiniTest.expect.equality(second_attachment ~= nil, true)
+  -- Order: tools section header < attachments section header < both attachments.
+  MiniTest.expect.equality(tools < attachments, true)
+  MiniTest.expect.equality(attachments < first_attachment, true)
+  MiniTest.expect.equality(first_attachment < second_attachment, true)
+  -- Header chip should reflect the count.
+  local attach_line = lines[attachments]
+  MiniTest.expect.equality(attach_line:find("[2 files]", 1, true) ~= nil, true)
+
+  helpers.cleanup_instance(id)
+end
+
 T["empty agent_thought drops the event (no placeholder, no section)"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
