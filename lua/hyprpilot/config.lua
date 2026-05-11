@@ -66,14 +66,14 @@ local defaults = {
     end,
   },
   composer = {
-    min_height = 8,
+    min_height = 12,
     max_height = function(lines)
-      return math.max(8, math.floor(lines * 0.4))
+      return math.max(12, math.floor(lines * 0.4))
     end,
     keymaps = {
-      submit = { normal = "<C-CR>", insert = "<C-CR>" },
+      submit = { normal = "<CR>", insert = "<C-s>" },
       cancel = { normal = "<C-c>", insert = "<C-c>" },
-      close = { normal = "<Esc><Esc>" },
+      close = { normal = "q" },
     },
   },
 }

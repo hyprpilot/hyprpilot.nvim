@@ -83,11 +83,12 @@ function M.open(opts)
 
   client.request("sessions/list", params, nil, function(err, result)
     if err ~= nil then
-      log.warn(
-        "palettes.sessions: sessions/list failed: %s%s",
-        err.message,
-        err.code == -32601 and " (daemon hasn't shipped sessions/list on the wire — see docs/plans/2026-05-12-sessions-rpc-handoff.md)" or ""
-      )
+      -- Pre-format into a single message; `log.p.warn` skips the
+      -- `vim.inspect` that `log.warn` runs on each arg (which would
+      -- wrap each string in extra quote pairs and produce the ugly
+      -- `"...""..."` artifact when concatenating two strings).
+      local suffix = err.code == -32601 and " (daemon hasn't shipped sessions/list on the wire — see docs/plans/2026-05-12-sessions-rpc-handoff.md)" or ""
+      log.p.warn("palettes.sessions: sessions/list failed: " .. tostring(err.message) .. suffix)
       return
     end
 
