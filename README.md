@@ -143,7 +143,29 @@ composer.is_visible()                                  -- → boolean
 composer.submit(text, opts?)                           -- defaults to active instance
 composer.cancel(instance_id?)                          -- cancel the in-flight turn
 composer.wipe(instance_id)                             -- drop the per-instance composer buffer
+
+-- Attachments — staged on the active (or named) instance, included in
+-- the next prompts/send, cleared on success.
+composer.attach({ path = "/abs/path", title?, slug?, mime?, body?, data? })
+composer.detach(slug, opts?)
+composer.clear_attachments(instance_id?)
+composer.attachments(instance_id?)                     -- → Attachment[]
+
+-- Convenience helpers.
+composer.attach_buffer(bufnr?, opts?)                  -- attach the buffer's file path
+composer.attach_clipboard_image(opts?)                 -- needs img-clip.nvim
 ```
+
+Staged attachments paint a `[N attached: ...]` indicator on the
+composer buffer's first line (highlight group `HyprpilotComposerAttachments`).
+The indicator clears once the prompt sends successfully.
+
+> [!NOTE]
+> The Unix-socket `prompts/send` daemon RPC currently **does not**
+> accept an `attachments` field — the staging UX, slug deduping, and
+> indicator all work, but the wire-side delivery needs a small daemon
+> patch. Tracking handoff plan:
+> `~/.claude/plans/2026-05-11-hyprpilot-prompts-send-attachments.md`.
 
 ### Permissions
 
@@ -315,6 +337,8 @@ just works:
 | `HyprpilotPermissionResolved`      | `Comment`           |
 | `HyprpilotTurnEndOk`               | `DiagnosticOk`      |
 | `HyprpilotTurnEndError`            | `DiagnosticError`   |
+| `HyprpilotTurnEndCancelled`        | `DiagnosticWarn`    |
+| `HyprpilotComposerAttachments`     | `Comment`           |
 
 Override any group with `vim.api.nvim_set_hl(0, "HyprpilotXxx", {...})`
 to break the link.
@@ -343,6 +367,27 @@ set("n", "<leader>ai", function()
     end)
   end)
 end, { desc = "hyprpilot: pick instance" })
+
+-- Attach the current buffer to the active instance's next prompt.
+local composer = require("hyprpilot.ui.composer")
+set("n", "<leader>ab", function() composer.attach_buffer() end,
+  { desc = "hyprpilot: attach current buffer" })
+
+-- Detach a staged attachment via vim.ui.select.
+set("n", "<leader>aD", function()
+  local list = composer.attachments()
+  if #list == 0 then return end
+  vim.ui.select(list, {
+    prompt = "detach attachment",
+    format_item = function(a) return a.title or a.slug end,
+  }, function(choice)
+    if choice ~= nil then composer.detach(choice.slug) end
+  end)
+end, { desc = "hyprpilot: detach attachment" })
+
+-- Paste a clipboard image as an attachment (requires img-clip.nvim).
+set("n", "<leader>ap", function() composer.attach_clipboard_image() end,
+  { desc = "hyprpilot: attach clipboard image" })
 ```
 
 ## Limitations
