@@ -111,6 +111,11 @@ require("hyprpilot").hide()
 require("hyprpilot").close(instance_id?)               -- wipes the per-instance buffer
 require("hyprpilot").switch(instance_id)
 require("hyprpilot").active_instance()                 -- → string?
+
+-- History pagination — bumps the snapshot page size and re-hydrates
+-- so older transcript items appear above the current view. No-op when
+-- the daemon already reported `hasMore == false`.
+require("hyprpilot.chat.window").load_older(instance_id?, opts?, callback?)
 ```
 
 ### Multi-instance
@@ -125,6 +130,12 @@ instances.focus(instance_id, opts?, callback?)
 instances.restart(instance_id, callback?)
 instances.shutdown(instance_id, callback?)
 instances.rename(instance_id, name, callback?)
+
+-- Setters — ids come from the meta payload (`available_modes` /
+-- `available_models` on `acp:instance-meta` and `instance/snapshot/meta`).
+instances.set_mode(instance_id, mode_id, callback?)
+instances.set_model(instance_id, model_id, callback?)
+instances.set_option(instance_id, config_id, value, callback?)
 ```
 
 `spawn` auto-shows the chat split and focuses the composer in insert
@@ -388,6 +399,46 @@ end, { desc = "hyprpilot: detach attachment" })
 -- Paste a clipboard image as an attachment (requires img-clip.nvim).
 set("n", "<leader>ap", function() composer.attach_clipboard_image() end,
   { desc = "hyprpilot: attach clipboard image" })
+
+-- Mode picker — drive `instances.set_mode` from the active instance's
+-- advertised `available_modes` (read off the meta snapshot).
+set("n", "<leader>am", function()
+  local id = hp.active_instance()
+  if id == nil then return end
+  instances.info(id, function(err, info)
+    if err ~= nil or info == nil then return end
+    local modes = info.availableModes or info.available_modes or {}
+    if #modes == 0 then return end
+    vim.ui.select(modes, {
+      prompt = "hyprpilot mode",
+      format_item = function(m) return m.name or m.id end,
+    }, function(choice)
+      if choice ~= nil then instances.set_mode(id, choice.id) end
+    end)
+  end)
+end, { desc = "hyprpilot: pick mode" })
+
+-- Model picker — same shape, swaps to `available_models` + `set_model`.
+set("n", "<leader>aM", function()
+  local id = hp.active_instance()
+  if id == nil then return end
+  instances.info(id, function(err, info)
+    if err ~= nil or info == nil then return end
+    local models = info.availableModels or info.available_models or {}
+    if #models == 0 then return end
+    vim.ui.select(models, {
+      prompt = "hyprpilot model",
+      format_item = function(m) return m.name or m.id end,
+    }, function(choice)
+      if choice ~= nil then instances.set_model(id, choice.id) end
+    end)
+  end)
+end, { desc = "hyprpilot: pick model" })
+
+-- Pull older transcript items (deeper history) on demand.
+set("n", "<leader>au", function()
+  require("hyprpilot.chat.window").load_older()
+end, { desc = "hyprpilot: load older history" })
 ```
 
 ## Limitations
@@ -400,8 +451,11 @@ set("n", "<leader>ap", function() composer.attach_clipboard_image() end,
   transcript items don't carry per-request resolution state; if you
   click a stale one you get a `warn` log and the row stays. Active
   permissions (live event) work fine.
-- **Buffers grow unbounded.** No pager / trim hack in v1. Typical
-  sessions stay manageable.
+- **Initial chat snapshot is the latest 100 items.** Older history is
+  pulled on demand via `require("hyprpilot.chat.window").load_older()`,
+  which bumps the snapshot page and re-hydrates. The transcript isn't
+  trimmed once loaded — sessions with thousands of items will keep
+  growing buffer-side memory.
 - **Edit / diff tool calls render as plain folded blocks**, not
   side-by-side diffs. The agent's diff content shows verbatim inside
   the fold.

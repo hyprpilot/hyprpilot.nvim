@@ -102,6 +102,15 @@ local function dispatch(event)
     winbar.update_meta(event.instanceId, { instance_state = event.state })
   elseif event.event == "terminal" then
     render.handle_terminal(event)
+  elseif event.event == "lagged" then
+    -- Daemon dropped events on us (subscription overflow). The
+    -- correct recovery is to refetch the latest page so the local
+    -- view matches the daemon mirror again. Each tracked instance
+    -- gets re-hydrated.
+    log.warn("events.dispatch: events/lagged — re-hydrating tracked instances")
+    for instance_id, st in pairs(render._states) do
+      M.hydrate(instance_id, st.bufnr)
+    end
   else
     log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
   end
@@ -137,30 +146,41 @@ function M.ensure_subscribed()
 end
 
 ---Hydrate the per-instance buffer from `instance/snapshot/chat` then
----ensure the live event stream is wired.
+---ensure the live event stream is wired. Snapshot page size comes
+---from `state.snapshot_limit`, which `load_older` bumps to fetch
+---deeper history.
 ---@param instance_id string
 ---@param bufnr integer
-function M.hydrate(instance_id, bufnr)
+---@param callback? fun(err: hyprpilot.client.RpcError?): nil
+function M.hydrate(instance_id, bufnr, callback)
   M.ensure_subscribed()
 
   local state = render.state(instance_id, bufnr)
 
-  log.debug("events.hydrate: requesting snapshots for instance=%s", instance_id)
+  log.debug("events.hydrate: requesting snapshots for instance=%s limit=%d", instance_id, state.snapshot_limit)
 
-  client.request("instance/snapshot/chat", { instanceId = instance_id }, nil, function(err, snapshot)
+  client.request("instance/snapshot/chat", { instanceId = instance_id, limit = state.snapshot_limit }, nil, function(err, snapshot)
     if err ~= nil then
       log.warn("events.hydrate: chat snapshot failed for instance=%s: %s", instance_id, err.message)
-
+      if callback ~= nil then
+        callback(err)
+      end
       return
     end
 
     if type(snapshot) ~= "table" then
       log.warn("events.hydrate: chat snapshot is not a table for instance=%s (got %s)", instance_id, type(snapshot))
-
+      if callback ~= nil then
+        callback({ message = "snapshot is not a table" })
+      end
       return
     end
 
     render.hydrate(state, snapshot)
+
+    if callback ~= nil then
+      callback(nil)
+    end
   end)
 
   client.request("instance/snapshot/meta", { instanceId = instance_id }, nil, function(err, snapshot)
@@ -176,6 +196,39 @@ function M.hydrate(instance_id, bufnr)
 
     winbar.hydrate(instance_id, snapshot)
   end)
+end
+
+---Bump the chat snapshot page size by `step` (default 100) and
+---re-hydrate so older transcript items appear above the existing
+---view. No-op when the daemon already reported `hasMore == false`
+---for the current page.
+---@param instance_id string
+---@param opts? { step?: integer }
+---@param callback? fun(err: hyprpilot.client.RpcError?): nil
+function M.load_older(instance_id, opts, callback)
+  local state = render._states[instance_id]
+  if state == nil then
+    log.warn("events.load_older: no state for instance=%s", tostring(instance_id))
+    if callback ~= nil then
+      callback({ message = "no state for instance" })
+    end
+    return
+  end
+
+  if not state.has_more then
+    log.debug("events.load_older: instance=%s reports no more older items", instance_id)
+    if callback ~= nil then
+      callback(nil)
+    end
+    return
+  end
+
+  local step = (opts or {}).step or 100
+  state.snapshot_limit = state.snapshot_limit + step
+
+  log.debug("events.load_older: instance=%s new limit=%d", instance_id, state.snapshot_limit)
+
+  M.hydrate(instance_id, state.bufnr, callback)
 end
 
 ---Drop the local listener + reset the subscribed flag. Used on
