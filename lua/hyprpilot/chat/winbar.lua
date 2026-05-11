@@ -1,0 +1,251 @@
+--- Per-instance winbar driver.
+---
+--- The chat window's `winbar` option calls `render()` on every
+--- redraw; we look up which instance the window currently shows (via
+--- the buffer's `hyprpilot://<id>` name) and stitch together the
+--- mode / model / usage chips from a state table the events layer
+--- keeps fresh.
+---
+--- All updates are partial: the daemon emits `InstanceMeta` after
+--- every spawn-time refresh, then drips `CurrentModeUpdate` /
+--- `UsageUpdate` / `SessionInfoUpdate` between turns. Each handler
+--- merges into `_meta[id]` and lazily forces a winbar redraw on every
+--- window currently showing the buffer (cheap; just sets `winbar`
+--- to its existing value to nudge Neovim's eval).
+
+local log = require("hyprpilot.log")
+
+local M = {}
+
+---@class hyprpilot.winbar.Usage
+---@field used? integer
+---@field size? integer
+---@field cost? table
+
+---@class hyprpilot.winbar.Meta
+---@field profile_id? string
+---@field session_id? string
+---@field cwd? string
+---@field current_mode_id? string
+---@field current_model_id? string
+---@field available_modes? table[]
+---@field available_models? table[]
+---@field mcps_count? integer
+---@field usage? hyprpilot.winbar.Usage
+---@field session_title? string
+
+---@type table<string, hyprpilot.winbar.Meta>
+M._meta = {}
+
+local BUFFER_PREFIX = "hyprpilot://"
+
+---Resolve the instance id rendered by the buffer in window `winid`.
+---Returns nil for the placeholder buffer or any non-chat buffer.
+---@param winid integer
+---@return string?
+local function instance_id_for_win(winid)
+  if not vim.api.nvim_win_is_valid(winid) then
+    return nil
+  end
+
+  local bufnr = vim.api.nvim_win_get_buf(winid)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return nil
+  end
+
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if name:sub(1, #BUFFER_PREFIX) ~= BUFFER_PREFIX then
+    return nil
+  end
+
+  local id = name:sub(#BUFFER_PREFIX + 1)
+  if id == "" or id == "placeholder" or id:find("/", 1, true) ~= nil then
+    return nil
+  end
+
+  return id
+end
+
+---Display name for a mode/model id by looking up the matching entry
+---in `available_*`. Falls back to the id itself.
+---@param id? string
+---@param available? table[]
+---@return string?
+local function display_name(id, available)
+  if id == nil or id == "" then
+    return nil
+  end
+
+  if type(available) == "table" then
+    for _, entry in ipairs(available) do
+      if type(entry) == "table" and entry.id == id then
+        return tostring(entry.name or entry.id)
+      end
+    end
+  end
+
+  return id
+end
+
+---Compact `1234` → `1.2k`. Returns the original string when it's
+---under the threshold.
+---@param n? integer
+---@return string?
+local function compact_num(n)
+  if type(n) ~= "number" or n < 1000 then
+    return n ~= nil and tostring(n) or nil
+  end
+
+  if n < 1000000 then
+    return string.format("%.1fk", n / 1000)
+  end
+
+  return string.format("%.1fM", n / 1000000)
+end
+
+---@param meta? hyprpilot.winbar.Meta
+---@return string
+local function format_meta(meta)
+  if meta == nil then
+    return " hyprpilot"
+  end
+
+  local parts = { "hyprpilot" }
+
+  local mode = display_name(meta.current_mode_id, meta.available_modes)
+  if mode ~= nil then
+    table.insert(parts, mode)
+  end
+
+  local model = display_name(meta.current_model_id, meta.available_models)
+  if model ~= nil then
+    table.insert(parts, model)
+  end
+
+  if meta.usage ~= nil and (meta.usage.size or 0) > 0 then
+    local used = compact_num(meta.usage.used) or "0"
+    local size = compact_num(meta.usage.size) or "?"
+    table.insert(parts, string.format("%s/%s tok", used, size))
+  end
+
+  if (meta.mcps_count or 0) > 0 then
+    table.insert(parts, string.format("+%d mcps", meta.mcps_count))
+  end
+
+  return " " .. table.concat(parts, " · ")
+end
+
+---Render the winbar string for the current window. Returns an empty
+---string for the placeholder / unknown buffers so the bar collapses.
+---@return string
+function M.render()
+  local id = instance_id_for_win(vim.api.nvim_get_current_win())
+  if id == nil then
+    return ""
+  end
+
+  return format_meta(M._meta[id])
+end
+
+---Force a redraw on every window currently showing the chat buffer
+---for `instance_id`. Cheap — just resets the winbar option to its
+---current value, nudging Neovim to re-evaluate.
+---@param instance_id string
+local function nudge(instance_id)
+  local target_name = BUFFER_PREFIX .. instance_id
+
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) then
+      local bufnr = vim.api.nvim_win_get_buf(winid)
+      if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == target_name then
+        pcall(function()
+          vim.wo[winid].winbar = vim.wo[winid].winbar
+        end)
+      end
+    end
+  end
+end
+
+---Merge `fields` into the per-instance meta, emit the
+---`HyprpilotInstanceMetaChanged` autocmd, then nudge the winbar.
+---@param instance_id string
+---@param fields hyprpilot.winbar.Meta
+function M.update_meta(instance_id, fields)
+  if instance_id == nil or instance_id == "" then
+    log.warn("winbar.update_meta: missing instance_id")
+    return
+  end
+
+  local current = M._meta[instance_id] or {}
+  M._meta[instance_id] = vim.tbl_extend("force", current, fields)
+
+  pcall(vim.api.nvim_exec_autocmds, "User", {
+    pattern = "HyprpilotInstanceMetaChanged",
+    data = { instance_id = instance_id },
+  })
+
+  nudge(instance_id)
+end
+
+---Update the current mode for an instance.
+---@param instance_id string
+---@param mode_id string
+function M.update_mode(instance_id, mode_id)
+  M.update_meta(instance_id, { current_mode_id = mode_id })
+end
+
+---Replace the usage tally for an instance.
+---@param instance_id string
+---@param used integer
+---@param size integer
+---@param cost? table
+function M.update_usage(instance_id, used, size, cost)
+  M.update_meta(instance_id, {
+    usage = { used = used, size = size, cost = cost },
+  })
+end
+
+---Update the session title (currently surfaced in autocmds; not in
+---the winbar string itself).
+---@param instance_id string
+---@param title? string
+function M.update_session(instance_id, title)
+  M.update_meta(instance_id, { session_title = title })
+end
+
+---Hydrate from `instance/snapshot/meta`. Carries the full meta shape
+---in one shot so the bar fills out the moment the chat window opens.
+---@param instance_id string
+---@param snapshot table
+function M.hydrate(instance_id, snapshot)
+  if type(snapshot) ~= "table" then
+    log.debug("winbar.hydrate: instance=%s snapshot is not a table", tostring(instance_id))
+    return
+  end
+
+  M.update_meta(instance_id, {
+    profile_id = snapshot.profileId,
+    session_id = snapshot.sessionId,
+    cwd = snapshot.cwd,
+    current_mode_id = snapshot.currentModeId,
+    current_model_id = snapshot.currentModelId,
+    available_modes = snapshot.availableModes,
+    available_models = snapshot.availableModels,
+    mcps_count = snapshot.mcpsCount,
+    usage = snapshot.usage,
+  })
+end
+
+---Drop all state for `instance_id`. Called when the chat buffer is
+---wiped (instance closed).
+---@param instance_id string
+function M.forget(instance_id)
+  if M._meta[instance_id] == nil then
+    return
+  end
+
+  log.debug("winbar.forget: instance=%s", instance_id)
+  M._meta[instance_id] = nil
+end
+
+return M

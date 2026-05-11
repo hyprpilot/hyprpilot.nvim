@@ -81,6 +81,7 @@ function M.close(instance_id)
   M._instances[id] = nil
 
   require("hyprpilot.chat.render").forget(id)
+  require("hyprpilot.chat.winbar").forget(id)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)
@@ -134,6 +135,7 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].foldenable = true
   vim.wo[M._winid].foldlevel = 99
   vim.wo[M._winid].foldcolumn = "1"
+  vim.wo[M._winid].winbar = "%!v:lua.require'hyprpilot.chat.winbar'.render()"
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).

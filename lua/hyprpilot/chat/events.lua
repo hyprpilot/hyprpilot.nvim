@@ -8,6 +8,7 @@
 local client = require("hyprpilot.client")
 local log = require("hyprpilot.log")
 local render = require("hyprpilot.chat.render")
+local winbar = require("hyprpilot.chat.winbar")
 
 local M = {}
 
@@ -32,6 +33,23 @@ local function dispatch(event)
     render.handle_permission_request(event)
   elseif event.event == "permission_resolved" then
     render.handle_permission_resolved(event)
+  elseif event.event == "instance_meta" then
+    winbar.update_meta(event.instanceId, {
+      profile_id = event.profileId,
+      session_id = event.sessionId,
+      cwd = event.cwd,
+      current_mode_id = event.currentModeId,
+      current_model_id = event.currentModelId,
+      available_modes = event.availableModes,
+      available_models = event.availableModels,
+      mcps_count = event.mcpsCount,
+    })
+  elseif event.event == "current_mode_update" then
+    winbar.update_mode(event.instanceId, event.currentModeId)
+  elseif event.event == "usage_update" then
+    winbar.update_usage(event.instanceId, event.used, event.size, event.cost)
+  elseif event.event == "session_info_update" then
+    winbar.update_session(event.instanceId, event.title)
   else
     log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
   end
@@ -75,22 +93,36 @@ function M.hydrate(instance_id, bufnr)
 
   local state = render.state(instance_id, bufnr)
 
-  log.debug("events.hydrate: requesting snapshot for instance=%s", instance_id)
+  log.debug("events.hydrate: requesting snapshots for instance=%s", instance_id)
 
   client.request("instance/snapshot/chat", { instanceId = instance_id }, nil, function(err, snapshot)
     if err ~= nil then
-      log.warn("events.hydrate: snapshot failed for instance=%s: %s", instance_id, err.message)
+      log.warn("events.hydrate: chat snapshot failed for instance=%s: %s", instance_id, err.message)
 
       return
     end
 
     if type(snapshot) ~= "table" then
-      log.warn("events.hydrate: snapshot is not a table for instance=%s (got %s)", instance_id, type(snapshot))
+      log.warn("events.hydrate: chat snapshot is not a table for instance=%s (got %s)", instance_id, type(snapshot))
 
       return
     end
 
     render.hydrate(state, snapshot)
+  end)
+
+  client.request("instance/snapshot/meta", { instanceId = instance_id }, nil, function(err, snapshot)
+    if err ~= nil then
+      log.debug("events.hydrate: meta snapshot failed for instance=%s: %s", instance_id, err.message)
+      return
+    end
+
+    if type(snapshot) ~= "table" then
+      log.debug("events.hydrate: meta snapshot is not a table for instance=%s", instance_id)
+      return
+    end
+
+    winbar.hydrate(instance_id, snapshot)
   end)
 end
 

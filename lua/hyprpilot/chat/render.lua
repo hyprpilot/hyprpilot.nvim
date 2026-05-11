@@ -319,8 +319,38 @@ local function append_agent_text(state, text)
   end)
 end
 
+---Render an `agent_attachment` transcript item as a single line:
+---`@ <title or slug> · <mime> · <path>` with the body lines available
+---only by clicking through to the file. We don't inline image / audio
+---content; the agent attached it for reference, not display.
+---@param state hyprpilot.render.State
+---@param attachment table
+local function render_attachment(state, attachment)
+  state.active_text_block = nil
+
+  local label = tostring(attachment.title or attachment.slug or "attachment")
+  local mime = attachment.mime
+  local path = attachment.path
+  local parts = { "@ " .. label }
+  if mime ~= nil and mime ~= "" then
+    table.insert(parts, tostring(mime))
+  end
+  if path ~= nil and path ~= "" then
+    table.insert(parts, tostring(path))
+  end
+
+  local line = table.concat(parts, " · ")
+  local first_row
+
+  chat_buffer.with_buffer(state.bufnr, function()
+    first_row = append_lines(state, { line })
+  end)
+
+  apply_line_hl(state, first_row, "HyprpilotToolBody")
+end
+
 ---Append a labeled placeholder line for transcript variants we don't
----render structurally (agent attachments, unknown wire kinds).
+---render structurally (unknown wire kinds, unhandled future shapes).
 ---@param state hyprpilot.render.State
 ---@param label string
 ---@param detail? string
@@ -794,7 +824,7 @@ function M.render_item(state, turn_id, item)
   elseif kind == "permission_request" then
     render_permission_request(state, item)
   elseif kind == "agent_attachment" then
-    append_placeholder(state, "attachment")
+    render_attachment(state, item)
   elseif kind == "unknown" then
     log.warn("render.render_item: daemon emitted unknown wire kind=%s", tostring(item.wireKind))
     append_placeholder(state, "unknown", item.wireKind)
