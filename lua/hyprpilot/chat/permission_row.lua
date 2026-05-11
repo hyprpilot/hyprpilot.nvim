@@ -140,22 +140,33 @@ local function button_line(entry)
 end
 
 ---Build the full content for the row's buffer from the head entry.
----Returns a list of lines + the row index (0-indexed) of the button
----line so the caller can apply the button-line highlight.
+---The button line lives at the TOP so it's the first thing the
+---captain sees the moment the row pops in — header + tool details
+---follow below for context. Returns the lines + the row index
+---(0-indexed) of the button line + the row index of the header
+---line so the caller can apply the corresponding highlights.
 ---@return string[] lines
 ---@return integer? button_row
+---@return integer? header_row
 local function compose()
   local entry = head()
   if entry == nil then
-    return { "" }, nil
+    return { "" }, nil, nil
   end
 
   local lines = {}
+
+  table.insert(lines, button_line(entry))
+  local btn_row = 0
+
+  table.insert(lines, "")
+
   local extra = #M._queue > 1 and string.format(" (+%d more)", #M._queue - 1) or ""
   table.insert(lines, string.format(" permission · %s%s", entry.tool or "tool", extra))
+  local header_row = #lines - 1
 
   -- Body lines from the daemon's `formatted` payload (description /
-  -- fields / output) — same shape as the inline tool-call body.
+  -- fields) — same shape as the inline tool-call body.
   local formatted = entry.formatted
   if type(formatted) == "table" then
     if type(formatted.fields) == "table" then
@@ -173,11 +184,7 @@ local function compose()
     end
   end
 
-  table.insert(lines, "")
-  local btn_row = #lines
-  table.insert(lines, button_line(entry))
-
-  return lines, btn_row
+  return lines, btn_row, header_row
 end
 
 ---Resolve the row's max height from config (40% of `vim.o.lines` by
@@ -204,16 +211,18 @@ function M.refresh()
   -- early enqueue before open) can still populate the row.
   ensure_buffer()
 
-  local lines, btn_row = compose()
+  local lines, btn_row, header_row = compose()
 
   buffer.with_buffer(M._bufnr, function()
     vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, lines)
     vim.api.nvim_buf_clear_namespace(M._bufnr, NS, 0, -1)
 
     if head() ~= nil then
-      vim.api.nvim_buf_set_extmark(M._bufnr, NS, 0, 0, { line_hl_group = "HyprpilotPermissionHeader" })
       if btn_row ~= nil then
         vim.api.nvim_buf_set_extmark(M._bufnr, NS, btn_row, 0, { line_hl_group = "HyprpilotPermissionButton" })
+      end
+      if header_row ~= nil then
+        vim.api.nvim_buf_set_extmark(M._bufnr, NS, header_row, 0, { line_hl_group = "HyprpilotPermissionHeader" })
       end
     end
   end)
