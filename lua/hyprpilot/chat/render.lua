@@ -66,12 +66,6 @@ local M = {}
 ---@field exit_code? integer
 ---@field signal? string
 
----@class hyprpilot.render.TerminalState
----@field block_id string
----@field output string  -- accumulated stdout/stderr
----@field exit_code? integer
----@field signal? string
-
 ---@type table<string, hyprpilot.render.State>
 M._states = {}
 
@@ -1294,6 +1288,25 @@ function M.state_for_bufnr(bufnr)
   end
 
   return nil
+end
+
+---State lookup by instance id. Public accessor — sibling modules in
+---`chat/` route through this instead of reaching into `_states`.
+---@param instance_id string
+---@return hyprpilot.render.State?
+function M.state_for(instance_id)
+  return M._states[instance_id]
+end
+
+---Iterate every tracked state. `fn` receives `(instance_id, state)`
+---per entry; return value ignored. Public accessor so consumers
+---(events.lua's lagged-recovery loop) don't depend on the private
+---`_states` table.
+---@param fn fun(instance_id: string, state: hyprpilot.render.State): nil
+function M.iter_states(fn)
+  for instance_id, state in pairs(M._states) do
+    fn(instance_id, state)
+  end
 end
 
 return M

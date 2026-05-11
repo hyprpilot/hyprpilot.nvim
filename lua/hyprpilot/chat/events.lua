@@ -108,9 +108,9 @@ local function dispatch(event)
     -- view matches the daemon mirror again. Each tracked instance
     -- gets re-hydrated.
     log.warn("events.dispatch: events/lagged — re-hydrating tracked instances")
-    for instance_id, st in pairs(render._states) do
+    render.iter_states(function(instance_id, st)
       M.hydrate(instance_id, st.bufnr)
-    end
+    end)
   else
     log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
   end
@@ -206,7 +206,7 @@ end
 ---@param opts? { step?: integer }
 ---@param callback? fun(err: hyprpilot.client.RpcError?): nil
 function M.load_older(instance_id, opts, callback)
-  local state = render._states[instance_id]
+  local state = render.state_for(instance_id)
   if state == nil then
     log.warn("events.load_older: no state for instance=%s", tostring(instance_id))
     if callback ~= nil then

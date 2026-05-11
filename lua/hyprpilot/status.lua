@@ -7,8 +7,9 @@
 --- Sources:
 --- - Connection state via `client.on_state_change`.
 --- - Active instance via `chat.window.active_instance()` (sync read).
---- - Activity (idle / streaming / tool / awaiting_permission) is a
----   stub for now — Phase 4+ rendering will plumb the live signals.
+--- - Activity (idle / thinking / streaming / tool / awaiting_permission)
+---   driven from `chat.events.dispatch` on transcript / turn /
+---   permission events.
 
 local client = require("hyprpilot.client")
 local window = require("hyprpilot.chat.window")
@@ -82,6 +83,14 @@ function M.set_activity(next)
   activity = next
 
   emit("ActivityChanged", activity)
+end
+
+---Fire `User HyprpilotInstanceChanged` with `{ instance_id }` data.
+---Called by `chat.window` whenever the active-instance pointer
+---moves (spawn / register / switch / show).
+---@param instance_id? string
+function M.emit_instance_changed(instance_id)
+  emit("InstanceChanged", { instance_id = instance_id })
 end
 
 ---Force a reconnect. Convenience wrapper around `client.reconnect()`.

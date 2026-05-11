@@ -192,9 +192,11 @@ function M.call(name, args)
   return tool.handler(args or {})
 end
 
----Debug accessor — returns the live registry. Not for the wire.
+---Internal debug accessor — returns the live registry table. Not
+---part of the public surface; intended for `:lua print(...)` and
+---`:checkhealth`-style introspection only.
 ---@return table<string, hyprpilot.mcp.Tool>
-function M.registry()
+function M._registry()
   return registry
 end
 

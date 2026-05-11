@@ -3,6 +3,7 @@
 ---   * cancel-shaped turn_ended chip
 ---   * terminal block accumulates output + folds on exit
 ---   * acp:instance-state surfaces in the winbar
+---   * HyprpilotInstanceChanged fires on window.switch / register
 
 local helpers = require("tests.helpers")
 
@@ -171,6 +172,45 @@ T["acp:instance-state surfaces in the winbar when not running"] = function()
   helpers.close_window(winid)
   helpers.cleanup_instance(id)
   winbar.forget(id)
+end
+
+T["HyprpilotInstanceChanged fires when window.switch flips the active id"] = function()
+  local buffer = require("hyprpilot.chat.buffer")
+  local window = require("hyprpilot.chat.window")
+  local id_a = helpers.unique_id()
+  local id_b = helpers.unique_id()
+
+  -- Two registered instances; register() emits the first
+  -- HyprpilotInstanceChanged for each on initial registration.
+  window.register({ bufnr = buffer.create(id_a), instance_id = id_a })
+  window.register({ bufnr = buffer.create(id_b), instance_id = id_b })
+
+  -- Now subscribe and switch — that triggers the autocmd we want
+  -- to verify under captain control.
+  local seen = {}
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "HyprpilotInstanceChanged",
+    callback = function(args)
+      table.insert(seen, args.data and args.data.instance_id or nil)
+    end,
+  })
+
+  window.switch(id_a)
+
+  MiniTest.expect.equality(#seen, 1)
+  MiniTest.expect.equality(seen[1], id_a)
+
+  -- Switching to the same id again must NOT fire.
+  window.switch(id_a)
+  MiniTest.expect.equality(#seen, 1)
+
+  -- Switching to a different id fires once more.
+  window.switch(id_b)
+  MiniTest.expect.equality(#seen, 2)
+  MiniTest.expect.equality(seen[2], id_b)
+
+  helpers.cleanup_instance(id_a)
+  helpers.cleanup_instance(id_b)
 end
 
 return T
