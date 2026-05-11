@@ -679,13 +679,17 @@ function M.render_item(state, turn_id, item)
     return
   end
 
-  if turn_id ~= nil and turn_id ~= state.current_turn then
+  local kind = item.kind
+  local is_user_kind = kind == "user_prompt" or kind == "user_text"
+
+  -- Lazy agent header: only insert when the next item is actually
+  -- agent-side. A snapshot replay that leads with `user_prompt` would
+  -- otherwise render an empty `## agent` block above the user line.
+  if turn_id ~= nil and turn_id ~= state.current_turn and not is_user_kind then
     append_turn_header(state, "agent", turn_id)
   end
 
-  local kind = item.kind
-
-  if kind == "user_prompt" or kind == "user_text" then
+  if is_user_kind then
     append_turn_header(state, "user", turn_id)
 
     chat_buffer.with_buffer(state.bufnr, function()

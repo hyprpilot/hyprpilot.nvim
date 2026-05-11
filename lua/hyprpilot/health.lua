@@ -1,3 +1,7 @@
+--- `:checkhealth hyprpilot` — captain's first stop when something is
+--- off. Each check is a stand-alone function so individual failures
+--- never short-circuit the rest of the report.
+
 local health = vim.health
 
 local M = {}
@@ -31,15 +35,24 @@ local function check_nvim_version()
   end
 end
 
+---@return string
+local function resolved_socket_path()
+  local cfg = require("hyprpilot.config").options.socket
+
+  if type(cfg) == "string" and cfg ~= "" then
+    return cfg
+  end
+
+  return default_socket_path()
+end
+
 local function check_socket()
-  local config = require("hyprpilot.config").options
-  local socket = config.socket or default_socket_path()
+  local socket = resolved_socket_path()
 
   if socket == "" then
     health.warn("Could not resolve daemon socket path", {
       "Set `socket` in `setup({})` or export `XDG_RUNTIME_DIR`.",
     })
-
     return
   end
 
@@ -49,11 +62,126 @@ local function check_socket()
     health.warn(string.format("Daemon socket not reachable at `%s`", socket), {
       "Start the `hyprpilot` daemon, or override `socket` in `setup({})`.",
     })
-
     return
   end
 
   health.ok(string.format("Daemon socket reachable at `%s`", socket))
+end
+
+---Try `daemon/version` over the configured socket. Blocks the editor
+---for up to ~1.2s during the check; runs synchronously since
+---`vim.health` reports as it goes.
+local function check_daemon_version()
+  local socket = resolved_socket_path()
+
+  if socket == "" or vim.uv.fs_stat(socket) == nil then
+    -- Socket-level failure already reported by check_socket; don't
+    -- emit a confusing follow-up.
+    return
+  end
+
+  local client = require("hyprpilot.client")
+  local got
+
+  client.request("daemon/version", nil, { timeout_ms = 1000 }, function(err, result)
+    got = { err = err, result = result }
+  end)
+
+  local arrived = vim.wait(1200, function()
+    return got ~= nil
+  end, 25)
+
+  if not arrived then
+    health.warn("`daemon/version` timed out", {
+      "Daemon may be starting up; rerun `:checkhealth hyprpilot` in a moment.",
+    })
+    return
+  end
+
+  if got.err ~= nil then
+    health.warn(string.format("`daemon/version` failed: %s", got.err.message or vim.inspect(got.err)))
+    return
+  end
+
+  local version = got.result and got.result.version
+  if type(version) ~= "string" or version == "" then
+    health.warn("Daemon responded but did not report a version", { vim.inspect(got.result) })
+    return
+  end
+
+  health.ok(string.format("Daemon v%s", version))
+end
+
+local function check_listen_socket()
+  local servername = vim.v.servername
+
+  if servername == nil or servername == "" then
+    health.warn("Neovim is not listening on a socket", {
+      "Start nvim with `--listen <path>` or set `vim.fn.serverstart()` in your config.",
+      "Without a listen socket the MCP bridge cannot attach to this nvim instance.",
+    })
+    return
+  end
+
+  health.ok(string.format("Neovim listen socket: `%s`", servername))
+
+  local env = vim.env.NVIM_LISTEN_ADDRESS
+
+  if env == nil or env == "" then
+    health.info("`NVIM_LISTEN_ADDRESS` is unset — set it in your shell so MCP `mcps.json` can reference the same path.")
+    return
+  end
+
+  if env ~= servername then
+    health.warn(string.format("`NVIM_LISTEN_ADDRESS=%s` does not match the actual listen socket `%s`", env, servername), {
+      "MCP entries that interpolate `$NVIM_LISTEN_ADDRESS` (or copies of the value into `mcps.json`) will hit the wrong nvim.",
+      "Either restart nvim with `--listen $NVIM_LISTEN_ADDRESS` or update the env var to match `:echo v:servername`.",
+    })
+    return
+  end
+
+  health.ok("`NVIM_LISTEN_ADDRESS` matches the listen socket")
+end
+
+local function check_uvx()
+  if vim.fn.executable("uvx") == 1 then
+    health.ok("`uvx` is on $PATH")
+    return
+  end
+
+  health.warn("`uvx` not found on $PATH", {
+    "Install via `pipx install uv` or `brew install uv`.",
+    "The hyprpilot daemon spawns the MCP bridge via `uvx hyprpilot-nvim-mcp`; without `uvx` on the daemon's $PATH the bridge will not start.",
+  })
+end
+
+local function check_mcp()
+  local config = require("hyprpilot.config").options.mcp or {}
+
+  if config.enabled == false then
+    health.info("MCP bridge disabled (`mcp.enabled = false`)")
+    return
+  end
+
+  local ok, mcp = pcall(require, "hyprpilot.mcp")
+  if not ok then
+    health.warn("`hyprpilot.mcp` failed to load: " .. tostring(mcp))
+    return
+  end
+
+  local tools_ok, tools = pcall(mcp.list)
+  if not tools_ok then
+    health.warn("`hyprpilot.mcp.list()` raised: " .. tostring(tools))
+    return
+  end
+
+  local count = type(tools) == "table" and #tools or 0
+
+  if count == 0 then
+    health.info("MCP bridge enabled but no tools registered (use `require('hyprpilot.mcp').register({...})`).")
+  else
+    health.ok(string.format("MCP bridge enabled with %d tool%s registered", count, count == 1 and "" or "s"))
+  end
 end
 
 function M.check()
@@ -61,6 +189,10 @@ function M.check()
 
   check_nvim_version()
   check_socket()
+  check_daemon_version()
+  check_listen_socket()
+  check_uvx()
+  check_mcp()
 end
 
 return M
