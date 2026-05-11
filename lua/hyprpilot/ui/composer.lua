@@ -73,6 +73,7 @@ end
 ---@param desc string
 local function apply_action(bufnr, spec, handler, desc)
   if spec == false or spec == nil then
+    log.debug("composer.apply_action: skipping %s (spec is %s)", desc, vim.inspect(spec))
     return
   end
 
@@ -86,6 +87,7 @@ local function apply_action(bufnr, spec, handler, desc)
 
       for _, key in ipairs(keys) do
         vim.keymap.set(mode, key, handler, { buffer = bufnr, desc = "hyprpilot: " .. desc })
+        log.debug("composer.apply_action: bound %s key=%s mode=%s bufnr=%s", desc, key, mode, bufnr)
       end
     end
   end
@@ -496,6 +498,8 @@ end
 function M.submit(text, opts)
   local instance_id = (opts or {}).instance_id or window.active_instance()
 
+  log.debug("composer.submit: invoked instance_id=%s text_passed=%s", tostring(instance_id), tostring(text ~= nil))
+
   if instance_id == nil then
     log.warn("composer.submit: no active instance")
 
@@ -512,11 +516,13 @@ function M.submit(text, opts)
     end
 
     text = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+    log.debug("composer.submit: read %d bytes from composer bufnr=%s", #text, bufnr)
   end
 
   text = text:gsub("^%s+", ""):gsub("%s+$", "")
 
   if text == "" then
+    log.debug("composer.submit: text empty after trim, no-op")
     return
   end
 
