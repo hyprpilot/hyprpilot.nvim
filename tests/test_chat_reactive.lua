@@ -213,4 +213,61 @@ T["HyprpilotInstanceChanged fires when window.switch flips the active id"] = fun
   helpers.cleanup_instance(id_b)
 end
 
+T["events.dispatch unwraps the daemon's { name, payload, instanceId } envelope"] = function()
+  -- Capture the notification handler the events module registers
+  -- by stubbing client.on_notification, then drive it with the
+  -- envelope shape the daemon actually emits.
+  local client = require("hyprpilot.client")
+  local original_on_notification = client.on_notification
+  local original_request = client.request
+  local captured
+
+  client.on_notification = function(method, handler)
+    if method == "events/changed" then
+      captured = handler
+    end
+    return function() end
+  end
+
+  -- ensure_subscribed also fires the events/subscribe RPC; short-
+  -- circuit it so the test doesn't hit the wire.
+  client.request = function(_, _, _, callback)
+    callback(nil, { subscribed = true })
+  end
+
+  local events = require("hyprpilot.chat.events")
+  events._reset()
+  events.ensure_subscribed()
+
+  client.on_notification = original_on_notification
+  client.request = original_request
+
+  MiniTest.expect.equality(captured ~= nil, true)
+
+  -- Hand the captured dispatcher the daemon's actual wire shape and
+  -- assert the instance-meta side effect lands.
+  local id = helpers.unique_id()
+  captured({
+    name = "acp:instance-meta",
+    instanceId = id,
+    payload = {
+      event = "instance_meta",
+      instanceId = id,
+      currentModeId = "plan",
+      availableModes = { { id = "plan", name = "Plan" } },
+      mcpsCount = 3,
+    },
+  })
+
+  local winbar = require("hyprpilot.chat.winbar")
+  MiniTest.expect.equality(winbar._meta[id].current_mode_id, "plan")
+  MiniTest.expect.equality(winbar._meta[id].mcps_count, 3)
+
+  -- And the malformed-payload guard rails still hold for things
+  -- missing the discriminator entirely.
+  captured({ no = "envelope at all" })
+
+  winbar.forget(id)
+end
+
 return T

@@ -58,10 +58,38 @@ local M = {}
 local subscribed = false
 local unsubscribe = nil ---@type fun()?
 
----@param event table
-local function dispatch(event)
-  if type(event) ~= "table" or type(event.event) ~= "string" then
-    log.warn("events.dispatch: dropping malformed payload: %s", vim.inspect(event))
+---Unwrap an `events/changed` notification's params to the daemon's
+---underlying `InstanceEvent` payload. The wire shape is:
+---
+---   { name = "acp:<event>", instanceId = "...", payload = { event = "...", ... } }
+---
+---The discriminator and every event-specific field live inside
+---`payload`; the outer envelope is just routing metadata. We pass
+---`payload` down to the per-event handlers so they receive the
+---untagged shape they were written against (`event.event`,
+---`event.instanceId`, `event.turnId`, etc.).
+---@param params table
+---@return table?
+local function unwrap_event(params)
+  if type(params) ~= "table" then
+    return nil
+  end
+  if type(params.payload) == "table" then
+    return params.payload
+  end
+  -- Legacy / direct shape (no envelope) — accept as-is.
+  if type(params.event) == "string" then
+    return params
+  end
+  return nil
+end
+
+---@param raw table
+local function dispatch(raw)
+  local event = unwrap_event(raw)
+
+  if event == nil or type(event.event) ~= "string" then
+    log.warn("events.dispatch: dropping malformed payload: %s", vim.inspect(raw))
 
     return
   end
