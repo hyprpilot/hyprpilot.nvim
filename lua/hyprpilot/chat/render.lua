@@ -66,6 +66,12 @@ local M = {}
 ---@field exit_code? integer
 ---@field signal? string
 
+---@class hyprpilot.render.TerminalState
+---@field block_id string
+---@field output string  -- accumulated stdout/stderr
+---@field exit_code? integer
+---@field signal? string
+
 ---@type table<string, hyprpilot.render.State>
 M._states = {}
 

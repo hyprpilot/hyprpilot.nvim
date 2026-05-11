@@ -42,6 +42,9 @@ M.LINKS = {
   HyprpilotTurnEndOk = "DiagnosticOk",
   HyprpilotTurnEndError = "DiagnosticError",
   HyprpilotTurnEndCancelled = "DiagnosticWarn",
+
+  -- Composer
+  HyprpilotComposerAttachments = "Comment",
 }
 
 ---Apply (or re-apply) every default highlight link. Idempotent —
