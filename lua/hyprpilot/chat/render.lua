@@ -648,18 +648,34 @@ local function insert_block_into_section(state, turn_id, kind, block_id, block_k
   -- pushed down (gravity=true on the tail_mark follows), and the new
   -- block lands above it. Result: [header][...prior blocks...]
   -- [new block][trailing blank].
+  --
+  -- Prepend a blank when this isn't the section's first block: the
+  -- previous block's closing `---` and the new block's header would
+  -- otherwise sit on adjacent rows. The first block uses the
+  -- section's own spacer row (head+1) as its leading separator.
+  local lines_to_insert = lines
+  local block_row_offset = 0
+  if #section.block_ids > 0 then
+    lines_to_insert = vim.list_extend({ "" }, lines)
+    block_row_offset = 1
+  end
+
   local insert_row = section_end_row(state, section)
 
   chat_buffer.with_buffer(state.bufnr, function()
-    vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, lines)
+    vim.api.nvim_buf_set_lines(state.bufnr, insert_row, insert_row, false, lines_to_insert)
   end)
 
+  -- The block's head_row sits at insert_row + block_row_offset (skip
+  -- the leading blank when present); tail follows from there.
+  local block_head = insert_row + block_row_offset
+  local block_tail = insert_row + #lines_to_insert - 1
   local block = {
     id = block_id,
     kind = block_kind,
     turn_id = state.current_turn,
-    head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, insert_row, 0, { right_gravity = true }),
-    tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, insert_row + #lines - 1, 0, { right_gravity = true }),
+    head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, block_head, 0, { right_gravity = true }),
+    tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, block_tail, 0, { right_gravity = true }),
   }
   state.blocks[block_id] = block
   table.insert(section.block_ids, block_id)
@@ -678,7 +694,7 @@ local function insert_block_into_section(state, turn_id, kind, block_id, block_k
     end
   end
 
-  return block, insert_row
+  return block, block_head
 end
 
 ---Insert `lines` directly under the prose anchor of `turn_id`, growing
@@ -854,6 +870,37 @@ local function tool_input_lang(tool_kind)
   return ""
 end
 
+---Wrap a list of paragraphs (each paragraph is an array of lines) in
+---`---` horizontal rules with proper markdown spacing: blank lines
+---above and below each rule, blank lines between paragraphs, and a
+---trailing blank that doubles as the inter-block separator inside a
+---section. The result reads like a well-formed markdown document and
+---renders cleanly in markdown viewers (markview / render-markdown)
+---instead of running rules into adjacent content (which CommonMark
+---requires a preceding blank for to recognise as a horizontal rule
+---at all — without it many parsers treat `---` as a setext heading
+---underline for the line above).
+---@param paragraphs string[][]
+---@return string[]
+local function wrap_in_rules(paragraphs)
+  if #paragraphs == 0 then
+    paragraphs = { { "(no details)" } }
+  end
+
+  local lines = { "", "---", "" }
+  for i, paragraph in ipairs(paragraphs) do
+    if i > 1 then
+      table.insert(lines, "")
+    end
+    for _, l in ipairs(paragraph) do
+      table.insert(lines, l)
+    end
+  end
+  table.insert(lines, "")
+  table.insert(lines, "---")
+  return lines
+end
+
 ---Render the body lines for a tool-call block from its `formatted`
 ---spec. Wraps content in `---` separators + uses 4-backtick fenced
 ---code blocks so the chat buffer's markdown highlighter (registered
@@ -874,10 +921,10 @@ end
 ---@return string[]
 local function tool_body_lines(formatted, tool_kind)
   if type(formatted) ~= "table" then
-    return { "---", "(no details)", "---" }
+    return wrap_in_rules({})
   end
 
-  local lines = { "---" }
+  local paragraphs = {}
   local input_lang = tool_input_lang(tool_kind)
 
   if type(formatted.fields) == "table" then
@@ -894,47 +941,34 @@ local function tool_body_lines(formatted, tool_kind)
     end
 
     if field_count == 1 and input_lang ~= "" and not tostring(single_field.value):find("\n", 1, true) then
-      table.insert(lines, "````" .. input_lang)
-      table.insert(lines, tostring(single_field.value))
-      table.insert(lines, "````")
-    else
+      table.insert(paragraphs, { "````" .. input_lang, tostring(single_field.value), "````" })
+    elseif field_count > 0 then
+      local field_lines = {}
       for _, field in ipairs(formatted.fields) do
         if type(field) == "table" and field.label and field.value then
           local value = tostring(field.value):gsub("\n", " ")
-          table.insert(lines, string.format("%s: %s", field.label, value))
+          table.insert(field_lines, string.format("%s: %s", field.label, value))
         end
       end
+      table.insert(paragraphs, field_lines)
     end
   end
 
   if type(formatted.description) == "string" and formatted.description ~= "" then
-    if #lines > 1 then
-      table.insert(lines, "")
-    end
-    for _, l in ipairs(vim.split(formatted.description, "\n", { plain = true })) do
-      table.insert(lines, l)
-    end
+    table.insert(paragraphs, vim.split(formatted.description, "\n", { plain = true }))
   end
 
   if type(formatted.output) == "string" and formatted.output ~= "" then
-    if #lines > 1 then
-      table.insert(lines, "")
-    end
     local output_lang = tool_output_lang(tool_kind)
-    table.insert(lines, "````" .. output_lang)
+    local output_para = { "````" .. output_lang }
     for _, l in ipairs(vim.split(formatted.output, "\n", { plain = true })) do
-      table.insert(lines, l)
+      table.insert(output_para, l)
     end
-    table.insert(lines, "````")
+    table.insert(output_para, "````")
+    table.insert(paragraphs, output_para)
   end
 
-  if #lines == 1 then
-    table.insert(lines, "(no details)")
-  end
-
-  table.insert(lines, "---")
-
-  return lines
+  return wrap_in_rules(paragraphs)
 end
 
 ---Compose the header line for a tool-call block.
@@ -1058,11 +1092,7 @@ local function render_thought(state, text)
   if text == "" then
     lines = { "* (empty thought)" }
   else
-    local body = { "---" }
-    for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
-      table.insert(body, l)
-    end
-    table.insert(body, "---")
+    local body = wrap_in_rules({ vim.split(text, "\n", { plain = true }) })
     lines = vim.list_extend({ "* thought" }, body)
   end
 
@@ -1535,7 +1565,7 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
 
     local block_id = "term:" .. terminal_id
     local header = terminal_header_line(terminal_id, nil, nil)
-    local lines = { header, "---", "(no output yet)", "---" }
+    local lines = vim.list_extend({ header }, wrap_in_rules({ { "(no output yet)" } }))
 
     local block, first_row = insert_block_into_section(state, state.current_turn, "tools", block_id, "tool_call", lines)
 
@@ -1543,7 +1573,7 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
       chat_buffer.with_buffer(state.bufnr, function()
         first_row = append_lines(state, lines)
       end)
-      block = track_block(state, block_id, "tool_call", first_row, first_row + 3)
+      block = track_block(state, block_id, "tool_call", first_row, first_row + #lines - 1)
     end
 
     apply_line_hl(state, first_row, "HyprpilotToolStatusRunning")
@@ -1563,17 +1593,17 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
     term.signal = chunk.signal
   end
 
-  local body = { "---" }
+  local body
   if term.output == "" then
-    table.insert(body, "(no output yet)")
+    body = wrap_in_rules({ { "(no output yet)" } })
   else
-    table.insert(body, "````console")
+    local out_para = { "````console" }
     for _, l in ipairs(vim.split(term.output, "\n", { plain = true })) do
-      table.insert(body, l)
+      table.insert(out_para, l)
     end
-    table.insert(body, "````")
+    table.insert(out_para, "````")
+    body = wrap_in_rules({ out_para })
   end
-  table.insert(body, "---")
 
   replace_block_body(state, term._block, body)
   local head_row, tail_row = block_range(state, term._block)
