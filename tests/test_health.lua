@@ -96,7 +96,7 @@ T["check reports MCP disabled when config flag is false"] = function()
   MiniTest.expect.equality(find_message(records, "info", "MCP bridge disabled") ~= nil, true)
 end
 
-T["render does not insert an empty agent header before a user_prompt"] = function()
+T["render does not insert an empty pilot header before a captain prompt"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -112,20 +112,20 @@ T["render does not insert an empty agent header before a user_prompt"] = functio
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  -- The user prompt should appear BEFORE the agent header. Find both
-  -- positions and assert the order.
-  local user_idx, agent_idx
+  -- The user (captain) prompt should appear BEFORE the agent (pilot)
+  -- header. Find both positions and assert the order.
+  local captain_idx, pilot_idx
   for i, l in ipairs(lines) do
-    if l == "## user" and user_idx == nil then
-      user_idx = i
-    elseif l == "## agent" and agent_idx == nil then
-      agent_idx = i
+    if l == "## captain" and captain_idx == nil then
+      captain_idx = i
+    elseif l == "## pilot" and pilot_idx == nil then
+      pilot_idx = i
     end
   end
 
-  MiniTest.expect.equality(user_idx ~= nil, true)
-  MiniTest.expect.equality(agent_idx ~= nil, true)
-  MiniTest.expect.equality(user_idx < agent_idx, true)
+  MiniTest.expect.equality(captain_idx ~= nil, true)
+  MiniTest.expect.equality(pilot_idx ~= nil, true)
+  MiniTest.expect.equality(captain_idx < pilot_idx, true)
 
   helpers.cleanup_instance(id)
 end

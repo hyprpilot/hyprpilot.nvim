@@ -254,12 +254,14 @@ local function replace_block_body(state, block, body_lines)
   end)
 end
 
----Append a turn header (`## agent`, `## user`) and reset the active
----text block tracker. Idempotent per (turn_id, role): the daemon's
----broadcast order for transcript / turn_started events is not
----guaranteed (user_prompt and turn_started can arrive in either
+---Append a turn header (`## pilot`, `## captain`) and reset the
+---active text block tracker. Idempotent per (turn_id, role): the
+---daemon's broadcast order for transcript / turn_started events is
+---not guaranteed (user_prompt and turn_started can arrive in either
 ---order), so each role-per-turn must drop one header at most no
----matter how many times the renderer asks for it.
+---matter how many times the renderer asks for it. `role` is the
+---internal discriminator (`"agent"` / `"user"`); the rendered label
+---is `pilot` / `captain` to match the daemon-side voice.
 ---@param state hyprpilot.render.State
 ---@param role "agent" | "user"
 ---@param turn_id? string
@@ -278,11 +280,13 @@ local function append_turn_header(state, role, turn_id)
   end
   emitted[role] = true
 
+  local label = role == "agent" and "pilot" or "captain"
+
   chat_buffer.with_buffer(state.bufnr, function()
     local total = vim.api.nvim_buf_line_count(state.bufnr)
     local prepend_blank = not (total == 1 and vim.api.nvim_buf_get_lines(state.bufnr, 0, 1, false)[1] == "")
 
-    local lines = prepend_blank and { "", "## " .. role, "" } or { "## " .. role, "" }
+    local lines = prepend_blank and { "", "## " .. label, "" } or { "## " .. label, "" }
     append_lines(state, lines)
   end)
 
@@ -431,48 +435,101 @@ local function format_stat(stat)
   return nil
 end
 
+---Heuristic: pick a fenced-code language hint for a tool's output
+---based on its kind. Terminals dump shell output (`console`); read /
+---fetch / write / edit fall back to plain text (no language).
+---@param tool_kind? string
+---@return string
+local function tool_output_lang(tool_kind)
+  if tool_kind == "execute" or tool_kind == "terminal" then
+    return "console"
+  end
+  return ""
+end
+
+---Heuristic: pick a fenced-code language for a tool's *input* fields
+---(e.g. the command line). Mirrors `tool_output_lang` but for shell.
+---@param tool_kind? string
+---@return string
+local function tool_input_lang(tool_kind)
+  if tool_kind == "execute" or tool_kind == "terminal" then
+    return "bash"
+  end
+  return ""
+end
+
 ---Render the body lines for a tool-call block from its `formatted`
----spec. Always returns at least one line so the head/tail extmarks
----bracket distinct rows.
+---spec. Wraps content in `---` separators + uses fenced code blocks
+---so the chat buffer's markdown highlighter (registered for
+---`filetype = "hyprpilot"` in `plugin/hyprpilot.lua`) takes over —
+---no `line_hl_group` dimming. Fields render as `<label>: <value>`
+---lines; description renders plain; output renders as a fenced
+---code block (language inferred from `tool_kind`). Always returns
+---at least one line so the head/tail extmarks bracket distinct rows.
 ---@param formatted? table
+---@param tool_kind? string
 ---@return string[]
-local function tool_body_lines(formatted)
+local function tool_body_lines(formatted, tool_kind)
   if type(formatted) ~= "table" then
-    return { "  (no details)" }
+    return { "---", "(no details)", "---" }
   end
 
-  local lines = {}
+  local lines = { "---" }
+  local input_lang = tool_input_lang(tool_kind)
 
   if type(formatted.fields) == "table" then
+    -- Single-field, single-line, command-shaped — render as a fenced
+    -- input block so the captain sees the actual command, not
+    -- `command: ls -la`. Multi-field renders as a plain key: value list.
+    local field_count = 0
+    local single_field
     for _, field in ipairs(formatted.fields) do
       if type(field) == "table" and field.label and field.value then
-        local value = tostring(field.value):gsub("\n", " ")
-        table.insert(lines, string.format("  %s: %s", field.label, value))
+        field_count = field_count + 1
+        single_field = field
+      end
+    end
+
+    if field_count == 1 and input_lang ~= "" and not tostring(single_field.value):find("\n", 1, true) then
+      table.insert(lines, "```" .. input_lang)
+      table.insert(lines, tostring(single_field.value))
+      table.insert(lines, "```")
+    else
+      for _, field in ipairs(formatted.fields) do
+        if type(field) == "table" and field.label and field.value then
+          local value = tostring(field.value):gsub("\n", " ")
+          table.insert(lines, string.format("%s: %s", field.label, value))
+        end
       end
     end
   end
 
   if type(formatted.description) == "string" and formatted.description ~= "" then
-    if #lines > 0 then
+    if #lines > 1 then
       table.insert(lines, "")
     end
     for _, l in ipairs(vim.split(formatted.description, "\n", { plain = true })) do
-      table.insert(lines, "  " .. l)
+      table.insert(lines, l)
     end
   end
 
   if type(formatted.output) == "string" and formatted.output ~= "" then
-    if #lines > 0 then
+    if #lines > 1 then
       table.insert(lines, "")
     end
+    local output_lang = tool_output_lang(tool_kind)
+    table.insert(lines, "```" .. output_lang)
     for _, l in ipairs(vim.split(formatted.output, "\n", { plain = true })) do
-      table.insert(lines, "  " .. l)
+      table.insert(lines, l)
     end
+    table.insert(lines, "```")
   end
 
-  if #lines == 0 then
-    return { "  (no details)" }
+  if #lines == 1 then
+    table.insert(lines, "(no details)")
   end
+
+  table.insert(lines, "---")
 
   return lines
 end
@@ -519,7 +576,7 @@ local function render_tool_call(state, record)
   state.active_text_block = nil
 
   local header = tool_header_line(record)
-  local body = tool_body_lines(record.formatted)
+  local body = tool_body_lines(record.formatted, record.toolKind)
   local first_row
 
   chat_buffer.with_buffer(state.bufnr, function()
@@ -530,10 +587,10 @@ local function render_tool_call(state, record)
   block.tool_call_id = record.id
   state.tool_calls[record.id] = block.id
 
+  -- Header gets a status colour; body intentionally has no
+  -- `line_hl_group` so the chat buffer's markdown highlighter takes
+  -- over (fenced code blocks ` ``` ` get treesitter highlight).
   apply_line_hl(state, first_row, tool_status_hl(record.state))
-  for i = 1, #body do
-    apply_line_hl(state, first_row + i, "HyprpilotToolBody")
-  end
 
   if record.state == "completed" or record.state == "failed" then
     fold_block(state, block)
@@ -571,17 +628,14 @@ function M.handle_tool_call_update(instance_id, update)
     vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(update) })
   end)
 
-  replace_block_body(state, block, tool_body_lines(update.formatted))
+  replace_block_body(state, block, tool_body_lines(update.formatted, update.toolKind))
 
-  -- Re-apply highlights: header colour can flip with the new state,
-  -- and the body got rewritten via set_lines so its line_hl_group
-  -- extmarks were dropped along with the lines.
+  -- Re-apply highlights: header colour can flip with the new state;
+  -- body has no line_hl_group (markdown highlighter handles it).
   local head_row, tail_row = block_range(state, block)
   clear_range_hl(state, head_row, tail_row)
   apply_line_hl(state, head_row, tool_status_hl(update.state))
-  for row = head_row + 1, tail_row do
-    apply_line_hl(state, row, "HyprpilotToolBody")
-  end
+  local _ = tail_row
 
   if update.state == "completed" or update.state == "failed" then
     fold_block(state, block)
@@ -603,10 +657,11 @@ local function render_thought(state, text)
     return
   end
 
-  local body = {}
+  local body = { "---" }
   for _, l in ipairs(vim.split(text, "\n", { plain = true })) do
-    table.insert(body, "  " .. l)
+    table.insert(body, l)
   end
+  table.insert(body, "---")
 
   local first_row
   chat_buffer.with_buffer(state.bufnr, function()
@@ -616,10 +671,9 @@ local function render_thought(state, text)
   local block_id = "thought:" .. tostring(first_row)
   track_block(state, block_id, "agent_thought", first_row, first_row + #body)
 
+  -- Header gets the conceal-style highlight; body lines stay plain so
+  -- the markdown highlighter handles them (matches tool / terminal).
   apply_line_hl(state, first_row, "HyprpilotThoughtHeader")
-  for i = 1, #body do
-    apply_line_hl(state, first_row + i, "HyprpilotThoughtBody")
-  end
 end
 
 ---Render a plan block — checklist of steps with priority annotations.
@@ -671,6 +725,23 @@ local function render_plan(state, record)
   end
 end
 
+---Pick the "default" option index for a fresh permission prompt.
+---Captain wants Allow / Accept / Proceed pre-focused so a bare `<CR>`
+---is the safe-path; falls back to the first option when the prompt
+---doesn't include an allow-shaped option.
+---@param options table[]
+---@return integer
+local function default_focused_idx(options)
+  for i, opt in ipairs(options) do
+    local id = string.lower(tostring(opt.optionId or ""))
+    local name = string.lower(tostring(opt.name or ""))
+    if id:match("^allow") or id:match("^accept") or id:match("^proceed") or name:match("^allow") or name:match("^accept") or name:match("^proceed") then
+      return i
+    end
+  end
+  return 1
+end
+
 ---Compose the button line shown at the bottom of a permission block.
 ---@param options table[]
 ---@param focused_idx integer
@@ -710,9 +781,10 @@ local function render_permission_request(state, record)
   state.active_text_block = nil
 
   local header = string.format("? permission · %s", record.tool or record.toolKind or "tool")
-  local body = tool_body_lines(record.formatted)
+  local body = tool_body_lines(record.formatted, record.toolKind)
   local options = type(record.options) == "table" and record.options or {}
-  local button_line = permission_button_line(options, 1)
+  local default_idx = default_focused_idx(options)
+  local button_line = permission_button_line(options, default_idx)
 
   local lines = vim.list_extend({ header }, body)
   table.insert(lines, "")
@@ -727,14 +799,11 @@ local function render_permission_request(state, record)
   block.request_id = record.requestId
   block.button_row = #lines - 1
   block.option_count = #options
-  block.focused_idx = 1
+  block.focused_idx = default_idx
 
   state.permissions[record.requestId] = block.id
 
   apply_line_hl(state, first_row, "HyprpilotPermissionHeader")
-  for i = 1, #body do
-    apply_line_hl(state, first_row + i, "HyprpilotPermissionBody")
-  end
   apply_line_hl(state, first_row + #lines - 1, "HyprpilotPermissionButton")
 
   require("hyprpilot.ui.permissions").register(state.bufnr, block, options)
@@ -1064,12 +1133,11 @@ function M.handle_terminal(event)
     local first_row
 
     chat_buffer.with_buffer(state.bufnr, function()
-      first_row = append_lines(state, { header, "  (no output yet)" })
+      first_row = append_lines(state, { header, "---", "(no output yet)", "---" })
     end)
 
-    local block = track_block(state, block_id, "tool_call", first_row, first_row + 1)
+    local block = track_block(state, block_id, "tool_call", first_row, first_row + 3)
     apply_line_hl(state, first_row, "HyprpilotToolStatusRunning")
-    apply_line_hl(state, first_row + 1, "HyprpilotToolBody")
 
     term = { block_id = block_id, output = "" }
     state.terminals[terminal_id] = term
@@ -1086,26 +1154,27 @@ function M.handle_terminal(event)
     term.signal = chunk.signal
   end
 
-  local body
+  local body = { "---" }
   if term.output == "" then
-    body = { "  (no output yet)" }
+    table.insert(body, "(no output yet)")
   else
-    body = {}
+    table.insert(body, "```console")
     for _, l in ipairs(vim.split(term.output, "\n", { plain = true })) do
-      table.insert(body, "  " .. l)
+      table.insert(body, l)
     end
+    table.insert(body, "```")
   end
+  table.insert(body, "---")
 
   replace_block_body(state, term._block, body)
   local head_row, tail_row = block_range(state, term._block)
 
-  -- Re-apply highlights: the body got replaced via set_lines above.
+  -- Re-apply highlights: only the header gets a status colour; body
+  -- relies on markdown treesitter for its fenced code block highlight.
   clear_range_hl(state, head_row, tail_row)
   local header_hl = chunk.kind == "exit" and (term.exit_code == 0 and "HyprpilotToolStatusOk" or "HyprpilotToolStatusFail") or "HyprpilotToolStatusRunning"
   apply_line_hl(state, head_row, header_hl)
-  for row = head_row + 1, tail_row do
-    apply_line_hl(state, row, "HyprpilotToolBody")
-  end
+  local _ = tail_row
 
   -- Refresh the header with the latest exit/signal status.
   chat_buffer.with_buffer(state.bufnr, function()
@@ -1230,6 +1299,22 @@ end
 ---@return hyprpilot.render.State?
 function M.state_for(instance_id)
   return M._states[instance_id]
+end
+
+---Custom `foldtext` for chat windows — renders the fold's head line
+---verbatim plus a trailing `▸ N` marker, instead of Neovim's default
+---`+-- N lines: <line>` chrome which clobbers the head row's own
+---icon / status / title we want visible at a glance.
+---@return string
+function M.foldtext()
+  local fs = vim.v.foldstart or 1
+  local fe = vim.v.foldend or fs
+  local line = vim.fn.getline(fs) or ""
+  local count = fe - fs + 1
+
+  -- Strip any leading tab that vim's default would have replaced with
+  -- "+" to make room for the chrome — we own the line, render it as-is.
+  return string.format("%s  ▸ %d", line, count)
 end
 
 ---Iterate every tracked state. `fn` receives `(instance_id, state)`

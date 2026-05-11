@@ -23,7 +23,7 @@ T["hydrate renders user prompt"] = function()
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line(lines, "ship it"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "## user"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "## captain"), true)
 
   helpers.cleanup_instance(id)
 end
@@ -81,10 +81,14 @@ T["tool_call renders header + body, update patches the same block"] = function()
   local lines_running = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line_containing(lines_running, "[run]"), true)
   MiniTest.expect.equality(helpers.has_line_containing(lines_running, "ls -la"), true)
-  MiniTest.expect.equality(helpers.has_line(lines_running, "  command: ls -la"), true)
+  -- Single-field, single-line, execute-shaped tool → renders as a
+  -- fenced ` ```bash ` block, not a `command: ls -la` line.
+  MiniTest.expect.equality(helpers.has_line(lines_running, "```bash"), true)
+  MiniTest.expect.equality(helpers.has_line(lines_running, "ls -la"), true)
 
   render.handle_tool_call_update(id, {
     id = "tc-1",
+    toolKind = "execute",
     state = "completed",
     formatted = {
       title = "ls -la",
@@ -98,16 +102,9 @@ T["tool_call renders header + body, update patches the same block"] = function()
   -- Header flipped from running → ok and stats picked up the duration.
   MiniTest.expect.equality(helpers.has_line_containing(lines_done, "[ok]"), true)
   MiniTest.expect.equality(helpers.has_line_containing(lines_done, "234ms"), true)
-  -- Output landed inside the same block (no duplicate "command:" line).
-  MiniTest.expect.equality(helpers.has_line(lines_done, "  total 8"), true)
-
-  local command_count = 0
-  for _, l in ipairs(lines_done) do
-    if l == "  command: ls -la" then
-      command_count = command_count + 1
-    end
-  end
-  MiniTest.expect.equality(command_count, 1)
+  -- Output landed inside the same block as a ` ```console ` block.
+  MiniTest.expect.equality(helpers.has_line(lines_done, "total 8"), true)
+  MiniTest.expect.equality(helpers.has_line(lines_done, "```console"), true)
 
   helpers.cleanup_instance(id)
 end
@@ -144,7 +141,7 @@ T["plan renders checklist with done count"] = function()
   helpers.cleanup_instance(id)
 end
 
-T["agent_thought renders header + indented body"] = function()
+T["agent_thought renders header + body bracketed by --- separators"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -159,8 +156,9 @@ T["agent_thought renders header + indented body"] = function()
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line(lines, "* thought"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "  step 1"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "  step 2"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "---"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "step 1"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "step 2"), true)
 
   helpers.cleanup_instance(id)
 end

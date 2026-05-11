@@ -140,6 +140,10 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].foldenable = true
   vim.wo[M._winid].foldlevel = 99
   vim.wo[M._winid].foldcolumn = "1"
+  -- Custom foldtext renders the head row of each fold as-is (icon +
+  -- status + title) instead of Neovim's default `+-- N lines:` chrome.
+  vim.wo[M._winid].foldtext = "v:lua.require'hyprpilot.chat.render'.foldtext()"
+  vim.wo[M._winid].fillchars = vim.wo[M._winid].fillchars .. ",fold: "
   vim.wo[M._winid].winbar = "%!v:lua.require'hyprpilot.chat.winbar'.render()"
 
   -- The winbar reads `status.get().activity` for the active instance,

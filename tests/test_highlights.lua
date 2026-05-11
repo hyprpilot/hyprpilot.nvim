@@ -72,7 +72,9 @@ T["tool_call applies status-driven header highlight + body highlight"] = functio
   local header_row = row_of(bufnr, "[run]")
   MiniTest.expect.equality(header_row ~= nil, true)
   MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotToolStatusRunning")
-  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), "HyprpilotToolBody")
+  -- Body has no line_hl_group on purpose: markdown highlighter
+  -- handles ` ```bash ` / ` ```console ` fenced blocks.
+  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), nil)
 
   -- Updating to completed flips the header highlight.
   render.handle_tool_call_update(id, {
@@ -172,7 +174,8 @@ T["agent_thought applies header + body highlights"] = function()
 
   local header_row = row_of(bufnr, "* thought")
   MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotThoughtHeader")
-  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), "HyprpilotThoughtBody")
+  -- Body lines have no line_hl_group (markdown highlighter handles them).
+  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), nil)
 
   helpers.cleanup_instance(id)
 end

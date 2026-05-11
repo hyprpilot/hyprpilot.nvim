@@ -125,8 +125,8 @@ T["terminal block accumulates output and folds on exit"] = function()
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line_containing(lines, "exit=0"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "  first line"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "  second line"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "first line"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "second line"), true)
 
   -- Block folds after the exit chunk (manual fold gets created by
   -- fold_block). Verify by checking that at least one line in the
