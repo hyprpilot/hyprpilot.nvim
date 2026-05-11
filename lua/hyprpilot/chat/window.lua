@@ -144,12 +144,12 @@ local function open_split(ui, bufnr)
   -- status + title) instead of Neovim's default `+-- N lines:` chrome.
   vim.wo[M._winid].foldtext = "v:lua.require'hyprpilot.chat.render'.foldtext()"
   vim.wo[M._winid].fillchars = vim.wo[M._winid].fillchars .. ",fold: "
-  vim.wo[M._winid].winbar = "%!v:lua.require'hyprpilot.chat.winbar'.render()"
 
-  -- The winbar reads `status.get().activity` for the active instance,
-  -- so make sure HyprpilotActivityChanged repaints every chat
-  -- winbar — registers once, idempotent.
-  require("hyprpilot.chat.winbar").ensure_activity_listener()
+  -- Header info lives in a pinned 1-row split above the chat (see
+  -- `chat.header`). The winbar architecture was abandoned because it
+  -- only painted while the chat window itself held focus; dropping
+  -- into the composer below made the bar vanish, hiding mode / model /
+  -- activity exactly when the captain wanted them visible.
 end
 
 ---Show the chat window, switching to `instance_id` (or the last active).
@@ -186,10 +186,11 @@ function M.show(instance_id)
     require("hyprpilot.status").emit_instance_changed(M._last_active_id)
   end
 
-  -- Auto-open the composer below the chat whenever an instance is
-  -- active. Matches the v1 "default focus: composer + insert mode on
-  -- toggle()" contract. Skipped for the placeholder buffer (no
-  -- instance to compose against).
+  -- Auxiliary windows around the chat — header above, composer below.
+  -- Both are skipped for the placeholder (no instance to drive them).
+  require("hyprpilot.chat.header").ensure_listeners()
+  require("hyprpilot.chat.header").open()
+
   if resolved_id ~= nil then
     require("hyprpilot.ui.composer").open()
   end
@@ -205,6 +206,7 @@ function M.hide()
   end
 
   require("hyprpilot.ui.composer").close()
+  require("hyprpilot.chat.header").close()
 
   pcall(vim.api.nvim_win_close, M._winid, true)
   M._winid = nil
@@ -244,6 +246,11 @@ function M.switch(instance_id)
     -- switch is a peek-at-the-other-instance gesture, not an "I'm
     -- about to type" gesture.
     require("hyprpilot.ui.composer").open({ focus = false })
+
+    -- Header reads via active_instance() and emits its own update on
+    -- HyprpilotInstanceChanged; the explicit refresh covers the case
+    -- where this switch ran in between autocmd dispatches.
+    require("hyprpilot.chat.header").refresh()
   end
 
   if previous ~= instance_id then
