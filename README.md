@@ -111,6 +111,11 @@ require("hyprpilot").hide()
 require("hyprpilot").close(instance_id?)               -- wipes the per-instance buffer
 require("hyprpilot").switch(instance_id)
 require("hyprpilot").active_instance()                 -- → string?
+
+-- History pagination — bumps the snapshot page size and re-hydrates
+-- so older transcript items appear above the current view. No-op when
+-- the daemon already reported `hasMore == false`.
+require("hyprpilot.chat.window").load_older(instance_id?, opts?, callback?)
 ```
 
 ### Multi-instance
@@ -368,6 +373,11 @@ set("n", "<leader>am", function()
   end)
 end, { desc = "hyprpilot: pick mode" })
 
+-- Pull older transcript items (deeper history) on demand.
+set("n", "<leader>au", function()
+  require("hyprpilot.chat.window").load_older()
+end, { desc = "hyprpilot: load older history" })
+
 -- Model picker — same shape, swaps to `available_models` + `set_model`.
 set("n", "<leader>aM", function()
   local id = hp.active_instance()
@@ -396,8 +406,11 @@ end, { desc = "hyprpilot: pick model" })
   transcript items don't carry per-request resolution state; if you
   click a stale one you get a `warn` log and the row stays. Active
   permissions (live event) work fine.
-- **Buffers grow unbounded.** No pager / trim hack in v1. Typical
-  sessions stay manageable.
+- **Initial chat snapshot is the latest 100 items.** Older history is
+  pulled on demand via `require("hyprpilot.chat.window").load_older()`,
+  which bumps the snapshot page and re-hydrates. The transcript isn't
+  trimmed once loaded — sessions with thousands of items will keep
+  growing buffer-side memory.
 - **Edit / diff tool calls render as plain folded blocks**, not
   side-by-side diffs. The agent's diff content shows verbatim inside
   the fold.

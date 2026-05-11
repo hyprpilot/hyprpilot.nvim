@@ -222,4 +222,20 @@ function M.active_instance()
   return M._last_active_id
 end
 
+---Bump the snapshot page size for the active (or named) instance and
+---re-hydrate so older transcript items appear above the current view.
+---Defaults to the active instance.
+---@param instance_id? string
+---@param opts? { step?: integer }
+---@param callback? fun(err: hyprpilot.client.RpcError?): nil
+function M.load_older(instance_id, opts, callback)
+  local id = instance_id or M._last_active_id
+  if id == nil then
+    log.warn("window.load_older: no active instance")
+    return
+  end
+
+  require("hyprpilot.chat.events").load_older(id, opts, callback)
+end
+
 return M

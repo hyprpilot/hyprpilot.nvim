@@ -56,6 +56,9 @@ local M = {}
 ---@field turn_anchors table<string, integer>   -- turn id → extmark id of the turn header row
 ---@field turn_separators integer[]             -- extmark ids on blank rows that mark turn boundaries (foldexpr returns "<1")
 ---@field pending_fold_rows integer[]           -- 0-indexed rows whose fold should close on next window-show
+---@field oldest_seq? integer                   -- snapshot's oldestSeq cursor; nil when transcript is empty
+---@field has_more boolean                      -- true when the daemon reported more items beyond what we fetched
+---@field snapshot_limit integer                -- current snapshot page size (grows on load_older)
 
 ---@class hyprpilot.render.TerminalState
 ---@field block_id string
@@ -109,6 +112,8 @@ function M.state(instance_id, bufnr)
     turn_anchors = {},
     turn_separators = {},
     pending_fold_rows = {},
+    has_more = false,
+    snapshot_limit = 100,
   }
 
   M._states[instance_id] = state
@@ -860,6 +865,8 @@ function M.hydrate(state, snapshot)
   state.current_turn = nil
   state.active_text_block = nil
   state.last_seq = snapshot.latestSeq
+  state.oldest_seq = snapshot.oldestSeq
+  state.has_more = snapshot.hasMore == true
   state.blocks = {}
   state.tool_calls = {}
   state.permissions = {}
