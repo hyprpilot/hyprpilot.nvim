@@ -129,6 +129,41 @@ function M.forget(instance_id)
   M._states[instance_id] = nil
 end
 
+---Run `fn` (a buffer mutation) while preserving autoscroll semantics:
+---every window showing `state.bufnr` whose cursor was parked on the
+---last line before `fn` ran gets re-parked on the new last line
+---after, so the captain stays glued to the stream when she's already
+---at the bottom. Windows scrolled away keep their cursor where it is.
+---@param state hyprpilot.render.State
+---@param fn fun(): nil
+local function with_autoscroll(state, fn)
+  local bufnr = state.bufnr
+  local pre_total = vim.api.nvim_buf_line_count(bufnr)
+  local sticky = {}
+
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
+      local cursor = vim.api.nvim_win_get_cursor(winid)
+      if cursor[1] >= pre_total then
+        table.insert(sticky, winid)
+      end
+    end
+  end
+
+  fn()
+
+  if #sticky == 0 then
+    return
+  end
+
+  local post_total = vim.api.nvim_buf_line_count(bufnr)
+  for _, winid in ipairs(sticky) do
+    if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
+      pcall(vim.api.nvim_win_set_cursor, winid, { post_total, 0 })
+    end
+  end
+end
+
 ---Append `lines` to the end of the buffer. Returns the line index of
 ---the first appended line.
 ---@param state hyprpilot.render.State
@@ -619,27 +654,31 @@ function M.handle_tool_call_update(instance_id, update)
 
   if block == nil then
     log.debug("render.tool_call_update: no prior tool_call for id=%s — rendering as fresh", update.id)
-    return render_tool_call(state, update)
+    return with_autoscroll(state, function()
+      render_tool_call(state, update)
+    end)
   end
 
-  chat_buffer.with_buffer(state.bufnr, function()
-    local head_row = block_range(state, block)
-    local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-    vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(update) })
+  with_autoscroll(state, function()
+    chat_buffer.with_buffer(state.bufnr, function()
+      local head_row = block_range(state, block)
+      local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
+      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(update) })
+    end)
+
+    replace_block_body(state, block, tool_body_lines(update.formatted, update.toolKind))
+
+    -- Re-apply highlights: header colour can flip with the new state;
+    -- body has no line_hl_group (markdown highlighter handles it).
+    local head_row, tail_row = block_range(state, block)
+    clear_range_hl(state, head_row, tail_row)
+    apply_line_hl(state, head_row, tool_status_hl(update.state))
+    local _ = tail_row
+
+    if update.state == "completed" or update.state == "failed" then
+      fold_block(state, block)
+    end
   end)
-
-  replace_block_body(state, block, tool_body_lines(update.formatted, update.toolKind))
-
-  -- Re-apply highlights: header colour can flip with the new state;
-  -- body has no line_hl_group (markdown highlighter handles it).
-  local head_row, tail_row = block_range(state, block)
-  clear_range_hl(state, head_row, tail_row)
-  apply_line_hl(state, head_row, tool_status_hl(update.state))
-  local _ = tail_row
-
-  if update.state == "completed" or update.state == "failed" then
-    fold_block(state, block)
-  end
 end
 
 ---Render an agent thought block — header + folded body so the chat
@@ -953,7 +992,9 @@ function M.handle_transcript(event)
     return
   end
 
-  M.render_item(state, event.turnId, event.item)
+  with_autoscroll(state, function()
+    M.render_item(state, event.turnId, event.item)
+  end)
 end
 
 ---Live `permission_request` event — renders inline + registers the
@@ -967,16 +1008,16 @@ function M.handle_permission_request(event)
     return
   end
 
-  local record = {
-    requestId = event.requestId,
-    tool = event.tool,
-    toolKind = event.kind,
-    args = event.args,
-    options = event.options,
-    formatted = event.formatted,
-  }
-
-  render_permission_request(state, record)
+  with_autoscroll(state, function()
+    render_permission_request(state, {
+      requestId = event.requestId,
+      tool = event.tool,
+      toolKind = event.kind,
+      args = event.args,
+      options = event.options,
+      formatted = event.formatted,
+    })
+  end)
 end
 
 ---Live `permission_resolved` event — dim the matching block.
@@ -1122,6 +1163,18 @@ function M.handle_terminal(event)
     return
   end
 
+  with_autoscroll(state, function()
+    M._render_terminal_chunk(state, terminal_id, chunk)
+  end)
+end
+
+---Internal: actually mutate the buffer for a terminal chunk. Split out
+---of `handle_terminal` so the `with_autoscroll` wrap can capture the
+---pre-mutation cursor state once around the whole block.
+---@param state hyprpilot.render.State
+---@param terminal_id string
+---@param chunk table
+function M._render_terminal_chunk(state, terminal_id, chunk)
   local term = state.terminals[terminal_id]
 
   -- Bootstrap the block on first observation.
