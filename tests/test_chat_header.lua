@@ -143,6 +143,53 @@ T["header.refresh with no active instance shows `(no instance)` pill"] = functio
   reset_header()
 end
 
+T["header.refresh tolerates vim.NIL in meta (JSON-null wire fields)"] = function()
+  -- Regression for snapshot replays where the daemon ships explicit
+  -- nulls for unset Optional<String> fields — `vim.json.decode` maps
+  -- those to `vim.NIL` (userdata), not Lua nil. Without strict
+  -- type-string guards, `#seg.text` blew up with
+  -- "attempt to get length of a userdata value" inside `render_line`.
+  reset_header()
+  local restore_active = stub_active_instance("inst-nil")
+  local restore_info = stub_instances_info()
+
+  local winbar = require("hyprpilot.chat.winbar")
+  winbar._meta["inst-nil"] = {
+    -- vim.NIL is what vim.json.decode produces for JSON `null`.
+    name = vim.NIL,
+    profile_id = vim.NIL,
+    agent_id = "claude-code",
+    current_mode_id = vim.NIL,
+    current_model_id = vim.NIL,
+    available_modes = {},
+    available_models = {},
+    usage = vim.NIL,
+    mcps_count = 0,
+    instance_state = vim.NIL,
+  }
+
+  local header = require("hyprpilot.chat.header")
+  header._bufnr = mint_header_buffer()
+
+  -- The bug: this used to crash with `attempt to get length of field
+  -- 'text' (a userdata value)`. After the fix, it must complete and
+  -- render only the segments that have valid string data.
+  local ok = pcall(header.refresh)
+  MiniTest.expect.equality(ok, true)
+
+  local line = vim.api.nvim_buf_get_lines(header._bufnr, 0, 1, false)[1] or ""
+  MiniTest.expect.equality(line:find("hyprpilot", 1, true) ~= nil, true)
+  MiniTest.expect.equality(line:find("claude-code", 1, true) ~= nil, true)
+  -- vim.NIL fields didn't sneak in as `userdata` strings.
+  MiniTest.expect.equality(line:find("vim.NIL", 1, true), nil)
+  MiniTest.expect.equality(line:find("userdata", 1, true), nil)
+
+  winbar._meta["inst-nil"] = nil
+  restore_info()
+  restore_active()
+  reset_header()
+end
+
 T["header.refresh paints activity pill with its specific highlight group"] = function()
   reset_header()
   local restore_active = stub_active_instance("inst-2")
