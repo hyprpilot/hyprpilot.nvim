@@ -109,6 +109,94 @@ T["tool_call renders header + body, update patches the same block"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["tool_call with formatted.diff renders a fenced diff block (skips Shiki-marker description)"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  -- Daemon-side `feat(formatter): add plain git-diff field alongside
+  -- Shiki-marker description` (PR #44) ships both surfaces on Edit /
+  -- Write / MultiEdit. We must prefer the unified `diff` field and
+  -- skip the description (which carries Shiki `[!code ++]` markers
+  -- meant for the desktop overlay's transformer pipeline).
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-1",
+          toolKind = "edit",
+          title = "Edit src/main.rs",
+          state = "completed",
+          formatted = {
+            title = "Edit src/main.rs",
+            stats = {},
+            fields = {},
+            description = "```rust\n// [!code --]\nold line\n// [!code ++]\nnew line\n```",
+            diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,1 +1,1 @@\n-old line\n+new line",
+          },
+        },
+      },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- The diff fence opens + closes with 4-backtick `diff` fences.
+  MiniTest.expect.equality(helpers.has_line(lines, "````diff"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "````"), true)
+  -- Patch payload survived line-split.
+  MiniTest.expect.equality(helpers.has_line(lines, "diff --git a/src/main.rs b/src/main.rs"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "-old line"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "+new line"), true)
+  -- The Shiki marker from `description` did NOT land in the buffer
+  -- (would surface as raw text under markdown, ugly).
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "[!code"), false)
+
+  helpers.cleanup_instance(id)
+end
+
+T["tool_call falls through to description when formatted.diff is absent"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  -- A tool that doesn't ship `diff` (Bash, Grep, Glob, etc.) still
+  -- renders its plain `description` text the way it always has.
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-2",
+          toolKind = "fetch",
+          title = "fetch https://example.com",
+          state = "completed",
+          formatted = {
+            title = "fetch",
+            stats = {},
+            fields = {},
+            description = "Fetched 200 OK in 132ms",
+          },
+        },
+      },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line(lines, "Fetched 200 OK in 132ms"), true)
+  -- No spurious empty diff fence when there was no diff payload.
+  MiniTest.expect.equality(helpers.has_line(lines, "````diff"), false)
+
+  helpers.cleanup_instance(id)
+end
+
 T["plan renders checklist with done count"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
