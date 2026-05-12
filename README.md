@@ -245,11 +245,13 @@ camelCase on the way out).
 | `HyprpilotTurnEnded` | `{ instance_id, turn_id, ended_at?, stop_reason?, error? }` | Turn finishes (clean, cancel, or error). |
 | `HyprpilotPermissionRequested` | `{ instance_id, request_id, tool, tool_kind?, options }` | Tool asks the captain to authorise an action. |
 | `HyprpilotPermissionResolved` | `{ instance_id, request_id, option_id }` | Captain (or another peer) resolved the prompt. |
-| `HyprpilotUsageUpdated` | `{ instance_id, used, size, cost? }` | Token tally / cost drips mid-turn. |
-| `HyprpilotModeChanged` | `{ instance_id, mode_id }` | Agent's advertised mode flipped. |
-| `HyprpilotSessionInfoUpdated` | `{ instance_id, title? }` | Daemon set or replaced the session title. |
 | `HyprpilotInstanceStateChanged` | `{ instance_id, state }` | Instance moved through `starting` / `running` / `ended` / `error`. |
-| `HyprpilotEventsLagged` | `{ instance_id? }` | Daemon dropped events on us (subscription overflow); plugin re-hydrates automatically. |
+
+Usage / mode / session-title / lagged-recovery events are
+intentionally **not** surfaced as autocmds — they fire too often
+(every turn drips multiple usage updates) or have no captain-side
+hook surface. Read them off `winbar._meta[id]` or `status.get()`
+on demand instead.
 
 Example — toast on every permission request:
 

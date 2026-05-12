@@ -161,25 +161,11 @@ local function dispatch(raw)
     })
   elseif event.event == "current_mode_update" then
     winbar.update_mode(event.instanceId, event.currentModeId)
-    emit("ModeChanged", {
-      instance_id = event.instanceId,
-      mode_id = event.currentModeId,
-    })
   elseif event.event == "usage_update" then
     winbar.update_usage(event.instanceId, event.used, event.size, event.cost)
     render.handle_usage_update(event)
-    emit("UsageUpdated", {
-      instance_id = event.instanceId,
-      used = event.used,
-      size = event.size,
-      cost = event.cost,
-    })
   elseif event.event == "session_info_update" then
     winbar.update_session(event.instanceId, event.title)
-    emit("SessionInfoUpdated", {
-      instance_id = event.instanceId,
-      title = event.title,
-    })
   elseif event.event == "state" then
     winbar.update_meta(event.instanceId, { instance_state = event.state })
     emit("InstanceStateChanged", {
@@ -194,7 +180,6 @@ local function dispatch(raw)
     -- view matches the daemon mirror again. Each tracked instance
     -- gets re-hydrated.
     log.warn("events.dispatch: events/lagged — re-hydrating tracked instances")
-    emit("EventsLagged", { instance_id = event.instanceId })
     render.iter_states(function(instance_id, st)
       M.hydrate(instance_id, st.bufnr)
     end)

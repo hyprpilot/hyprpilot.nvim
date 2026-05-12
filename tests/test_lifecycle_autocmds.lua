@@ -153,46 +153,6 @@ T["dispatch fires HyprpilotPermissionResolved with option_id"] = function()
   MiniTest.expect.equality(data.option_id, "allow-once")
 end
 
-T["dispatch fires HyprpilotUsageUpdated with token + cost"] = function()
-  local consume = capture_user_autocmd("HyprpilotUsageUpdated")
-  fire_event({
-    event = "usage_update",
-    instanceId = "inst-1",
-    used = 12345,
-    size = 200000,
-    cost = { amount = 0.42, currency = "USD" },
-  })
-  local data = consume()
-  MiniTest.expect.equality(data.instance_id, "inst-1")
-  MiniTest.expect.equality(data.used, 12345)
-  MiniTest.expect.equality(data.size, 200000)
-  MiniTest.expect.equality(data.cost.amount, 0.42)
-end
-
-T["dispatch fires HyprpilotModeChanged on current_mode_update"] = function()
-  local consume = capture_user_autocmd("HyprpilotModeChanged")
-  fire_event({
-    event = "current_mode_update",
-    instanceId = "inst-1",
-    currentModeId = "plan",
-  })
-  local data = consume()
-  MiniTest.expect.equality(data.instance_id, "inst-1")
-  MiniTest.expect.equality(data.mode_id, "plan")
-end
-
-T["dispatch fires HyprpilotSessionInfoUpdated with title"] = function()
-  local consume = capture_user_autocmd("HyprpilotSessionInfoUpdated")
-  fire_event({
-    event = "session_info_update",
-    instanceId = "inst-1",
-    title = "Refactor auth middleware",
-  })
-  local data = consume()
-  MiniTest.expect.equality(data.instance_id, "inst-1")
-  MiniTest.expect.equality(data.title, "Refactor auth middleware")
-end
-
 T["dispatch fires HyprpilotInstanceStateChanged on state"] = function()
   local consume = capture_user_autocmd("HyprpilotInstanceStateChanged")
   fire_event({
@@ -203,16 +163,6 @@ T["dispatch fires HyprpilotInstanceStateChanged on state"] = function()
   local data = consume()
   MiniTest.expect.equality(data.instance_id, "inst-1")
   MiniTest.expect.equality(data.state, "ended")
-end
-
-T["dispatch fires HyprpilotEventsLagged when daemon drops events"] = function()
-  local consume = capture_user_autocmd("HyprpilotEventsLagged")
-  fire_event({
-    event = "lagged",
-    instanceId = "inst-1",
-  })
-  local data = consume()
-  MiniTest.expect.equality(data.instance_id, "inst-1")
 end
 
 return T
