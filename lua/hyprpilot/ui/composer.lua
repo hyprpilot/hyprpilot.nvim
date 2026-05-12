@@ -157,11 +157,10 @@ local function ensure_buffer(instance_id)
   -- holds the buffer alive (post-`shutdown()` hot-reload, etc.) —
   -- otherwise `nvim_buf_set_name` raises E95.
   local name = "hyprpilot://composer/" .. instance_id
-  for _, candidate in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(candidate) and vim.api.nvim_buf_get_name(candidate) == name then
-      buffers[instance_id] = candidate
-      return candidate
-    end
+  local adopted = require("hyprpilot.chat.buffer").find_by_name(name)
+  if adopted ~= nil then
+    buffers[instance_id] = adopted
+    return adopted
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)

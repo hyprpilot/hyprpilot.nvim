@@ -241,6 +241,15 @@ function M.switch(instance_id)
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, state.bufnr)
 
+    -- Drain the permission row queue. Pending permission requests
+    -- belong to whichever instance the captain was looking at;
+    -- carrying them over to the newly-switched-to instance would
+    -- surface the wrong tool / kind / options for the wrong agent.
+    -- The daemon still holds the resolution slot — captain can
+    -- replay via `permissions/pending` after switching back if a
+    -- pending request was lost from the row.
+    require("hyprpilot.chat.permission_row").reset()
+
     -- Composer.open() is idempotent: when the composer's already
     -- visible it swaps its buffer to the new instance's draft.
     -- `focus = false` keeps the captain's cursor where it was —

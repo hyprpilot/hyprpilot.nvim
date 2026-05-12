@@ -42,11 +42,10 @@ local function ensure_buffer()
     return M._bufnr
   end
 
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == BUFFER_NAME then
-      M._bufnr = bufnr
-      return bufnr
-    end
+  local existing = require("hyprpilot.chat.buffer").find_by_name(BUFFER_NAME)
+  if existing ~= nil then
+    M._bufnr = existing
+    return existing
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)

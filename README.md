@@ -88,6 +88,18 @@ require("hyprpilot").setup({
     },
   },
 
+  permission_row = {
+    -- Each action accepts `string | string[] | false`. The row is
+    -- read-only / normal-mode-only, so no per-mode nesting.
+    keymaps = {
+      accept     = "<C-g>",                   -- smart-match `^allow|^accept|^proceed`
+      reject     = "<C-r>",                   -- smart-match `^reject|^deny|^abort|^cancel`
+      submit     = "<CR>",                    -- commit currently-focused option
+      cycle_next = "<Tab>",
+      cycle_prev = "<S-Tab>",
+    },
+  },
+
   mcp = {
     enabled = true,                           -- false → MCP bridge skipped
   },

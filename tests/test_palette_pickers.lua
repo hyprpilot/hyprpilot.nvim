@@ -4,19 +4,18 @@
 --- vim.ui.select fall-back behaviour here; the snacks integration
 --- gets exercised by manual smoke against a real captain setup.
 
+local helpers = require("tests.helpers")
+
 local T = MiniTest.new_set()
 
+---Local convenience wrapper around the shared `stub_ui_select`
+---that always picks `items[1]` — the pattern this test file
+---needs for every case.
 ---@return fun(), table[]
 local function stub_ui_select()
-  local original = vim.ui.select
-  local invocations = {}
-  vim.ui.select = function(items, opts, callback)
-    table.insert(invocations, { items = items, opts = opts })
-    callback(items[1])
-  end
-  return function()
-    vim.ui.select = original
-  end, invocations
+  return helpers.stub_ui_select(function(items)
+    return items[1]
+  end)
 end
 
 T["pickers.open: vim.ui.select setting routes through native picker, drops preview"] = function()
