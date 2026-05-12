@@ -91,6 +91,22 @@ require("hyprpilot").setup({
   mcp = {
     enabled = true,                           -- false → MCP bridge skipped
   },
+
+  palettes = {
+    -- Backend for the palette pickers under `lua/hyprpilot/palettes/`.
+    -- "auto" uses snacks.nvim's picker when installed (with previews)
+    -- and falls back to `vim.ui.select` otherwise. Force one backend
+    -- via "snacks" / "vim.ui.select" if you want explicit control.
+    picker = "auto",
+  },
+
+  completion = {
+    -- Daemon-side completion sources the blink.cmp provider queries.
+    -- `path` is excluded by default — Neovim's native path completion
+    -- (omnifunc, blink.cmp's `path` provider) handles that better
+    -- than a daemon round-trip. Extend if the daemon advertises more.
+    sources = { "skills" },
+  },
 })
 ```
 
@@ -243,6 +259,57 @@ Validation logs and skips on bad input (no `error()` thrown). The
 Python MCP bridge picks up the registered tools at boot and re-exposes
 them to the agent. Re-registering the same `name` overwrites; that
 hot-reload is the captain's intended workflow.
+
+### Completion (blink.cmp)
+
+`lua/hyprpilot/completion/blink.lua` ships a blink.cmp source that
+round-trips through the daemon's `completion/query` + `resolve`
+RPCs. Opt-in via your blink.cmp config:
+
+```lua
+require("blink.cmp").setup({
+  sources = {
+    default = { "hyprpilot", "lsp", "buffer" },
+    providers = {
+      hyprpilot = {
+        name = "hyprpilot",
+        module = "hyprpilot.completion.blink",
+        opts = {
+          -- (optional) override config.completion.sources for this provider:
+          sources = { "skills" },
+          -- (optional) widen the activation predicate; default is the
+          -- hyprpilot composer buffer only.
+          enabled = function() return true end,
+        },
+      },
+    },
+  },
+})
+```
+
+The source only fires inside the composer buffer (filetype
+`hyprpilot_input`) by default — other buffers keep their native
+LSP / path / buffer providers as the source of truth. Path
+completion is intentionally **not** routed through the daemon
+(`config.completion.sources` defaults to `{ "skills" }`); Neovim's
+native path completion handles that better.
+
+### Palettes (snacks previews)
+
+`lua/hyprpilot/palettes/*.lua` use `vim.ui.select` by default; when
+[snacks.nvim](https://github.com/folke/snacks.nvim) is installed,
+`config.palettes.picker = "auto"` upgrades them to
+`Snacks.picker.pick` with previews. Each palette ships a per-row
+preview function the snacks pane renders as markdown — mode /
+model / effort descriptions, instance metadata, session
+cwd + sessionId + additional directories.
+
+Force a backend explicitly via `palettes.picker = "snacks"` or
+`palettes.picker = "vim.ui.select"`, or override per-call:
+
+```lua
+require("hyprpilot.palettes.modes").open({ picker = "snacks" })
+```
 
 ## Statusline integration
 
