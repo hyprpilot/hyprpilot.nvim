@@ -482,4 +482,27 @@ function M.reset()
   M.close()
 end
 
+---Drop queue entries belonging to `instance_id`. Used by
+---`chat.window.close` to keep stale permissions from an
+---instance-being-shut-down out of the active row. The daemon-side
+---resolution slot lives until something resolves it; the captain
+---can spawn the instance again and replay via `permissions/pending`
+---if they need the prompt back.
+---@param instance_id string
+function M.drop_for_instance(instance_id)
+  local kept = {}
+  for _, entry in ipairs(M._queue) do
+    if entry.instance_id ~= instance_id then
+      table.insert(kept, entry)
+    end
+  end
+  M._queue = kept
+
+  if #M._queue == 0 then
+    M.close()
+  elseif M.is_visible() then
+    M.refresh()
+  end
+end
+
 return M
