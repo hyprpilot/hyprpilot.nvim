@@ -73,12 +73,12 @@ T["turn_ended with cancel-shaped stopReason marks the chip as cancelled on the p
 
   render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "cancelled_by_user" })
 
-  -- The cancel chip should land on the `## response` header line as a
+  -- The cancel chip should land on the `## pilot` header line as a
   -- stat-style pill, NOT as virt_text at the end of the buffer.
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local pilot_line
   for _, l in ipairs(lines) do
-    if l:find("^## response") then
+    if l:find("^## pilot") then
       pilot_line = l
       break
     end

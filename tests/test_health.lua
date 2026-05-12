@@ -112,20 +112,20 @@ T["render does not insert an empty pilot header before a captain prompt"] = func
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  -- The user request should appear BEFORE the agent response
-  -- header. Find both positions and assert the order.
-  local request_idx, response_idx
+  -- The captain prompt header should appear BEFORE the pilot
+  -- response header. Find both positions and assert the order.
+  local captain_idx, pilot_idx
   for i, l in ipairs(lines) do
-    if l == "## request" and request_idx == nil then
-      request_idx = i
-    elseif l == "## response" and response_idx == nil then
-      response_idx = i
+    if l == "## captain" and captain_idx == nil then
+      captain_idx = i
+    elseif l == "## pilot" and pilot_idx == nil then
+      pilot_idx = i
     end
   end
 
-  MiniTest.expect.equality(request_idx ~= nil, true)
-  MiniTest.expect.equality(response_idx ~= nil, true)
-  MiniTest.expect.equality(request_idx < response_idx, true)
+  MiniTest.expect.equality(captain_idx ~= nil, true)
+  MiniTest.expect.equality(pilot_idx ~= nil, true)
+  MiniTest.expect.equality(captain_idx < pilot_idx, true)
 
   helpers.cleanup_instance(id)
 end

@@ -52,7 +52,8 @@ local M = {}
 
 ---@class hyprpilot.render.TurnLayout
 ---@field turn_id string
----@field pilot_header_mark integer             -- extmark on the `## response` header row so we can re-render stats
+---@field pilot_header_mark integer             -- extmark on the `## pilot` header row so we can re-render stats
+---@field response_header_emitted? boolean      -- set true after the lazy `### response` subhead lands on first agent_text
 ---@field section_anchor_mark integer           -- new sections insert at this row; stays put when prose grows
 ---@field prose_anchor_mark integer             -- agent_text appends at this extmark; moves down as prose grows
 ---@field sections table<string, hyprpilot.render.Section>  -- "tasks" | "thoughts" | "tools" → section
@@ -136,7 +137,7 @@ function M.state(instance_id, bufnr)
     -- ship a single synthetic turn_id for every historical item
     -- (the daemon doesn't re-emit TurnStarted boundaries during
     -- session/load). To stop the whole replay from collapsing under
-    -- one ## response / ## request header pair we partition by
+    -- one ## pilot / ## captain header pair we partition by
     -- exchange: each user_prompt that follows an agent item (or is
     -- the first item) bumps `exchange_index`; the renderer
     -- namespaces the daemon turn_id under that counter so headers
@@ -272,7 +273,7 @@ local function clear_range_hl(state, start_row, end_row)
 end
 
 ---Per-turn section ordering. Sections appear in this order (top to
----bottom) between the `## response` header and the prose. The values
+---bottom) between the `## pilot` header and the prose. The values
 ---double as priority ranks for new-section insertion.
 local SECTION_ORDER = { tasks = 1, thoughts = 2, tools = 3, attachments = 4 }
 
@@ -410,7 +411,7 @@ local function replace_block_body(state, block, body_lines)
   end)
 end
 
----Append a turn header (`## response`, `## request`) and reset the
+---Append a turn header (`## pilot`, `## captain`) and reset the
 ---active text block tracker. Idempotent per (turn_id, role): the
 ---daemon's broadcast order for transcript / turn_started events is
 ---not guaranteed (user_prompt and turn_started can arrive in either
@@ -436,11 +437,15 @@ local function append_turn_header(state, role, turn_id)
   end
   emitted[role] = true
 
-  -- Plain `response` / `request` labels (rather than `pilot` /
-  -- `captain`) read as ordinary English nouns to markdown
-  -- treesitter — no domain vocabulary in the heading text means
-  -- nothing trips up renderers that try to anchor / TOC the chat.
-  local label = role == "agent" and "response" or "request"
+  -- Role label stays as `pilot` / `captain` — those are the
+  -- semantic anchors. We DO add a `### request` subhead under
+  -- the captain header (and `### response` lands lazily on the
+  -- first agent_text chunk via `append_agent_text`) so the prose
+  -- itself sits inside a sibling subsection of `### tasks` /
+  -- `### thoughts` / `### tools`. This gives markdown treesitter
+  -- a clean ordinary heading hierarchy to anchor on without
+  -- swallowing the role identifier.
+  local label = role == "agent" and "pilot" or "captain"
   local header_row
   local prose_anchor_row
 
@@ -449,14 +454,22 @@ local function append_turn_header(state, role, turn_id)
     local prepend_blank = not (total == 1 and vim.api.nvim_buf_get_lines(state.bufnr, 0, 1, false)[1] == "")
 
     -- For pilot turns: the trailing blank row IS the prose anchor —
-    -- agent_text inserts there, sections insert above it. For captain
-    -- turns we don't need a layout; the user_prompt text appends below
-    -- the header as before.
-    local lines = prepend_blank and { "", "## " .. label, "" } or { "## " .. label, "" }
+    -- agent_text inserts there, sections (including the lazy
+    -- `### response` subhead) insert above it. For captain turns
+    -- we inline the `### request` subhead right under the header
+    -- so the user prompt that appends afterwards sits inside it.
+    local lines
+    if role == "user" then
+      lines = prepend_blank and { "", "## " .. label, "", "### request", "" } or { "## " .. label, "", "### request", "" }
+    else
+      lines = prepend_blank and { "", "## " .. label, "" } or { "## " .. label, "" }
+    end
     local first_row = append_lines(state, lines)
-    -- The "## <label>" line is the second-to-last line we inserted
-    -- (the trailing blank is the prose anchor row).
-    header_row = first_row + #lines - 2
+    -- For both shapes the `## <label>` line is at the position
+    -- right after the optional leading blank, and the trailing
+    -- blank (the prose anchor) is the last line we inserted.
+    local label_offset = prepend_blank and 1 or 0
+    header_row = first_row + label_offset
     prose_anchor_row = first_row + #lines - 1
   end)
 
@@ -489,7 +502,7 @@ local function append_turn_header(state, role, turn_id)
   end
 end
 
----Compose the `## response` header line including stat pills. Pills are
+---Compose the `## pilot` header line including stat pills. Pills are
 ---driven by the turn's accumulated metadata (started_at / usage /
 ---ended_at). Idempotent — re-rendering with the same inputs produces
 ---the same string.
@@ -507,10 +520,10 @@ local function pilot_header_line(layout)
     stop_reason = layout.stop_reason,
     stop_error = layout.stop_error,
   })
-  return "## response" .. stats.format_pills(pills)
+  return "## pilot" .. stats.format_pills(pills)
 end
 
----Re-paint the `## response` header for `layout` with current stat pills
+---Re-paint the `## pilot` header for `layout` with current stat pills
 ---in place. Cheap; called whenever usage_update or turn_ended changes
 ---the metadata.
 ---@param state hyprpilot.render.State
@@ -606,7 +619,7 @@ local function ensure_section(state, turn_id, kind)
   local header = section_header_line(kind, 0)
 
   -- Add a leading blank only when the row immediately above isn't
-  -- already blank (e.g. first section under `## response`). When the
+  -- already blank (e.g. first section under `## pilot`). When the
   -- row above IS blank (preceding section's trailing blank, or pilot
   -- header's own trailing blank), reuse it as the separator.
   --
@@ -757,8 +770,17 @@ local function append_agent_text(state, text)
     local chunks = vim.split(text, "\n", { plain = true })
 
     if state.active_text_block == nil then
-      -- First chunk of prose for this turn: insert all chunks at the
-      -- prose anchor (or end-of-buffer when no layout exists).
+      -- First chunk of prose for this turn. Before laying the text
+      -- down, drop a `### response` subhead so the prose sits inside
+      -- a sibling subsection of `### tasks` / `### thoughts` /
+      -- `### tools`. Subsequent chunks stream below the subhead via
+      -- the continuation branch — no need to track per-chunk state.
+      -- `response_header_emitted` is per-layout so a re-streamed
+      -- turn (continuation after cancel, etc.) doesn't double up.
+      if layout ~= nil and not layout.response_header_emitted then
+        insert_at_prose_anchor(state, turn_id, { "### response", "" })
+        layout.response_header_emitted = true
+      end
       insert_at_prose_anchor(state, turn_id, chunks)
       state.active_text_block = { kind = "agent_text", turn_id = turn_id }
       return

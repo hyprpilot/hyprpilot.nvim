@@ -10,7 +10,7 @@ local helpers = require("tests.helpers")
 
 local T = MiniTest.new_set()
 
-T["hydrate renders user prompt"] = function()
+T["hydrate renders user prompt under `## captain` + `### request`"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -23,7 +23,109 @@ T["hydrate renders user prompt"] = function()
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line(lines, "ship it"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "## request"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "## captain"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "### request"), true)
+
+  -- Order: `## captain` heads the turn, `### request` is its
+  -- subheader, prompt text follows below.
+  local captain_idx, request_idx, prompt_idx
+  for i, l in ipairs(lines) do
+    if l == "## captain" then
+      captain_idx = i
+    elseif l == "### request" then
+      request_idx = i
+    elseif l == "ship it" then
+      prompt_idx = i
+    end
+  end
+  MiniTest.expect.equality(captain_idx < request_idx, true)
+  MiniTest.expect.equality(request_idx < prompt_idx, true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["agent_text prose lands under a `### response` subheader"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  -- A pilot turn with thoughts + tools + prose. `### response`
+  -- must appear AFTER the other sections (it lands at the prose
+  -- anchor, below section_anchor) and BEFORE the prose itself.
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
+      { turnId = "t1", item = { kind = "agent_thought", text = "thinking..." } },
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-1",
+          toolKind = "execute",
+          title = "ls",
+          state = "completed",
+          formatted = { title = "ls", stats = {}, fields = {}, output = "" },
+        },
+      },
+      { turnId = "t1", item = { kind = "agent_text", text = "here's the answer" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line(lines, "### response"), true)
+
+  local thoughts_idx, tools_idx, response_idx, prose_idx
+  for i, l in ipairs(lines) do
+    if l:find("^### thoughts") then
+      thoughts_idx = i
+    elseif l:find("^### tools") then
+      tools_idx = i
+    elseif l == "### response" then
+      response_idx = i
+    elseif l == "here's the answer" then
+      prose_idx = i
+    end
+  end
+
+  MiniTest.expect.equality(thoughts_idx ~= nil, true)
+  MiniTest.expect.equality(tools_idx ~= nil, true)
+  MiniTest.expect.equality(response_idx ~= nil, true)
+  MiniTest.expect.equality(prose_idx ~= nil, true)
+  -- thoughts → tools → response → prose
+  MiniTest.expect.equality(thoughts_idx < tools_idx, true)
+  MiniTest.expect.equality(tools_idx < response_idx, true)
+  MiniTest.expect.equality(response_idx < prose_idx, true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["agent_text emits `### response` only once per turn"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  -- Two streamed chunks within the same turn must produce exactly
+  -- one `### response` subhead, not two.
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "user_prompt", text = "hi" } },
+      { turnId = "t1", item = { kind = "agent_text", text = "first " } },
+      { turnId = "t1", item = { kind = "agent_text", text = "second" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local response_count = 0
+  for _, l in ipairs(lines) do
+    if l == "### response" then
+      response_count = response_count + 1
+    end
+  end
+  MiniTest.expect.equality(response_count, 1)
 
   helpers.cleanup_instance(id)
 end
@@ -337,7 +439,7 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   end
 
   local pilot = index_of(function(l)
-    return l == "## response"
+    return l == "## pilot"
   end)
   -- Section headers carry a `[N <unit>]` chip after the first item
   -- lands, so match by prefix rather than exact string.
@@ -423,7 +525,7 @@ T["pilot header repaints with usage / elapsed chips on live updates"] = function
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local pilot_line
   for _, l in ipairs(lines) do
-    if l:find("^## response") then
+    if l:find("^## pilot") then
       pilot_line = l
       break
     end
@@ -555,7 +657,7 @@ T["replay with shared turn_id across multiple user_prompts splits into separate 
   -- replay the daemon ships a single synthetic turn_id for the whole
   -- replay window (no TurnStarted boundaries fire between historical
   -- turns). Without exchange-based partitioning, every user_prompt
-  -- and every agent response collapsed under one ## request / ## response
+  -- and every agent response collapsed under one ## captain / ## pilot
   -- header pair. The fix bumps an exchange counter on each
   -- user_prompt → agent role transition and namespaces the daemon
   -- turn_id under that counter.
@@ -580,21 +682,21 @@ T["replay with shared turn_id across multiple user_prompts splits into separate 
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  -- Count `## request` / `## response` (allowing the stat-chip
+  -- Count `## captain` / `## pilot` (allowing the stat-chip
   -- suffix the response header may carry, so we match on the
   -- prefix only).
-  local request_headers = 0
-  local response_headers = 0
+  local captain_headers = 0
+  local pilot_headers = 0
   for _, l in ipairs(lines) do
-    if l == "## request" then
-      request_headers = request_headers + 1
-    elseif l:find("^## response") then
-      response_headers = response_headers + 1
+    if l == "## captain" then
+      captain_headers = captain_headers + 1
+    elseif l:find("^## pilot") then
+      pilot_headers = pilot_headers + 1
     end
   end
 
-  MiniTest.expect.equality(request_headers, 3)
-  MiniTest.expect.equality(response_headers, 3)
+  MiniTest.expect.equality(captain_headers, 3)
+  MiniTest.expect.equality(pilot_headers, 3)
 
   -- All three prompt + reply bodies still landed in order.
   MiniTest.expect.equality(helpers.has_line(lines, "first prompt"), true)
@@ -629,16 +731,16 @@ T["replay with distinct turn_ids per turn still produces one header per turn"] =
   })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local request_headers, response_headers = 0, 0
+  local captain_headers, pilot_headers = 0, 0
   for _, l in ipairs(lines) do
-    if l == "## request" then
-      request_headers = request_headers + 1
-    elseif l:find("^## response") then
-      response_headers = response_headers + 1
+    if l == "## captain" then
+      captain_headers = captain_headers + 1
+    elseif l:find("^## pilot") then
+      pilot_headers = pilot_headers + 1
     end
   end
-  MiniTest.expect.equality(request_headers, 2)
-  MiniTest.expect.equality(response_headers, 2)
+  MiniTest.expect.equality(captain_headers, 2)
+  MiniTest.expect.equality(pilot_headers, 2)
 
   helpers.cleanup_instance(id)
 end
