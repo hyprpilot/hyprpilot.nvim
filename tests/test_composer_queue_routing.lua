@@ -10,13 +10,21 @@ local helpers = require("tests.helpers")
 local T = MiniTest.new_set()
 
 ---Mint a composer buffer for the given instance so submit has
----something to read text from. Returns the bufnr.
+---something to read text from. Adopts an existing buffer when one
+---already carries the canonical name (E95 dodge) so tests within
+---this file can re-use the same `instance_id` across cases.
 ---@param instance_id string
 ---@return integer
 local function mint_composer_buffer(instance_id)
   local composer = require("hyprpilot.ui.composer")
+  local name = "hyprpilot://composer/" .. instance_id
+  local existing = require("hyprpilot.chat.buffer").find_by_name(name)
+  if existing ~= nil then
+    composer._register_buffer_for_tests(instance_id, existing)
+    return existing
+  end
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(bufnr, "hyprpilot://composer/" .. instance_id)
+  vim.api.nvim_buf_set_name(bufnr, name)
   vim.bo[bufnr].filetype = "hyprpilot_input"
   composer._register_buffer_for_tests(instance_id, bufnr)
   return bufnr
