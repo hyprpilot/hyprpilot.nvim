@@ -8,6 +8,14 @@ local M = {}
 ---@field client? hyprpilot.ConfigClient
 ---@field composer? hyprpilot.ConfigComposer
 ---@field permission_row? hyprpilot.ConfigPermissionRow
+---@field palettes? hyprpilot.ConfigPalettes
+---@field completion? hyprpilot.ConfigCompletion
+
+---@class hyprpilot.ConfigPalettes
+---@field picker? "auto" | "snacks" | "vim.ui.select"  -- picker backend; "auto" = snacks if available, else vim.ui.select
+
+---@class hyprpilot.ConfigCompletion
+---@field sources? string[]  -- daemon-side completion sources to query (default: { "skills" }; "path" excluded — Neovim has native path completion)
 
 ---@class hyprpilot.ConfigPermissionRow
 ---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 40% vh)
@@ -64,6 +72,17 @@ local defaults = {
     max_height = function(lines)
       return math.max(3, math.floor(lines * 0.4))
     end,
+  },
+  palettes = {
+    picker = "auto",
+  },
+  completion = {
+    -- Daemon advertises `path` and `skills` today; we exclude `path`
+    -- by default because Neovim has native path completion sources
+    -- (omnifunc, blink.cmp's `path` provider) that don't need to
+    -- round-trip through the daemon. Captain can extend this list
+    -- when the daemon adds more sources.
+    sources = { "skills" },
   },
   composer = {
     min_height = 12,

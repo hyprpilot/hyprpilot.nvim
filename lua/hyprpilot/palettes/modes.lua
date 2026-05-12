@@ -1,24 +1,17 @@
---- Modes palette — `vim.ui.select` over the active instance's
---- `available_modes`. Pick a row, the daemon's `instances/setMode`
---- RPC commits.
----
---- Reads the meta off `instances.meta(id)` (which calls
---- `instance/snapshot/meta`) on every open instead of caching —
---- `availableModes` can shift mid-session as the agent advertises
---- new capabilities, and the daemon's per-instance lock is the only
---- authoritative source.
+--- Modes palette — picker over the active instance's `available_modes`.
+--- Pick a row, the daemon's `instances/setMode` RPC commits.
 
 local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
+local pickers = require("hyprpilot.palettes.pickers")
 local window = require("hyprpilot.chat.window")
 
 local M = {}
 
 ---@class hyprpilot.palettes.modes.Opts
----@field instance_id? string  -- defaults to active instance
+---@field instance_id? string
+---@field picker? "auto" | "snacks" | "vim.ui.select"
 
----Open the modes picker. Resolves `instance_id` lazily so a keybind
----bound at startup picks up whichever instance is active when fired.
 ---@param opts? hyprpilot.palettes.modes.Opts
 function M.open(opts)
   opts = opts or {}
@@ -42,35 +35,45 @@ function M.open(opts)
     end
 
     local current = meta.current_mode_id
-    -- Prefix the current mode with `* ` so the captain can tell the
-    -- active row apart in pickers that don't render a "selected"
-    -- indicator (raw vim.ui.select / fzf-lua's bare interface, etc).
-    local format_item = function(item)
-      local prefix = item.id == current and "* " or "  "
-      return prefix .. (item.name or item.id)
-    end
 
-    vim.ui.select(available, {
-      prompt = "modes",
-      format_item = format_item,
+    pickers.open({
+      items = available,
+      title = "modes",
       kind = "hyprpilot.modes",
-    }, function(choice)
-      if choice == nil then
-        return
-      end
-      if choice.id == current then
-        log.debug("palettes.modes: chose current mode (%s) — no-op", current)
-        return
-      end
-
-      instances.set_mode(instance_id, choice.id, function(set_err)
-        if set_err ~= nil then
-          log.warn("palettes.modes: setMode failed: %s", set_err.message)
+      picker = opts.picker,
+      format_item = function(item)
+        local prefix = item.id == current and "* " or "  "
+        return prefix .. (item.name or item.id)
+      end,
+      -- Snacks preview: mode name (heading) + description (body).
+      -- The agent (claude-agent-acp / opencode) is the source of
+      -- truth for the description string; we render it markdown so
+      -- bold / lists / code spans in the description survive.
+      preview = function(item)
+        local lines = { "# " .. (item.name or item.id), "" }
+        if item.description ~= nil and item.description ~= "" then
+          for _, l in ipairs(vim.split(tostring(item.description), "\n", { plain = true })) do
+            table.insert(lines, l)
+          end
         else
-          log.debug("palettes.modes: set mode=%s on instance=%s", choice.id, instance_id)
+          table.insert(lines, "_(no description advertised by the agent)_")
         end
-      end)
-    end)
+        return { lines = lines, ft = "markdown" }
+      end,
+      on_pick = function(choice)
+        if choice.id == current then
+          log.debug("palettes.modes: chose current mode (%s) — no-op", current)
+          return
+        end
+        instances.set_mode(instance_id, choice.id, function(set_err)
+          if set_err ~= nil then
+            log.warn("palettes.modes: setMode failed: %s", set_err.message)
+          else
+            log.debug("palettes.modes: set mode=%s on instance=%s", choice.id, instance_id)
+          end
+        end)
+      end,
+    })
   end)
 end
 

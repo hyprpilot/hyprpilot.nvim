@@ -1,18 +1,15 @@
---- Sessions palette — `vim.ui.select` over resumable sessions the
---- daemon advertises via `sessions/list`. Pick a row, the daemon
---- spawns a fresh instance and adopts the chosen `sessionId` via
+--- Sessions palette — picker over resumable sessions the daemon
+--- advertises via `sessions/list`. Pick a row, the daemon spawns a
+--- fresh instance and adopts the chosen `sessionId` via
 --- `sessions/load`.
 ---
 --- Wire shape mirrors the ACP `ListSessionsResponse`:
 ---   { sessions: [{ sessionId, cwd, additionalDirectories? }], nextCursor? }
---- The agent (claude-agent-acp, opencode, etc.) is the source of
---- truth for the per-session fields; ACP keeps the list lean
---- (sessionId + cwd) instead of carrying title / lastSeenAt /
---- agentId — those don't exist on the protocol surface.
 
 local client = require("hyprpilot.client")
 local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
+local pickers = require("hyprpilot.palettes.pickers")
 
 local M = {}
 
@@ -26,10 +23,8 @@ local M = {}
 ---@field agent_id? string     -- direct ACP agent id (skip profile resolution)
 ---@field profile_id? string   -- profile to resolve against when no instance / agent specified
 ---@field cwd? string          -- filter to sessions whose cwd matches; default: every session
+---@field picker? "auto" | "snacks" | "vim.ui.select"
 
----Translate the daemon's camelCase wire entry to our snake_case
----table. ACP's `SessionInfo` minimum is `sessionId + cwd`; the
----`additionalDirectories` field is unstable and may be absent.
 ---@param wire table
 ---@return hyprpilot.palettes.sessions.Session
 local function from_wire(wire)
@@ -40,10 +35,6 @@ local function from_wire(wire)
   }
 end
 
----Format a session row for the picker. Headline = cwd (it's the
----human-recognisable handle for "which project was this for");
----short session id rides as the trailing identifier so two sessions
----in the same cwd still disambiguate.
 ---@param item hyprpilot.palettes.sessions.Session
 ---@return string
 local function format_item(item)
@@ -53,6 +44,25 @@ local function format_item(item)
     return headline
   end
   return headline .. " · " .. short_id
+end
+
+---@param item hyprpilot.palettes.sessions.Session
+---@return { lines: string[], ft: string }
+local function format_preview(item)
+  local lines = { "# " .. (item.cwd or "(no cwd)"), "" }
+  if item.session_id ~= nil then
+    table.insert(lines, string.format("- **session id:** `%s`", item.session_id))
+  end
+  if item.cwd ~= nil then
+    table.insert(lines, string.format("- **cwd:** `%s`", item.cwd))
+  end
+  if type(item.additional_directories) == "table" and #item.additional_directories > 0 then
+    table.insert(lines, "- **additional directories:**")
+    for _, d in ipairs(item.additional_directories) do
+      table.insert(lines, "  - `" .. d .. "`")
+    end
+  end
+  return { lines = lines, ft = "markdown" }
 end
 
 ---@param opts? hyprpilot.palettes.sessions.Opts
@@ -90,56 +100,54 @@ function M.open(opts)
       table.insert(items, from_wire(w))
     end
 
-    vim.ui.select(items, {
-      prompt = "sessions",
-      format_item = format_item,
+    pickers.open({
+      items = items,
+      title = "sessions",
       kind = "hyprpilot.sessions",
-    }, function(choice)
-      if choice == nil then
-        return
-      end
-
-      client.request(
-        "sessions/load",
-        {
-          sessionId = choice.session_id,
-          instanceId = opts.instance_id,
-          agentId = opts.agent_id,
-          profileId = opts.profile_id,
-          cwd = choice.cwd or opts.cwd,
-        },
-        nil,
-        function(load_err, load_result)
-          if load_err ~= nil then
-            log.p.warn("palettes.sessions: sessions/load failed: " .. tostring(load_err.message))
-            return
-          end
-
-          local instance_id = load_result and load_result.instanceId
-          if instance_id == nil then
-            log.warn("palettes.sessions: sessions/load returned no instanceId")
-            return
-          end
-
-          -- Register the freshly-spawned instance with the chat buffer
-          -- + window so the captain lands inside the loaded session on
-          -- the next show.
-          instances.info(instance_id, function(info_err, info)
-            if info_err ~= nil then
-              log.p.warn("palettes.sessions: instances/info post-load failed: " .. tostring(info_err.message))
+      picker = opts.picker,
+      format_item = format_item,
+      preview = format_preview,
+      on_pick = function(choice)
+        client.request(
+          "sessions/load",
+          {
+            sessionId = choice.session_id,
+            instanceId = opts.instance_id,
+            agentId = opts.agent_id,
+            profileId = opts.profile_id,
+            cwd = choice.cwd or opts.cwd,
+          },
+          nil,
+          function(load_err, load_result)
+            if load_err ~= nil then
+              log.p.warn("palettes.sessions: sessions/load failed: " .. tostring(load_err.message))
               return
             end
-            local bufnr = require("hyprpilot.chat.buffer").create(info.id)
-            require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name })
-            require("hyprpilot.chat.window").show(info.id)
-          end)
-        end
-      )
-    end)
+
+            local instance_id = load_result and load_result.instanceId
+            if instance_id == nil then
+              log.warn("palettes.sessions: sessions/load returned no instanceId")
+              return
+            end
+
+            instances.info(instance_id, function(info_err, info)
+              if info_err ~= nil then
+                log.p.warn("palettes.sessions: instances/info post-load failed: " .. tostring(info_err.message))
+                return
+              end
+              local bufnr = require("hyprpilot.chat.buffer").create(info.id)
+              require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name })
+              require("hyprpilot.chat.window").show(info.id)
+            end)
+          end
+        )
+      end,
+    })
   end)
 end
 
 M.format_item = format_item
+M.format_preview = format_preview
 M.from_wire = from_wire
 
 return M

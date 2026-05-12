@@ -1,17 +1,17 @@
---- Models palette — `vim.ui.select` over the active instance's
---- `available_models`. Mirrors `palettes/modes.lua` exactly with
---- `setModel` instead of `setMode` (the daemon's per-axis split is
---- ACP-spec, not us being clever — the agent advertises mode and
---- model as two distinct closed sets).
+--- Models palette — mirrors `palettes/modes.lua` with `setModel` /
+--- `available_models` instead. The daemon's per-axis split is
+--- ACP-spec, not us being clever.
 
 local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
+local pickers = require("hyprpilot.palettes.pickers")
 local window = require("hyprpilot.chat.window")
 
 local M = {}
 
 ---@class hyprpilot.palettes.models.Opts
 ---@field instance_id? string
+---@field picker? "auto" | "snacks" | "vim.ui.select"
 
 ---@param opts? hyprpilot.palettes.models.Opts
 function M.open(opts)
@@ -36,32 +36,41 @@ function M.open(opts)
     end
 
     local current = meta.current_model_id
-    local format_item = function(item)
-      local prefix = item.id == current and "* " or "  "
-      return prefix .. (item.name or item.id)
-    end
 
-    vim.ui.select(available, {
-      prompt = "models",
-      format_item = format_item,
+    pickers.open({
+      items = available,
+      title = "models",
       kind = "hyprpilot.models",
-    }, function(choice)
-      if choice == nil then
-        return
-      end
-      if choice.id == current then
-        log.debug("palettes.models: chose current model (%s) — no-op", current)
-        return
-      end
-
-      instances.set_model(instance_id, choice.id, function(set_err)
-        if set_err ~= nil then
-          log.warn("palettes.models: setModel failed: %s", set_err.message)
+      picker = opts.picker,
+      format_item = function(item)
+        local prefix = item.id == current and "* " or "  "
+        return prefix .. (item.name or item.id)
+      end,
+      preview = function(item)
+        local lines = { "# " .. (item.name or item.id), "" }
+        if item.description ~= nil and item.description ~= "" then
+          for _, l in ipairs(vim.split(tostring(item.description), "\n", { plain = true })) do
+            table.insert(lines, l)
+          end
         else
-          log.debug("palettes.models: set model=%s on instance=%s", choice.id, instance_id)
+          table.insert(lines, "_(no description advertised by the agent)_")
         end
-      end)
-    end)
+        return { lines = lines, ft = "markdown" }
+      end,
+      on_pick = function(choice)
+        if choice.id == current then
+          log.debug("palettes.models: chose current model (%s) — no-op", current)
+          return
+        end
+        instances.set_model(instance_id, choice.id, function(set_err)
+          if set_err ~= nil then
+            log.warn("palettes.models: setModel failed: %s", set_err.message)
+          else
+            log.debug("palettes.models: set model=%s on instance=%s", choice.id, instance_id)
+          end
+        end)
+      end,
+    })
   end)
 end
 
