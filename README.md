@@ -412,13 +412,13 @@ set("n", "<leader>au", function()
 end, { desc = "hyprpilot: load older history" })
 ```
 
-> **Sessions palette caveat.** The daemon doesn't yet expose
-> `sessions/list` and `sessions/load` on the public socket
-> dispatcher (they live as Tauri-only commands). The palette ships
-> with a graceful `-32601 method_not_found` fallback (warns + no-op,
-> no crash) so you can wire the keymap today; it lights up
-> automatically once the daemon-side handoff documented in
-> `docs/plans/2026-05-12-sessions-rpc-handoff.md` lands.
+> **Sessions palette** rides on the daemon's `sessions/list` +
+> `sessions/load` RPCs (shipped daemon-side in PR #41). The ACP
+> wire shape per `SessionInfo` is lean — only `sessionId` + `cwd`
+> per entry, so the row format is `<cwd> · <short-id>`. The
+> `profile_id` / `agent_id` you pass via `palettes.sessions.open({
+> profile_id = "..." })` is forwarded to `sessions/load` so the
+> daemon resolves the right agent for the resume.
 
 ## Limitations
 

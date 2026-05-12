@@ -303,33 +303,32 @@ end
 -- sessions
 ---------------------------------------------------------------------
 
-T["palettes.sessions: -32601 from sessions/list is graceful (no picker, no crash)"] = function()
+T["palettes.sessions: daemon error from sessions/list is graceful (no picker, no crash)"] = function()
   local restore_client = stub_client_with({
-    ["sessions/list"] = { err = { code = -32601, message = "method_not_found" } },
+    ["sessions/list"] = { err = { code = -32602, message = "no agents configured" } },
   })
   local restore_select, ui_calls = stub_ui_select(function() end)
 
   require("hyprpilot.palettes.sessions").open()
 
-  -- The palette must NOT call vim.ui.select after a -32601.
+  -- The palette must NOT call vim.ui.select after the failure.
   MiniTest.expect.equality(#ui_calls, 0)
 
   restore_select()
   restore_client()
 end
 
-T["palettes.sessions: pick → fires sessions/load with the chosen sessionId"] = function()
+T["palettes.sessions: pick → fires sessions/load with the chosen sessionId + cwd"] = function()
   local restore_client, calls = stub_client_with({
     ["sessions/list"] = {
+      -- ACP `ListSessionsResponse` wire shape: every entry is
+      -- `{ sessionId, cwd }` (additionalDirectories is unstable; we
+      -- don't depend on it). No title / agentId / profileId on the
+      -- protocol surface.
       result = {
         sessions = {
-          {
-            sessionId = "sess-1",
-            agentId = "claude-code",
-            profileId = "personal/claude/opus",
-            cwd = "/tmp/proj",
-            title = "refactor",
-          },
+          { sessionId = "sess-1", cwd = "/tmp/proj" },
+          { sessionId = "sess-2", cwd = "/tmp/other" },
         },
       },
     },
@@ -345,10 +344,8 @@ T["palettes.sessions: pick → fires sessions/load with the chosen sessionId"] =
     return items[1]
   end)
 
-  require("hyprpilot.palettes.sessions").open()
+  require("hyprpilot.palettes.sessions").open({ profile_id = "personal/claude/opus" })
 
-  -- Find the sessions/load call (order may interleave depending on
-  -- callback timing — list, load, info all fire from the same chain).
   local load_call
   for _, c in ipairs(calls) do
     if c.method == "sessions/load" then
@@ -360,24 +357,25 @@ T["palettes.sessions: pick → fires sessions/load with the chosen sessionId"] =
   MiniTest.expect.equality(load_call ~= nil, true)
   MiniTest.expect.equality(load_call.params.sessionId, "sess-1")
   MiniTest.expect.equality(load_call.params.cwd, "/tmp/proj")
+  -- profile_id from opts propagates to the load call so the daemon
+  -- can resolve the right agent for the resume.
+  MiniTest.expect.equality(load_call.params.profileId, "personal/claude/opus")
 
   restore_select()
   restore_client()
 end
 
-T["palettes.sessions.format_item produces a headline · meta string"] = function()
+T["palettes.sessions.format_item composes `cwd · short-id`"] = function()
   local format = require("hyprpilot.palettes.sessions").format_item
+  -- ACP-spec session entry: just sessionId + cwd. The format string
+  -- becomes the headline + a short id slug so two sessions in the
+  -- same cwd still disambiguate.
   local out = format({
-    session_id = "abc",
-    title = "refactor",
-    agent_id = "claude-code",
-    profile_id = "personal/claude/opus",
+    session_id = "abcdef0123456789",
     cwd = "/tmp/proj",
-    last_seen_at = "2026-05-12T15:34:21Z",
   })
-  MiniTest.expect.equality(out:sub(1, 8), "refactor")
-  MiniTest.expect.equality(out:find("claude-code", 1, true) ~= nil, true)
   MiniTest.expect.equality(out:find("/tmp/proj", 1, true) ~= nil, true)
+  MiniTest.expect.equality(out:find("abcdef01", 1, true) ~= nil, true)
 end
 
 return T
