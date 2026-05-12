@@ -165,8 +165,12 @@ local function compose()
   table.insert(lines, string.format(" permission · %s%s", entry.tool or "tool", extra))
   local header_row = #lines - 1
 
-  -- Body lines from the daemon's `formatted` payload (description /
-  -- fields) — same shape as the inline tool-call body.
+  -- Body lines from the daemon's `formatted` payload (diff /
+  -- description / fields) — same shape as the inline tool-call
+  -- body. Prefer `diff` over `description` for Edit / Write /
+  -- MultiEdit so the captain sees a clean unified patch (with
+  -- diff syntax highlight) rather than the Shiki-marker source
+  -- the desktop overlay consumes.
   local formatted = entry.formatted
   if type(formatted) == "table" then
     if type(formatted.fields) == "table" then
@@ -177,7 +181,13 @@ local function compose()
         end
       end
     end
-    if type(formatted.description) == "string" and formatted.description ~= "" then
+    if type(formatted.diff) == "string" and formatted.diff ~= "" then
+      table.insert(lines, "  ````diff")
+      for _, l in ipairs(vim.split(formatted.diff, "\n", { plain = true })) do
+        table.insert(lines, "  " .. l)
+      end
+      table.insert(lines, "  ````")
+    elseif type(formatted.description) == "string" and formatted.description ~= "" then
       for _, l in ipairs(vim.split(formatted.description, "\n", { plain = true })) do
         table.insert(lines, "  " .. l)
       end

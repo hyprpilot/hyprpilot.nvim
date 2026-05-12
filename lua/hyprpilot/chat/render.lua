@@ -973,7 +973,22 @@ local function tool_body_lines(formatted, tool_kind)
     end
   end
 
-  if type(formatted.description) == "string" and formatted.description ~= "" then
+  -- Prefer the daemon's plain unified `diff` over `description` for
+  -- tools that ship both (Edit / Write / MultiEdit). `description`
+  -- carries Shiki `[!code ++]` / `[!code --]` markers meant for the
+  -- desktop overlay's `transformerNotationDiff` pipeline — markdown
+  -- consumers like us see those markers as raw text. The `diff`
+  -- field is the same change projected as a unified-patch we can
+  -- fence with the `diff` language so treesitter colours adds /
+  -- removes naturally.
+  if type(formatted.diff) == "string" and formatted.diff ~= "" then
+    local diff_para = { "````diff" }
+    for _, l in ipairs(vim.split(formatted.diff, "\n", { plain = true })) do
+      table.insert(diff_para, l)
+    end
+    table.insert(diff_para, "````")
+    table.insert(paragraphs, diff_para)
+  elseif type(formatted.description) == "string" and formatted.description ~= "" then
     table.insert(paragraphs, vim.split(formatted.description, "\n", { plain = true }))
   end
 
