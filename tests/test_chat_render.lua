@@ -550,6 +550,98 @@ T["agent_attachment lands in ### attachments section after tools"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["replay with shared turn_id across multiple user_prompts splits into separate exchanges"] = function()
+  -- Regression for the session-replay bug: during `instance/snapshot/chat`
+  -- replay the daemon ships a single synthetic turn_id for the whole
+  -- replay window (no TurnStarted boundaries fire between historical
+  -- turns). Without exchange-based partitioning, every user_prompt
+  -- and every agent response collapsed under one ## captain / ## pilot
+  -- header pair. The fix bumps an exchange counter on each
+  -- user_prompt → agent role transition and namespaces the daemon
+  -- turn_id under that counter.
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      -- Three exchanges, ALL keyed to the same synthetic turn_id
+      -- the way a session replay actually arrives from the daemon.
+      { turnId = "synthetic-x", item = { kind = "user_prompt", text = "first prompt" } },
+      { turnId = "synthetic-x", item = { kind = "agent_text", text = "first reply" } },
+      { turnId = "synthetic-x", item = { kind = "user_prompt", text = "second prompt" } },
+      { turnId = "synthetic-x", item = { kind = "agent_text", text = "second reply" } },
+      { turnId = "synthetic-x", item = { kind = "user_prompt", text = "third prompt" } },
+      { turnId = "synthetic-x", item = { kind = "agent_text", text = "third reply" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+  -- Count `## captain` / `## pilot` (allowing the stat-chip suffix
+  -- the pilot header may carry, so we match on the prefix only).
+  local captain_headers = 0
+  local pilot_headers = 0
+  for _, l in ipairs(lines) do
+    if l == "## captain" then
+      captain_headers = captain_headers + 1
+    elseif l:find("^## pilot") then
+      pilot_headers = pilot_headers + 1
+    end
+  end
+
+  MiniTest.expect.equality(captain_headers, 3)
+  MiniTest.expect.equality(pilot_headers, 3)
+
+  -- All three prompt + reply bodies still landed in order.
+  MiniTest.expect.equality(helpers.has_line(lines, "first prompt"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "first reply"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "second prompt"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "second reply"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "third prompt"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "third reply"), true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["replay with distinct turn_ids per turn still produces one header per turn"] = function()
+  -- Live-flow happy path — make sure the exchange-namespacing
+  -- doesn't double-count when the daemon DOES ship distinct
+  -- turn_ids (post-session-load, when TurnStarted boundaries
+  -- arrive between turns). Two prompts, two distinct turn ids,
+  -- expect exactly two captain + two pilot headers.
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "turn-a", item = { kind = "user_prompt", text = "p1" } },
+      { turnId = "turn-a", item = { kind = "agent_text", text = "r1" } },
+      { turnId = "turn-b", item = { kind = "user_prompt", text = "p2" } },
+      { turnId = "turn-b", item = { kind = "agent_text", text = "r2" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local captain_headers, pilot_headers = 0, 0
+  for _, l in ipairs(lines) do
+    if l == "## captain" then
+      captain_headers = captain_headers + 1
+    elseif l:find("^## pilot") then
+      pilot_headers = pilot_headers + 1
+    end
+  end
+  MiniTest.expect.equality(captain_headers, 2)
+  MiniTest.expect.equality(pilot_headers, 2)
+
+  helpers.cleanup_instance(id)
+end
+
 T["empty agent_thought drops the event (no placeholder, no section)"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
