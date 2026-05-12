@@ -6,6 +6,24 @@ function M.setup(config)
   local c = require("hyprpilot.config").setup(config)
 
   require("hyprpilot.log").setup({ level = c.log_level })
+
+  -- Graceful teardown on Neovim exit. `clear = true` on the group
+  -- so a captain who re-calls `setup()` (hot reload, config swap)
+  -- doesn't accumulate duplicate `VimLeavePre` listeners.
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    group = vim.api.nvim_create_augroup("HyprpilotShutdown", { clear = true }),
+    callback = function()
+      require("hyprpilot.shutdown").shutdown()
+    end,
+  })
+end
+
+--- Tear down the plugin's runtime state — close windows, drop the
+--- event subscription, disconnect the client. Called automatically
+--- on `VimLeavePre`; also exposed for manual hot-reload / a
+--- captain-bound "stop everything" keymap.
+function M.shutdown()
+  require("hyprpilot.shutdown").shutdown()
 end
 
 -- ── Window ─────────────────────────────────────────────────────────
