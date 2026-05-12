@@ -230,6 +230,40 @@ The status surface fires `User Hyprpilot*` autocmds so statuslines
 refresh without polling: `HyprpilotConnected`, `HyprpilotDisconnected`,
 `HyprpilotInstanceChanged`, `HyprpilotActivityChanged`.
 
+### Lifecycle autocmds
+
+Every daemon wire event the chat dispatcher consumes also fans out
+as a `User Hyprpilot<*>` autocmd with a structured `data` payload.
+Captains hook these for toasts, statuslines, sound effects, jira
+integrations — without having to re-implement the wire envelope
+decode. Every payload is snake_case Lua (we translate the daemon's
+camelCase on the way out).
+
+| Pattern | `data` shape | Fires when |
+|---|---|---|
+| `HyprpilotTurnStarted` | `{ instance_id, turn_id, started_at? }` | Pilot turn starts streaming. |
+| `HyprpilotTurnEnded` | `{ instance_id, turn_id, ended_at?, stop_reason?, error? }` | Turn finishes (clean, cancel, or error). |
+| `HyprpilotPermissionRequested` | `{ instance_id, request_id, tool, tool_kind?, options }` | Tool asks the captain to authorise an action. |
+| `HyprpilotPermissionResolved` | `{ instance_id, request_id, option_id }` | Captain (or another peer) resolved the prompt. |
+| `HyprpilotInstanceStateChanged` | `{ instance_id, state }` | Instance moved through `starting` / `running` / `ended` / `error`. |
+
+Usage / mode / session-title / lagged-recovery events are
+intentionally **not** surfaced as autocmds — they fire too often
+(every turn drips multiple usage updates) or have no captain-side
+hook surface. Read them off `winbar._meta[id]` or `status.get()`
+on demand instead.
+
+Example — toast on every permission request:
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "HyprpilotPermissionRequested",
+  callback = function(ev)
+    vim.notify(("hyprpilot wants to run %s"):format(ev.data.tool), vim.log.levels.WARN)
+  end,
+})
+```
+
 ### Lua-side MCP tools
 
 ```lua
