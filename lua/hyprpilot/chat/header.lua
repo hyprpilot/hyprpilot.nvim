@@ -65,18 +65,24 @@ function M.is_visible()
 end
 
 ---Resolve a mode / model id against the `available_*` list. Falls
----back to the id when no entry matches.
+---back to the id when no entry matches. Returns nil for non-string
+---inputs (notably `vim.NIL` from JSON-null fields) so callers don't
+---accidentally embed userdata in the rendered line.
 ---@param id? string
 ---@param available? table[]
 ---@return string?
 local function display_name(id, available)
-  if id == nil or id == "" then
+  if type(id) ~= "string" or id == "" then
     return nil
   end
   if type(available) == "table" then
     for _, entry in ipairs(available) do
       if type(entry) == "table" and entry.id == id then
-        return tostring(entry.name or entry.id)
+        local name = entry.name
+        if type(name) == "string" and name ~= "" then
+          return name
+        end
+        return id
       end
     end
   end
@@ -151,6 +157,17 @@ end
 ---title (captain explicitly dropped cwd; title isn't plumbed; git
 ---would need a separate composable). The `hyprpilot` brand stays
 ---leftmost as the constant anchor.
+---Truthy when `v` is a non-empty string. Critically guards against
+---`vim.NIL` (userdata sentinel from `vim.json.decode` for JSON null),
+---which is `~= nil` in Lua but not a string — feeding it into
+---`#seg.text` later crashes with "attempt to get length of a
+---userdata value".
+---@param v any
+---@return boolean
+local function is_str(v)
+  return type(v) == "string" and v ~= ""
+end
+
 ---@return hyprpilot.chat.header.Segment[]
 local function compose_segments()
   local segments = { { text = "hyprpilot", hl = "HyprpilotHeaderBrand" } }
@@ -164,47 +181,47 @@ local function compose_segments()
   local meta = winbar._meta[instance_id]
   local activity = require("hyprpilot.status").get().activity
 
-  if meta ~= nil and meta.instance_state ~= nil and meta.instance_state ~= "running" then
+  if meta ~= nil and is_str(meta.instance_state) and meta.instance_state ~= "running" then
     table.insert(segments, { text = meta.instance_state, hl = "HyprpilotHeaderState" })
   end
 
   if meta ~= nil then
-    if meta.name ~= nil and meta.name ~= "" then
+    if is_str(meta.name) then
       table.insert(segments, { text = meta.name, hl = "HyprpilotHeaderName" })
     else
       ensure_name(instance_id)
     end
-    if meta.profile_id ~= nil and meta.profile_id ~= "" then
+    if is_str(meta.profile_id) then
       table.insert(segments, { text = meta.profile_id, hl = "HyprpilotHeaderProfile" })
     end
-    if meta.agent_id ~= nil and meta.agent_id ~= "" then
+    if is_str(meta.agent_id) then
       table.insert(segments, { text = meta.agent_id, hl = "HyprpilotHeaderProvider" })
     end
 
     local model = display_name(meta.current_model_id, meta.available_models)
-    if model ~= nil then
+    if is_str(model) then
       table.insert(segments, { text = model, hl = "HyprpilotHeaderModel" })
     end
 
     local mode = display_name(meta.current_mode_id, meta.available_modes)
-    if mode ~= nil then
+    if is_str(mode) then
       table.insert(segments, { text = mode, hl = "HyprpilotHeaderMode" })
     end
 
-    if meta.usage ~= nil and (meta.usage.size or 0) > 0 then
+    if meta.usage ~= nil and type(meta.usage) == "table" and (tonumber(meta.usage.size) or 0) > 0 then
       table.insert(segments, {
-        text = string.format("%s/%s tok", compact(meta.usage.used), compact(meta.usage.size)),
+        text = string.format("%s/%s tok", compact(tonumber(meta.usage.used)), compact(tonumber(meta.usage.size))),
         hl = "HyprpilotHeaderUsage",
       })
     end
 
-    if (meta.mcps_count or 0) > 0 then
+    if (tonumber(meta.mcps_count) or 0) > 0 then
       table.insert(segments, { text = string.format("+%d mcps", meta.mcps_count), hl = "HyprpilotHeaderCount" })
     end
   end
 
   local activity_text, activity_hl = activity_pill(activity)
-  if activity_text ~= nil then
+  if is_str(activity_text) then
     table.insert(segments, { text = activity_text, hl = activity_hl })
   end
 
@@ -224,7 +241,18 @@ local function render_line(segments)
   local ranges = {}
   local col = 1 -- leading space at col 0
 
-  for i, seg in ipairs(segments) do
+  -- Filter non-string segment text first so the main loop stays
+  -- linear (no goto / continue). `compose_segments` already does
+  -- this via `is_str`, but defence in depth — a future caller that
+  -- appends a raw `vim.NIL` userdata shouldn't crash `#seg.text`.
+  local valid = {}
+  for _, seg in ipairs(segments) do
+    if type(seg.text) == "string" then
+      table.insert(valid, seg)
+    end
+  end
+
+  for i, seg in ipairs(valid) do
     if i > 1 then
       table.insert(pieces, SEP)
       table.insert(ranges, { start_col = col + 1, end_col = col + 2, hl = "HyprpilotHeaderSeparator" })
