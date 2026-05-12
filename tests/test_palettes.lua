@@ -8,68 +8,13 @@
 --- nearly identical (fetch meta → vim.ui.select → commit) — splitting
 --- buys nothing but more harness boilerplate.
 
+local helpers = require("tests.helpers")
+
 local T = MiniTest.new_set()
 
----Stub `vim.ui.select` so the test drives the picker programmatically.
----Captures `(items, opts)` of every invocation; the synthetic pick is
----controlled by `pick_fn(items, opts) → choice|nil`.
----@param pick_fn fun(items: any[], opts: table): any
----@return fun(), table[]
-local function stub_ui_select(pick_fn)
-  local original = vim.ui.select
-  local invocations = {}
-
-  vim.ui.select = function(items, opts, callback)
-    table.insert(invocations, { items = items, opts = opts })
-    local choice = pick_fn(items, opts)
-    callback(choice)
-  end
-
-  return function()
-    vim.ui.select = original
-  end, invocations
-end
-
----Stub `client.request` with a method → reply table. Reply is
----`{ err = nil, result = ... }`; absent methods return a transport
----error so a stray RPC can't pass silently. Captures every call as
----`{ method, params }` for assertions.
----@param replies table<string, { err?: table, result?: any }>
----@return fun(), table[]
-local function stub_client_with(replies)
-  local client = require("hyprpilot.client")
-  local original = client.request
-  local calls = {}
-
-  client.request = function(method, params, _opts, callback)
-    table.insert(calls, { method = method, params = params })
-    local r = replies[method]
-    if r == nil then
-      callback({ kind = "transport", message = "unstubbed RPC: " .. method }, nil)
-      return
-    end
-    callback(r.err, r.result)
-  end
-
-  return function()
-    client.request = original
-  end, calls
-end
-
----Force a known active instance for tests that depend on
----`window.active_instance()`. Returns a teardown to restore.
----@param instance_id string?
----@return fun()
-local function stub_active_instance(instance_id)
-  local window = require("hyprpilot.chat.window")
-  local original = window.active_instance
-  window.active_instance = function()
-    return instance_id
-  end
-  return function()
-    window.active_instance = original
-  end
-end
+local stub_ui_select = helpers.stub_ui_select
+local stub_client_with = helpers.stub_client_with
+local stub_active_instance = helpers.stub_active_instance
 
 ---------------------------------------------------------------------
 -- modes

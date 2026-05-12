@@ -26,6 +26,20 @@ local M = {}
 
 ---@class hyprpilot.ConfigPermissionRow
 ---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 40% vh)
+---@field keymaps? hyprpilot.ConfigPermissionRowKeymaps
+
+--- Permission-row keybindings. Each action accepts:
+---   - a single key string (`"<C-g>"`)
+---   - a list of key strings (`{ "<C-g>", "ga" }`)
+---   - `false` to disable that action entirely
+--- Permission row buffer is read-only (normal mode only), so no
+--- per-mode nesting — flat string/list form throughout.
+---@class hyprpilot.ConfigPermissionRowKeymaps
+---@field accept? string | string[] | false      -- smart-match `^allow|^accept|^proceed`
+---@field reject? string | string[] | false      -- smart-match `^reject|^deny|^abort|^cancel`
+---@field submit? string | string[] | false      -- commit currently-focused option
+---@field cycle_next? string | string[] | false  -- focus next option
+---@field cycle_prev? string | string[] | false  -- focus previous option
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -79,6 +93,17 @@ local defaults = {
     max_height = function(lines)
       return math.max(3, math.floor(lines * 0.4))
     end,
+    keymaps = {
+      -- `<C-g>` / `<C-r>` defaults dodge vim's bare-`g` prefix
+      -- (with bare `g`, the captain couldn't type `gg` to top of
+      -- the row). The captain can override any action with a
+      -- string / list / `false` (disable).
+      accept = "<C-g>",
+      reject = "<C-r>",
+      submit = "<CR>",
+      cycle_next = "<Tab>",
+      cycle_prev = "<S-Tab>",
+    },
   },
   palettes = {
     picker = "auto",

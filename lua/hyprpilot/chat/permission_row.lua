@@ -69,11 +69,10 @@ local function ensure_buffer()
     return M._bufnr
   end
 
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == BUFFER_NAME then
-      M._bufnr = bufnr
-      return bufnr
-    end
+  local existing = require("hyprpilot.chat.buffer").find_by_name(BUFFER_NAME)
+  if existing ~= nil then
+    M._bufnr = existing
+    return existing
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)
@@ -321,31 +320,63 @@ local function cycle_focus(delta)
   M.refresh()
 end
 
----Install the row keymaps once per buffer.
+---Bind one action's configured keys onto `bufnr`. `keys` is `false`
+---(disabled), a single key string, or a list of strings. Each key
+---gets a buffer-local normal-mode mapping firing `handler`.
+---@param bufnr integer
+---@param keys string | string[] | false | nil
+---@param handler fun(): nil
+---@param desc string
+local function apply_action(bufnr, keys, handler, desc)
+  if keys == false or keys == nil then
+    return
+  end
+  if type(keys) == "string" then
+    keys = { keys }
+  end
+  for _, key in ipairs(keys) do
+    vim.keymap.set("n", key, handler, { buffer = bufnr, silent = true, desc = "hyprpilot: " .. desc })
+  end
+end
+
+---Install the row keymaps once per buffer. Bindings are
+---configurable via `config.permission_row.keymaps`; each action
+---accepts a single key, list of keys, or `false` to disable.
 ---@param bufnr integer
 local function install_keymaps(bufnr)
-  vim.keymap.set("n", "<CR>", function()
-    -- `<CR>` always submits the focused option (default = Allow on
-    -- fresh prompts), so a captain who lands on the row and hits
-    -- enter gets the safe-path answer.
+  local keymaps = (require("hyprpilot.config").options.permission_row or {}).keymaps or {}
+
+  apply_action(bufnr, keymaps.submit, function()
+    -- `submit` always commits the focused option (default = Allow
+    -- on fresh prompts), so a captain who lands on the row and
+    -- fires submit gets the safe-path answer.
     submit()
-  end, { buffer = bufnr, silent = true, desc = "hyprpilot: submit focused permission option" })
+  end, "submit focused permission option")
 
-  vim.keymap.set("n", "g", function()
+  apply_action(bufnr, keymaps.accept, function()
     submit({ "^allow", "^accept", "^proceed" })
-  end, { buffer = bufnr, silent = true, desc = "hyprpilot: allow pending permission" })
+  end, "allow pending permission")
 
-  vim.keymap.set("n", "d", function()
+  apply_action(bufnr, keymaps.reject, function()
     submit({ "^reject", "^deny", "^abort", "^cancel" })
-  end, { buffer = bufnr, silent = true, desc = "hyprpilot: deny pending permission" })
+  end, "deny pending permission")
 
-  vim.keymap.set("n", "<Tab>", function()
+  apply_action(bufnr, keymaps.cycle_next, function()
     cycle_focus(1)
-  end, { buffer = bufnr, silent = true, desc = "hyprpilot: cycle permission options" })
+  end, "cycle permission options")
 
-  vim.keymap.set("n", "<S-Tab>", function()
+  apply_action(bufnr, keymaps.cycle_prev, function()
     cycle_focus(-1)
-  end, { buffer = bufnr, silent = true, desc = "hyprpilot: cycle permission options (back)" })
+  end, "cycle permission options (back)")
+end
+
+-- Test-only affordance: open_window is the public path that
+-- installs keymaps, but it requires a visible chat split which the
+-- unit test suite doesn't have. Expose a direct entry so the
+-- keymap tests can drive the install against a mint buffer.
+---@param bufnr integer
+function M._install_keymaps_for_tests(bufnr)
+  install_keymaps(bufnr)
 end
 
 ---Open the row window below the chat split, sized to fit content.

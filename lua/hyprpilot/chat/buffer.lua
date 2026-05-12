@@ -49,16 +49,33 @@ local function apply_options(bufnr, name)
   vim.bo[bufnr].readonly = true
 end
 
+---Look up the first valid buffer whose name matches `name` exactly.
+---Returns `nil` when no live buffer carries that name. Used by every
+---plugin-managed buffer site (header / permission_row / composer /
+---per-instance chat / placeholder) to adopt a buffer that survived
+---a shutdown → setup hot-reload cycle, instead of crashing E95
+---("Buffer with this name already exists") on a fresh
+---`nvim_buf_set_name` call.
+---@param name string
+---@return integer? bufnr
+function M.find_by_name(name)
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == name then
+      return bufnr
+    end
+  end
+  return nil
+end
+
 ---Create (or return existing) per-instance buffer.
 ---@param instance_id string
 ---@return integer bufnr
 function M.create(instance_id)
   local name = BUFFER_PREFIX .. instance_id
 
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == name then
-      return bufnr
-    end
+  local existing = M.find_by_name(name)
+  if existing ~= nil then
+    return existing
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)
@@ -93,11 +110,10 @@ function M.placeholder()
   -- (post-`shutdown()` hot-reload, etc.) — otherwise the
   -- `apply_options` → `nvim_buf_set_name` call raises E95.
   local name = "hyprpilot://placeholder"
-  for _, candidate in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_valid(candidate) and vim.api.nvim_buf_get_name(candidate) == name then
-      _placeholder_bufnr = candidate
-      return candidate
-    end
+  local existing = M.find_by_name(name)
+  if existing ~= nil then
+    _placeholder_bufnr = existing
+    return existing
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)

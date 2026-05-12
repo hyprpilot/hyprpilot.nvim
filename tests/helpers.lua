@@ -73,9 +73,43 @@ function M.stub_permissions_respond()
   end, calls
 end
 
----Stub `hyprpilot.client.request` similarly. Each invocation gets
----recorded; the stub returns a no-op callback so the caller's
----response branch fires with `nil` err and an empty result.
+---Stub `hyprpilot.client.request` with a method → reply table. Each
+---reply is `{ err?, result? }`; an absent method returns a transport
+---error so a stray RPC can't pass silently. Captures every call as
+---`{ method, params }`. The more general successor of
+---`stub_client_request` — pass `replies = {}` for "no-op every call".
+---@param replies? table<string, { err?: table, result?: any }>
+---@return fun(), table[]
+function M.stub_client_with(replies)
+  replies = replies or {}
+  local client = require("hyprpilot.client")
+  local original = client.request
+  local calls = {}
+
+  client.request = function(method, params, _opts, callback)
+    table.insert(calls, { method = method, params = params })
+    local r = replies[method]
+    if r == nil then
+      if callback ~= nil then
+        callback({ kind = "transport", message = "unstubbed RPC: " .. method }, nil)
+      end
+      return
+    end
+    if callback ~= nil then
+      callback(r.err, r.result)
+    end
+  end
+
+  return function()
+    client.request = original
+  end, calls
+end
+
+---Legacy stub: every call records + immediately fires the callback
+---with `(nil, {})` — a permissive "everything succeeds" pattern. New
+---tests should prefer `stub_client_with({ method = { result = ... } })`
+---so per-method shaping is explicit; this alias is kept for the
+---composer attachment tests that were written against the old shape.
 ---@return fun(), table[]
 function M.stub_client_request()
   local client = require("hyprpilot.client")
@@ -92,6 +126,42 @@ function M.stub_client_request()
   return function()
     client.request = original
   end, calls
+end
+
+---Force `chat.window.active_instance` to return a known id (or nil)
+---for the duration of a test. Returns the restore closure.
+---@param instance_id string?
+---@return fun()
+function M.stub_active_instance(instance_id)
+  local window = require("hyprpilot.chat.window")
+  local original = window.active_instance
+  window.active_instance = function()
+    return instance_id
+  end
+  return function()
+    window.active_instance = original
+  end
+end
+
+---Stub `vim.ui.select` to drive a picker programmatically. The
+---supplied `pick_fn(items, opts)` chooses the row (return `nil` to
+---simulate the captain cancelling). Captures every invocation's
+---`{ items, opts }` pair for assertion.
+---@param pick_fn fun(items: any[], opts: table): any?
+---@return fun(), table[]
+function M.stub_ui_select(pick_fn)
+  local original = vim.ui.select
+  local invocations = {}
+
+  vim.ui.select = function(items, opts, callback)
+    table.insert(invocations, { items = items, opts = opts })
+    local choice = pick_fn(items, opts)
+    callback(choice)
+  end
+
+  return function()
+    vim.ui.select = original
+  end, invocations
 end
 
 ---True when any line in `lines` exactly matches `needle`.

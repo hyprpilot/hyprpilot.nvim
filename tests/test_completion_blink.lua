@@ -3,29 +3,11 @@
 --- responses, then drive the provider's `get_completions` /
 --- `resolve` lifecycle the way blink.cmp does at runtime.
 
+local helpers = require("tests.helpers")
+
 local T = MiniTest.new_set()
 
----@param replies table<string, { err?: table, result?: any }>
----@return fun(), table[]
-local function stub_client_with(replies)
-  local client = require("hyprpilot.client")
-  local original = client.request
-  local calls = {}
-
-  client.request = function(method, params, _opts, callback)
-    table.insert(calls, { method = method, params = params })
-    local r = replies[method]
-    if r == nil then
-      callback({ kind = "transport", message = "unstubbed RPC: " .. method }, nil)
-      return
-    end
-    callback(r.err, r.result)
-  end
-
-  return function()
-    client.request = original
-  end, calls
-end
+local stub_client_with = helpers.stub_client_with
 
 ---Force the current buffer's filetype to satisfy the provider's
 ---default `enabled()` gate (composer-buffer only).

@@ -2,23 +2,13 @@
 --- segment composition + per-segment highlight ranges directly
 --- against the header buffer (no real chat window needed).
 
+local helpers = require("tests.helpers")
+
 local T = MiniTest.new_set()
 
 local NS = vim.api.nvim_create_namespace("hyprpilot.chat.header")
 
----Force the chat window's active-instance lookup to a known id.
----@param instance_id string?
----@return fun()
-local function stub_active_instance(instance_id)
-  local window = require("hyprpilot.chat.window")
-  local original = window.active_instance
-  window.active_instance = function()
-    return instance_id
-  end
-  return function()
-    window.active_instance = original
-  end
-end
+local stub_active_instance = helpers.stub_active_instance
 
 ---Stub `instances.info` so the header's lazy name-fetch path doesn't
 ---fire a real `client.request` (which would leave state on the
