@@ -111,6 +111,7 @@ local function dispatch(raw)
     status.set_activity({ kind = "streaming" })
   elseif event.event == "instance_meta" then
     winbar.update_meta(event.instanceId, {
+      agent_id = event.agentId,
       profile_id = event.profileId,
       session_id = event.sessionId,
       cwd = event.cwd,
