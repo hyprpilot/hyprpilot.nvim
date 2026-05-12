@@ -49,8 +49,28 @@ M.LINKS = {
   -- Composer
   HyprpilotComposerAttachments = "Comment",
 
-  -- Header buffer (pinned single-line bar above the chat split)
+  -- Header buffer (pinned single-line bar above the chat split).
+  -- `HyprpilotHeader` is the background fill via `line_hl_group`; per-
+  -- segment groups paint each pill on top. Links are chosen so the
+  -- bar reads cohesively against a stock colorscheme (each pill picks
+  -- up its semantic colour from the syntax / diagnostic palette).
   HyprpilotHeader = "StatusLine",
+  HyprpilotHeaderBrand = "Title",
+  HyprpilotHeaderEmpty = "Comment",
+  HyprpilotHeaderState = "WarningMsg",
+  HyprpilotHeaderName = "Identifier",
+  HyprpilotHeaderProfile = "Constant",
+  HyprpilotHeaderProvider = "Type",
+  HyprpilotHeaderModel = "Function",
+  HyprpilotHeaderMode = "Special",
+  HyprpilotHeaderUsage = "Number",
+  HyprpilotHeaderCount = "Comment",
+  HyprpilotHeaderSeparator = "NonText",
+  HyprpilotHeaderActivity = "DiagnosticHint",
+  HyprpilotHeaderActivityStreaming = "DiagnosticInfo",
+  HyprpilotHeaderActivityThinking = "DiagnosticHint",
+  HyprpilotHeaderActivityTool = "Function",
+  HyprpilotHeaderActivityPermission = "DiagnosticWarn",
 
   -- Permission row (pinned single-line bar between chat and composer
   -- while at least one permission is pending)

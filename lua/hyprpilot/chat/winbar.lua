@@ -23,6 +23,8 @@ local M = {}
 ---@field cost? table
 
 ---@class hyprpilot.winbar.Meta
+---@field name? string                                    -- captain-set instance slug (from instances/info or rename event)
+---@field agent_id? string                                -- ACP adapter id (claude-code / opencode / etc.); from instance_meta event
 ---@field profile_id? string
 ---@field session_id? string
 ---@field cwd? string

@@ -64,97 +64,206 @@ function M.is_visible()
   return true
 end
 
----Compose the header text for the currently active instance. Mirrors
----`winbar.render` but routes through the shared `winbar._meta` so we
----don't duplicate the meta store. Returns an empty string when there's
----no active instance (header collapses to nothing visible).
+---Resolve a mode / model id against the `available_*` list. Falls
+---back to the id when no entry matches.
+---@param id? string
+---@param available? table[]
+---@return string?
+local function display_name(id, available)
+  if id == nil or id == "" then
+    return nil
+  end
+  if type(available) == "table" then
+    for _, entry in ipairs(available) do
+      if type(entry) == "table" and entry.id == id then
+        return tostring(entry.name or entry.id)
+      end
+    end
+  end
+  return id
+end
+
+--- Reuse the shared token formatter (`chat/stats.format_tokens`) so
+--- usage pills here line up with the in-buffer `[Nk/Mk]` chips on the
+--- pilot turn header. Returns "0" instead of nil for missing values
+--- so the formatter call site stays terse.
+---@param n? number
 ---@return string
-local function compose()
+local function compact(n)
+  return require("hyprpilot.chat.stats").format_tokens(n or 0) or "0"
+end
+
+---@param activity? hyprpilot.Activity
+---@return string?, string  -- text, hl_group
+local function activity_pill(activity)
+  if activity == nil or activity.kind == nil or activity.kind == "idle" then
+    return nil, "HyprpilotHeaderActivity"
+  end
+  if activity.kind == "tool" then
+    local text = activity.tool_name ~= nil and ("tool · " .. activity.tool_name) or "tool"
+    return text, "HyprpilotHeaderActivityTool"
+  elseif activity.kind == "awaiting_permission" then
+    return "permission?", "HyprpilotHeaderActivityPermission"
+  elseif activity.kind == "streaming" then
+    return "streaming", "HyprpilotHeaderActivityStreaming"
+  elseif activity.kind == "thinking" then
+    return "thinking", "HyprpilotHeaderActivityThinking"
+  end
+  return activity.kind, "HyprpilotHeaderActivity"
+end
+
+---Track which instances we've already kicked an `instances/info`
+---round-trip for. One-shot per instance so `compose()` doesn't fire
+---an RPC on every refresh — the cached name lands on `_meta` and
+---subsequent renders pick it up there.
+local _name_fetched = {}
+
+---Lazy-hydrate `meta.name` for `instance_id` when the daemon hasn't
+---published it on any meta event yet. Fire-and-forget — the `info`
+---callback updates `winbar._meta` which triggers a re-render via the
+---nudge path.
+---@param instance_id string
+local function ensure_name(instance_id)
+  if _name_fetched[instance_id] then
+    return
+  end
+  _name_fetched[instance_id] = true
+  require("hyprpilot.instances").info(instance_id, function(err, info)
+    if err ~= nil or info == nil then
+      log.debug("header.ensure_name: instance=%s info failed: %s", instance_id, err and err.message or "no info")
+      return
+    end
+    if info.name ~= nil and info.name ~= "" then
+      winbar.update_meta(instance_id, { name = info.name })
+      M.refresh()
+    end
+  end)
+end
+
+---@class hyprpilot.chat.header.Segment
+---@field text string                 -- segment label (without surrounding · separators)
+---@field hl string                   -- highlight group applied to the segment span
+
+---Compose the header line as a list of segments. Each segment has its
+---own highlight group so the rendered line picks up per-pill colours
+---from `HyprpilotHeader*` (registered in `highlights.lua`).
+---Mirrors the UI's `Frame.vue` row-1 layout, minus the cwd / git /
+---title (captain explicitly dropped cwd; title isn't plumbed; git
+---would need a separate composable). The `hyprpilot` brand stays
+---leftmost as the constant anchor.
+---@return hyprpilot.chat.header.Segment[]
+local function compose_segments()
+  local segments = { { text = "hyprpilot", hl = "HyprpilotHeaderBrand" } }
+
   local instance_id = window.active_instance()
   if instance_id == nil then
-    return " hyprpilot · (no instance)"
+    table.insert(segments, { text = "(no instance)", hl = "HyprpilotHeaderEmpty" })
+    return segments
   end
 
   local meta = winbar._meta[instance_id]
   local activity = require("hyprpilot.status").get().activity
 
-  local parts = { "hyprpilot" }
-
   if meta ~= nil and meta.instance_state ~= nil and meta.instance_state ~= "running" then
-    table.insert(parts, meta.instance_state)
+    table.insert(segments, { text = meta.instance_state, hl = "HyprpilotHeaderState" })
   end
 
   if meta ~= nil then
-    local function display_name(id, available)
-      if id == nil or id == "" then
-        return nil
-      end
-      if type(available) == "table" then
-        for _, entry in ipairs(available) do
-          if type(entry) == "table" and entry.id == id then
-            return tostring(entry.name or entry.id)
-          end
-        end
-      end
-      return id
+    if meta.name ~= nil and meta.name ~= "" then
+      table.insert(segments, { text = meta.name, hl = "HyprpilotHeaderName" })
+    else
+      ensure_name(instance_id)
     end
-
-    local mode = display_name(meta.current_mode_id, meta.available_modes)
-    if mode ~= nil then
-      table.insert(parts, mode)
+    if meta.profile_id ~= nil and meta.profile_id ~= "" then
+      table.insert(segments, { text = meta.profile_id, hl = "HyprpilotHeaderProfile" })
+    end
+    if meta.agent_id ~= nil and meta.agent_id ~= "" then
+      table.insert(segments, { text = meta.agent_id, hl = "HyprpilotHeaderProvider" })
     end
 
     local model = display_name(meta.current_model_id, meta.available_models)
     if model ~= nil then
-      table.insert(parts, model)
+      table.insert(segments, { text = model, hl = "HyprpilotHeaderModel" })
+    end
+
+    local mode = display_name(meta.current_mode_id, meta.available_modes)
+    if mode ~= nil then
+      table.insert(segments, { text = mode, hl = "HyprpilotHeaderMode" })
     end
 
     if meta.usage ~= nil and (meta.usage.size or 0) > 0 then
-      local used = meta.usage.used or 0
-      local size = meta.usage.size or 0
-      local function compact(n)
-        if type(n) ~= "number" or n < 1000 then
-          return tostring(n or 0)
-        end
-        if n < 1000000 then
-          return string.format("%.1fk", n / 1000)
-        end
-        return string.format("%.1fM", n / 1000000)
-      end
-      table.insert(parts, string.format("%s/%s tok", compact(used), compact(size)))
+      table.insert(segments, {
+        text = string.format("%s/%s tok", compact(meta.usage.used), compact(meta.usage.size)),
+        hl = "HyprpilotHeaderUsage",
+      })
     end
 
     if (meta.mcps_count or 0) > 0 then
-      table.insert(parts, string.format("+%d mcps", meta.mcps_count))
+      table.insert(segments, { text = string.format("+%d mcps", meta.mcps_count), hl = "HyprpilotHeaderCount" })
     end
   end
 
-  if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
-    if activity.kind == "tool" then
-      table.insert(parts, activity.tool_name ~= nil and ("tool · " .. activity.tool_name) or "tool")
-    elseif activity.kind == "awaiting_permission" then
-      table.insert(parts, "permission?")
-    else
-      table.insert(parts, activity.kind)
-    end
+  local activity_text, activity_hl = activity_pill(activity)
+  if activity_text ~= nil then
+    table.insert(segments, { text = activity_text, hl = activity_hl })
   end
 
-  return " " .. table.concat(parts, " · ")
+  return segments
+end
+
+---Stitch `segments` into the rendered line + a parallel list of
+---`{ start_col, end_col, hl }` ranges so the caller can paint each
+---segment with its own highlight group. Separator `·` glyphs get
+---their own range with `HyprpilotHeaderSeparator` so the captain can
+---dim them or theme them apart from the segments themselves.
+---@param segments hyprpilot.chat.header.Segment[]
+---@return string, { start_col: integer, end_col: integer, hl: string }[]
+local function render_line(segments)
+  local SEP = " · "
+  local pieces = { " " }
+  local ranges = {}
+  local col = 1 -- leading space at col 0
+
+  for i, seg in ipairs(segments) do
+    if i > 1 then
+      table.insert(pieces, SEP)
+      table.insert(ranges, { start_col = col + 1, end_col = col + 2, hl = "HyprpilotHeaderSeparator" })
+      col = col + #SEP
+    end
+    table.insert(pieces, seg.text)
+    table.insert(ranges, { start_col = col, end_col = col + #seg.text, hl = seg.hl })
+    col = col + #seg.text
+  end
+
+  return table.concat(pieces), ranges
 end
 
 ---Re-render the header line. Cheap; called whenever meta / activity /
----active instance changes. No-op when the header isn't visible.
+---active instance changes. Paints per-segment highlights so each pill
+---(brand / name / profile / provider / model / mode / usage / count /
+---activity) gets its own colour via the `HyprpilotHeader*` groups.
+---No-op when the header isn't visible.
 function M.refresh()
   if M._bufnr == nil or not vim.api.nvim_buf_is_valid(M._bufnr) then
     return
   end
 
-  local line = compose()
+  local segments = compose_segments()
+  local line, ranges = render_line(segments)
 
   buffer.with_buffer(M._bufnr, function()
     vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, { line })
     vim.api.nvim_buf_clear_namespace(M._bufnr, NS, 0, -1)
+    -- Background fill for the whole row + per-segment highlights on
+    -- top. `line_hl_group` sets the trailing background so the bar
+    -- reads as a cohesive band instead of segment-shaped islands.
     vim.api.nvim_buf_set_extmark(M._bufnr, NS, 0, 0, { line_hl_group = "HyprpilotHeader" })
+    for _, range in ipairs(ranges) do
+      vim.api.nvim_buf_set_extmark(M._bufnr, NS, 0, range.start_col, {
+        end_col = range.end_col,
+        hl_group = range.hl,
+      })
+    end
   end)
 end
 
