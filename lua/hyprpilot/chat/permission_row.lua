@@ -95,10 +95,23 @@ end
 ---Falls back to 1 when nothing matches (the daemon should never ship
 ---a permission prompt without an allow-shaped option, but defending
 ---against it keeps the captain from being keymap-stuck).
+---
+---Primary signal is `option.kind` — the daemon wire-normalises every
+---vendor's option shape to `allow_*` / `reject_*` (see
+---`PermissionOptionView` in the daemon's `permission.rs`). Matching
+---on `kind:find("^allow")` is the same contract `is_allow_kind`
+---enforces server-side, so we stay in lockstep with new vendor
+---variants (`allow_session` / `allow_workspace` / …) without code
+---changes. The id / name suffix match is a defensive fallback for
+---adapters that don't (yet) populate `kind`.
 ---@param options table[]
 ---@return integer
 local function default_focused_idx(options)
   for i, opt in ipairs(options) do
+    local kind = string.lower(tostring(opt.kind or ""))
+    if kind:match("^allow") then
+      return i
+    end
     local id = string.lower(tostring(opt.optionId or ""))
     local name = string.lower(tostring(opt.name or ""))
     if id:match("^allow") or id:match("^accept") or id:match("^proceed") or name:match("^allow") or name:match("^accept") or name:match("^proceed") then
@@ -108,18 +121,20 @@ local function default_focused_idx(options)
   return 1
 end
 
----Find the first option whose id or name matches a `^prefix`
----pattern (case-insensitive).
+---Find the first option whose kind (preferred) or id / name (fallback)
+---matches a `^prefix` pattern. Same `kind`-first rationale as
+---`default_focused_idx`.
 ---@param options table[]
 ---@param patterns string[]
 ---@return table?
 ---@return integer?
 local function smart_match(options, patterns)
   for i, opt in ipairs(options) do
+    local kind = string.lower(tostring(opt.kind or ""))
     local id = string.lower(tostring(opt.optionId or ""))
     local name = string.lower(tostring(opt.name or ""))
     for _, pattern in ipairs(patterns) do
-      if id:match(pattern) ~= nil or name:match(pattern) ~= nil then
+      if kind:match(pattern) ~= nil or id:match(pattern) ~= nil or name:match(pattern) ~= nil then
         return opt, i
       end
     end

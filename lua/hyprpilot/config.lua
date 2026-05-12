@@ -14,8 +14,15 @@ local M = {}
 ---@class hyprpilot.ConfigPalettes
 ---@field picker? "auto" | "snacks" | "vim.ui.select"  -- picker backend; "auto" = snacks if available, else vim.ui.select
 
+---@alias hyprpilot.CompletionSource "skills" | "path" | "ripgrep" | "commands"
+
 ---@class hyprpilot.ConfigCompletion
----@field sources? string[]  -- daemon-side completion sources to query (default: { "skills" }; "path" excluded — Neovim has native path completion)
+---@field sources? hyprpilot.CompletionSource[]
+--- Daemon-side completion sources to query (default: `{ "skills" }`).
+--- The daemon's closed set today is `skills | path | ripgrep |
+--- commands` (mirror of `CompletionSourceId` on the wire). `path` is
+--- intentionally excluded by default — Neovim has native path
+--- completion sources that don't need a daemon round-trip.
 
 ---@class hyprpilot.ConfigPermissionRow
 ---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 40% vh)
