@@ -58,6 +58,20 @@ local M = {}
 local subscribed = false
 local unsubscribe = nil ---@type fun()?
 
+---Fire a `User Hyprpilot<event>` autocmd with a structured `data`
+---payload. Mirrors the pattern `status.lua` uses for
+---`Connected` / `Disconnected` / `ActivityChanged`. `pcall`
+---wrapped so a captain's autocmd callback that throws can't
+---break the event-dispatch loop.
+---@param event string                                 -- suffix appended to `Hyprpilot`
+---@param data table?
+local function emit(event, data)
+  pcall(vim.api.nvim_exec_autocmds, "User", {
+    pattern = "Hyprpilot" .. event,
+    data = data,
+  })
+end
+
 ---Unwrap an `events/changed` notification's params to the daemon's
 ---underlying `InstanceEvent` payload. The wire shape is:
 ---
@@ -100,15 +114,39 @@ local function dispatch(raw)
   elseif event.event == "turn_started" then
     render.handle_turn_started(event)
     status.set_activity({ kind = "thinking", started_at_ms = vim.uv.now() })
+    emit("TurnStarted", {
+      instance_id = event.instanceId,
+      turn_id = event.turnId,
+      started_at = event.startedAt or event.started_at,
+    })
   elseif event.event == "turn_ended" then
     render.handle_turn_ended(event)
     status.set_activity({ kind = "idle" })
+    emit("TurnEnded", {
+      instance_id = event.instanceId,
+      turn_id = event.turnId,
+      ended_at = event.endedAt or event.ended_at,
+      stop_reason = event.stopReason,
+      error = event.error,
+    })
   elseif event.event == "permission_request" then
     render.handle_permission_request(event)
     status.set_activity({ kind = "awaiting_permission", permission_request_id = event.requestId })
+    emit("PermissionRequested", {
+      instance_id = event.instanceId,
+      request_id = event.requestId,
+      tool = event.tool,
+      tool_kind = event.toolKind,
+      options = event.options,
+    })
   elseif event.event == "permission_resolved" then
     render.handle_permission_resolved(event)
     status.set_activity({ kind = "streaming" })
+    emit("PermissionResolved", {
+      instance_id = event.instanceId,
+      request_id = event.requestId,
+      option_id = event.optionId,
+    })
   elseif event.event == "instance_meta" then
     winbar.update_meta(event.instanceId, {
       agent_id = event.agentId,
@@ -123,13 +161,31 @@ local function dispatch(raw)
     })
   elseif event.event == "current_mode_update" then
     winbar.update_mode(event.instanceId, event.currentModeId)
+    emit("ModeChanged", {
+      instance_id = event.instanceId,
+      mode_id = event.currentModeId,
+    })
   elseif event.event == "usage_update" then
     winbar.update_usage(event.instanceId, event.used, event.size, event.cost)
     render.handle_usage_update(event)
+    emit("UsageUpdated", {
+      instance_id = event.instanceId,
+      used = event.used,
+      size = event.size,
+      cost = event.cost,
+    })
   elseif event.event == "session_info_update" then
     winbar.update_session(event.instanceId, event.title)
+    emit("SessionInfoUpdated", {
+      instance_id = event.instanceId,
+      title = event.title,
+    })
   elseif event.event == "state" then
     winbar.update_meta(event.instanceId, { instance_state = event.state })
+    emit("InstanceStateChanged", {
+      instance_id = event.instanceId,
+      state = event.state,
+    })
   elseif event.event == "terminal" then
     render.handle_terminal(event)
   elseif event.event == "lagged" then
@@ -138,6 +194,7 @@ local function dispatch(raw)
     -- view matches the daemon mirror again. Each tracked instance
     -- gets re-hydrated.
     log.warn("events.dispatch: events/lagged — re-hydrating tracked instances")
+    emit("EventsLagged", { instance_id = event.instanceId })
     render.iter_states(function(instance_id, st)
       M.hydrate(instance_id, st.bufnr)
     end)
