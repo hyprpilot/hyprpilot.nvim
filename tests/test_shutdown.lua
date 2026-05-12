@@ -119,6 +119,42 @@ T["setup() registers VimLeavePre — firing the autocmd triggers the full teardo
   r1()
 end
 
+T["shutdown.shutdown wipes every buffer with a `hyprpilot://` prefix"] = function()
+  -- Stub the other teardown steps so they don't perturb buffer
+  -- state; we only care about the wipe_buffers walk here.
+  local order = {}
+  local r1 = stub_fn(require("hyprpilot.chat.window"), "hide", order, "window.hide")
+  local r2 = stub_fn(require("hyprpilot.chat.events"), "_reset", order, "events._reset")
+  local r3 = stub_fn(require("hyprpilot.client"), "disconnect", order, "client.disconnect")
+
+  -- Mint a handful of buffers with the plugin's standard naming
+  -- prefix + one off-brand buffer that must survive the wipe.
+  local function mint(name)
+    local b = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(b, name)
+    return b
+  end
+  local plugin_a = mint("hyprpilot://header")
+  local plugin_b = mint("hyprpilot://permission_row")
+  local plugin_c = mint("hyprpilot://my-instance-id-xyz")
+  local off_brand = mint("/tmp/captain-was-editing-this.txt")
+
+  require("hyprpilot.shutdown").shutdown()
+
+  -- All three plugin-prefixed buffers should be gone.
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(plugin_a), false)
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(plugin_b), false)
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(plugin_c), false)
+  -- Captain's own buffer survives — we only wipe `hyprpilot://` names.
+  MiniTest.expect.equality(vim.api.nvim_buf_is_valid(off_brand), true)
+
+  pcall(vim.api.nvim_buf_delete, off_brand, { force = true })
+
+  r3()
+  r2()
+  r1()
+end
+
 T["require('hyprpilot').shutdown forwards to the shutdown module"] = function()
   local order = {}
   local r1 = stub_fn(require("hyprpilot.chat.window"), "hide", order, "window.hide")

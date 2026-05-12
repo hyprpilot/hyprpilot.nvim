@@ -52,7 +52,7 @@ local M = {}
 
 ---@class hyprpilot.render.TurnLayout
 ---@field turn_id string
----@field pilot_header_mark integer             -- extmark on the `## pilot` header row so we can re-render stats
+---@field pilot_header_mark integer             -- extmark on the `## response` header row so we can re-render stats
 ---@field section_anchor_mark integer           -- new sections insert at this row; stays put when prose grows
 ---@field prose_anchor_mark integer             -- agent_text appends at this extmark; moves down as prose grows
 ---@field sections table<string, hyprpilot.render.Section>  -- "tasks" | "thoughts" | "tools" → section
@@ -136,7 +136,7 @@ function M.state(instance_id, bufnr)
     -- ship a single synthetic turn_id for every historical item
     -- (the daemon doesn't re-emit TurnStarted boundaries during
     -- session/load). To stop the whole replay from collapsing under
-    -- one ## pilot / ## captain header pair we partition by
+    -- one ## response / ## request header pair we partition by
     -- exchange: each user_prompt that follows an agent item (or is
     -- the first item) bumps `exchange_index`; the renderer
     -- namespaces the daemon turn_id under that counter so headers
@@ -272,7 +272,7 @@ local function clear_range_hl(state, start_row, end_row)
 end
 
 ---Per-turn section ordering. Sections appear in this order (top to
----bottom) between the `## pilot` header and the prose. The values
+---bottom) between the `## response` header and the prose. The values
 ---double as priority ranks for new-section insertion.
 local SECTION_ORDER = { tasks = 1, thoughts = 2, tools = 3, attachments = 4 }
 
@@ -410,7 +410,7 @@ local function replace_block_body(state, block, body_lines)
   end)
 end
 
----Append a turn header (`## pilot`, `## captain`) and reset the
+---Append a turn header (`## response`, `## request`) and reset the
 ---active text block tracker. Idempotent per (turn_id, role): the
 ---daemon's broadcast order for transcript / turn_started events is
 ---not guaranteed (user_prompt and turn_started can arrive in either
@@ -436,7 +436,11 @@ local function append_turn_header(state, role, turn_id)
   end
   emitted[role] = true
 
-  local label = role == "agent" and "pilot" or "captain"
+  -- Plain `response` / `request` labels (rather than `pilot` /
+  -- `captain`) read as ordinary English nouns to markdown
+  -- treesitter — no domain vocabulary in the heading text means
+  -- nothing trips up renderers that try to anchor / TOC the chat.
+  local label = role == "agent" and "response" or "request"
   local header_row
   local prose_anchor_row
 
@@ -485,7 +489,7 @@ local function append_turn_header(state, role, turn_id)
   end
 end
 
----Compose the `## pilot` header line including stat pills. Pills are
+---Compose the `## response` header line including stat pills. Pills are
 ---driven by the turn's accumulated metadata (started_at / usage /
 ---ended_at). Idempotent — re-rendering with the same inputs produces
 ---the same string.
@@ -503,10 +507,10 @@ local function pilot_header_line(layout)
     stop_reason = layout.stop_reason,
     stop_error = layout.stop_error,
   })
-  return "## pilot" .. stats.format_pills(pills)
+  return "## response" .. stats.format_pills(pills)
 end
 
----Re-paint the `## pilot` header for `layout` with current stat pills
+---Re-paint the `## response` header for `layout` with current stat pills
 ---in place. Cheap; called whenever usage_update or turn_ended changes
 ---the metadata.
 ---@param state hyprpilot.render.State
@@ -602,7 +606,7 @@ local function ensure_section(state, turn_id, kind)
   local header = section_header_line(kind, 0)
 
   -- Add a leading blank only when the row immediately above isn't
-  -- already blank (e.g. first section under `## pilot`). When the
+  -- already blank (e.g. first section under `## response`). When the
   -- row above IS blank (preceding section's trailing blank, or pilot
   -- header's own trailing blank), reuse it as the separator.
   --

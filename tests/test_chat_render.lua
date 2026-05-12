@@ -23,7 +23,7 @@ T["hydrate renders user prompt"] = function()
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line(lines, "ship it"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "## captain"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "## request"), true)
 
   helpers.cleanup_instance(id)
 end
@@ -337,7 +337,7 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   end
 
   local pilot = index_of(function(l)
-    return l == "## pilot"
+    return l == "## response"
   end)
   -- Section headers carry a `[N <unit>]` chip after the first item
   -- lands, so match by prefix rather than exact string.
@@ -423,7 +423,7 @@ T["pilot header repaints with usage / elapsed chips on live updates"] = function
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   local pilot_line
   for _, l in ipairs(lines) do
-    if l:find("^## pilot") then
+    if l:find("^## response") then
       pilot_line = l
       break
     end
@@ -555,7 +555,7 @@ T["replay with shared turn_id across multiple user_prompts splits into separate 
   -- replay the daemon ships a single synthetic turn_id for the whole
   -- replay window (no TurnStarted boundaries fire between historical
   -- turns). Without exchange-based partitioning, every user_prompt
-  -- and every agent response collapsed under one ## captain / ## pilot
+  -- and every agent response collapsed under one ## request / ## response
   -- header pair. The fix bumps an exchange counter on each
   -- user_prompt → agent role transition and namespaces the daemon
   -- turn_id under that counter.
@@ -580,20 +580,21 @@ T["replay with shared turn_id across multiple user_prompts splits into separate 
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-  -- Count `## captain` / `## pilot` (allowing the stat-chip suffix
-  -- the pilot header may carry, so we match on the prefix only).
-  local captain_headers = 0
-  local pilot_headers = 0
+  -- Count `## request` / `## response` (allowing the stat-chip
+  -- suffix the response header may carry, so we match on the
+  -- prefix only).
+  local request_headers = 0
+  local response_headers = 0
   for _, l in ipairs(lines) do
-    if l == "## captain" then
-      captain_headers = captain_headers + 1
-    elseif l:find("^## pilot") then
-      pilot_headers = pilot_headers + 1
+    if l == "## request" then
+      request_headers = request_headers + 1
+    elseif l:find("^## response") then
+      response_headers = response_headers + 1
     end
   end
 
-  MiniTest.expect.equality(captain_headers, 3)
-  MiniTest.expect.equality(pilot_headers, 3)
+  MiniTest.expect.equality(request_headers, 3)
+  MiniTest.expect.equality(response_headers, 3)
 
   -- All three prompt + reply bodies still landed in order.
   MiniTest.expect.equality(helpers.has_line(lines, "first prompt"), true)
@@ -628,16 +629,16 @@ T["replay with distinct turn_ids per turn still produces one header per turn"] =
   })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local captain_headers, pilot_headers = 0, 0
+  local request_headers, response_headers = 0, 0
   for _, l in ipairs(lines) do
-    if l == "## captain" then
-      captain_headers = captain_headers + 1
-    elseif l:find("^## pilot") then
-      pilot_headers = pilot_headers + 1
+    if l == "## request" then
+      request_headers = request_headers + 1
+    elseif l:find("^## response") then
+      response_headers = response_headers + 1
     end
   end
-  MiniTest.expect.equality(captain_headers, 2)
-  MiniTest.expect.equality(pilot_headers, 2)
+  MiniTest.expect.equality(request_headers, 2)
+  MiniTest.expect.equality(response_headers, 2)
 
   helpers.cleanup_instance(id)
 end

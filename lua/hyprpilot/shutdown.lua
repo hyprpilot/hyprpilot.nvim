@@ -8,8 +8,6 @@
 --- What this DOES NOT do (intentional):
 ---   - `nvim_clear_autocmds` on our groups — Neovim wipes autocmds
 ---     as part of process exit.
----   - `buffer.wipe` per chat buffer — Neovim wipes buffers on
----     process exit.
 ---   - `prompts/cancel` per in-flight turn — daemon-side turn
 ---     finishes in background; captain reattaches on next launch.
 ---     (Session cleanup isn't in scope; the daemon owns instance
@@ -68,6 +66,26 @@ function M.shutdown()
   --    sees a sane terminal state.
   step("client.disconnect", function()
     require("hyprpilot.client").disconnect()
+  end)
+
+  -- 4. Wipe every plugin-managed buffer. All of them are named with
+  --    a `hyprpilot://` prefix (header / permission_row / composer
+  --    /<id> / <instance-id> / placeholder), so a single walk-by-
+  --    prefix catches them in one go without each module needing a
+  --    custom teardown call. Neovim wipes buffers on process exit
+  --    regardless, but doing it explicitly clears `:ls!` BEFORE we
+  --    let go and prevents stale-bufnr references from surviving
+  --    across a hot-reload `shutdown()` → `setup()` cycle.
+  step("wipe_buffers", function()
+    local PREFIX = "hyprpilot://"
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(bufnr) then
+        local name = vim.api.nvim_buf_get_name(bufnr)
+        if name:sub(1, #PREFIX) == PREFIX then
+          pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+        end
+      end
+    end
   end)
 end
 
