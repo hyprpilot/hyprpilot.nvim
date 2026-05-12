@@ -30,11 +30,23 @@ M._winid = nil
 M._bufnr = nil
 
 ---Get-or-create the shared header buffer (one buffer reused across
----instance switches; content is just a single-line string).
+---instance switches; content is just a single-line string). Adopts
+---an existing buffer with the same name when `M._bufnr` got cleared
+---but Neovim still holds the buffer alive (post-`shutdown()`
+---hot-reload, lazy plugin re-source, etc.) — otherwise
+---`nvim_buf_set_name` blows up with `E95: Buffer with this name
+---already exists`.
 ---@return integer
 local function ensure_buffer()
   if M._bufnr ~= nil and vim.api.nvim_buf_is_valid(M._bufnr) then
     return M._bufnr
+  end
+
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == BUFFER_NAME then
+      M._bufnr = bufnr
+      return bufnr
+    end
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)
