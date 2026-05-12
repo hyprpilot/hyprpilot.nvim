@@ -88,8 +88,20 @@ function M.placeholder()
     return _placeholder_bufnr
   end
 
+  -- Adopt an existing placeholder buffer when the module-level
+  -- reference was cleared but Neovim still holds the buffer alive
+  -- (post-`shutdown()` hot-reload, etc.) — otherwise the
+  -- `apply_options` → `nvim_buf_set_name` call raises E95.
+  local name = "hyprpilot://placeholder"
+  for _, candidate in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(candidate) and vim.api.nvim_buf_get_name(candidate) == name then
+      _placeholder_bufnr = candidate
+      return candidate
+    end
+  end
+
   local bufnr = vim.api.nvim_create_buf(false, true)
-  apply_options(bufnr, "hyprpilot://placeholder")
+  apply_options(bufnr, name)
 
   M.with_buffer(bufnr, function()
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {

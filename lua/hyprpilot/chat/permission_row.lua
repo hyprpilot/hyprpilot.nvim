@@ -58,11 +58,22 @@ function M.is_visible()
   return true
 end
 
----Get-or-create the shared row buffer.
+---Get-or-create the shared row buffer. Adopts an existing buffer
+---with the same name when `M._bufnr` was reset but Neovim still
+---holds the buffer alive (post-`shutdown()` hot-reload, etc.) —
+---otherwise `nvim_buf_set_name` raises `E95: Buffer with this name
+---already exists`.
 ---@return integer
 local function ensure_buffer()
   if M._bufnr ~= nil and vim.api.nvim_buf_is_valid(M._bufnr) then
     return M._bufnr
+  end
+
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_get_name(bufnr) == BUFFER_NAME then
+      M._bufnr = bufnr
+      return bufnr
+    end
   end
 
   local bufnr = vim.api.nvim_create_buf(false, true)

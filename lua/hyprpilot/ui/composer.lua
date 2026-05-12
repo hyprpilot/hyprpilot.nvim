@@ -152,9 +152,21 @@ local function ensure_buffer(instance_id)
     return existing
   end
 
+  -- Adopt an existing buffer with the same name when the in-module
+  -- `buffers[instance_id]` reference got cleared but Neovim still
+  -- holds the buffer alive (post-`shutdown()` hot-reload, etc.) —
+  -- otherwise `nvim_buf_set_name` raises E95.
+  local name = "hyprpilot://composer/" .. instance_id
+  for _, candidate in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_valid(candidate) and vim.api.nvim_buf_get_name(candidate) == name then
+      buffers[instance_id] = candidate
+      return candidate
+    end
+  end
+
   local bufnr = vim.api.nvim_create_buf(false, true)
 
-  vim.api.nvim_buf_set_name(bufnr, "hyprpilot://composer/" .. instance_id)
+  vim.api.nvim_buf_set_name(bufnr, name)
   vim.bo[bufnr].filetype = "hyprpilot_input"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
