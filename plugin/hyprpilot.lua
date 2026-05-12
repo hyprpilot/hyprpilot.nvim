@@ -10,6 +10,7 @@ vim.treesitter.language.register("markdown", "hyprpilot")
 vim.treesitter.language.register("markdown", "hyprpilot_input")
 vim.treesitter.language.register("markdown", "hyprpilot_permission_row")
 vim.treesitter.language.register("markdown", "hyprpilot_header")
+vim.treesitter.language.register("markdown", "hyprpilot_queue_strip")
 
 require("hyprpilot.highlights").setup()
 

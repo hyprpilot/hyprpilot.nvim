@@ -75,6 +75,10 @@ M.LINKS = {
   -- Permission row (pinned single-line bar between chat and composer
   -- while at least one permission is pending)
   HyprpilotPermissionRow = "WarningMsg",
+
+  -- Queue strip (pinned bar between permission row and composer
+  -- while at least one prompt is queued for the active instance).
+  HyprpilotQueueStripHeader = "Comment",
 }
 
 ---Apply (or re-apply) every default highlight link. Idempotent —

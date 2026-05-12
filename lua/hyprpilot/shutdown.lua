@@ -52,6 +52,14 @@ function M.shutdown()
     require("hyprpilot.chat.window").hide()
   end)
 
+  -- Queue-strip listener teardown. The subscriber otherwise keeps
+  -- a closure on `composer_queue` alive across hot-reload cycles,
+  -- which fires `open_window()` against a stale `chat.window`
+  -- module reference.
+  step("queue_strip._reset", function()
+    require("hyprpilot.chat.queue_strip")._reset()
+  end)
+
   -- 2. Drop the daemon event subscription before the channel goes
   --    away. Otherwise the `events/changed` callback can fire
   --    against a half-torn-down state.

@@ -573,10 +573,21 @@ end
 
 ---Submit the composer's contents (or `text` when provided) to the
 ---active instance. Clears the composer buffer on success.
+---
+---When the agent is non-idle (`status.activity.kind ~= "idle"`),
+---the submit is routed to the per-instance composer queue
+---(`composer_queue.enqueue`) instead of going straight to the
+---daemon. The queue strip surfaces queued prompts above the
+---composer; captain drains the head explicitly via the strip's
+---`<C-CR>` (default) keymap. This mirrors the desktop overlay's
+---`QueueStrip.vue` behaviour — captain stays in control of when
+---the next prompt lands. Pass `opts.bypass_queue = true` to skip
+---the queue check (the queue strip's send-now path uses this).
 ---@param text string?
----@param opts { instance_id?: string }?
+---@param opts { instance_id?: string, attachments?: table[], bypass_queue?: boolean }?
 function M.submit(text, opts)
-  local instance_id = (opts or {}).instance_id or window.active_instance()
+  opts = opts or {}
+  local instance_id = opts.instance_id or window.active_instance()
 
   log.debug("composer.submit: invoked instance_id=%s text_passed=%s", tostring(instance_id), tostring(text ~= nil))
 
@@ -606,11 +617,42 @@ function M.submit(text, opts)
     return
   end
 
-  local payload = { instanceId = instance_id, text = text }
+  -- Snapshot attachments at submit / enqueue time so a downstream
+  -- composer edit doesn't change what a queued turn eventually
+  -- sends (matches desktop overlay's pop-then-edit semantics).
+  local attachments_snapshot = opts.attachments
+  if attachments_snapshot == nil then
+    local staged = attachments_by_instance[instance_id]
+    if staged ~= nil and #staged > 0 then
+      attachments_snapshot = vim.deepcopy(staged)
+    end
+  end
 
-  local staged = attachments_by_instance[instance_id]
-  if staged ~= nil and #staged > 0 then
-    payload.attachments = vim.deepcopy(staged)
+  -- Queue route: when the agent is busy (anything but idle), park
+  -- the prompt instead of firing it. The strip subscribes to
+  -- queue mutations and pops in automatically.
+  if not opts.bypass_queue then
+    local activity = require("hyprpilot.status").get().activity
+    if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
+      require("hyprpilot.composer_queue").enqueue(instance_id, {
+        text = text,
+        attachments = attachments_snapshot,
+      })
+      -- Clear the composer buffer + staged attachments — the queue
+      -- now owns the snapshot. Same UX as a successful send.
+      if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
+        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+      end
+      attachments_by_instance[instance_id] = nil
+      paint_indicator(instance_id)
+      log.debug("composer.submit: queued (activity=%s)", tostring(activity.kind))
+      return
+    end
+  end
+
+  local payload = { instanceId = instance_id, text = text }
+  if attachments_snapshot ~= nil and #attachments_snapshot > 0 then
+    payload.attachments = attachments_snapshot
   end
 
   client.request("prompts/send", payload, nil, function(err, _result)
