@@ -367,18 +367,23 @@ set("n", "<leader>as", function() instances.spawn({ name = "main" }) end, { desc
 set("n", "<leader>ar", function() instances.restart() end,              { desc = "hyprpilot: restart current" })
 set("n", "<leader>ax", function() instances.shutdown() end,             { desc = "hyprpilot: shutdown current" })
 
--- vim.ui.select-based picker — no extra dependency required.
-set("n", "<leader>ai", function()
-  instances.list(function(err, list)
-    if err ~= nil or list == nil then return end
-    vim.ui.select(list, {
-      prompt = "hyprpilot instance",
-      format_item = function(i) return i.name or i.id end,
-    }, function(choice)
-      if choice ~= nil then hp.switch(choice.id) end
-    end)
-  end)
-end, { desc = "hyprpilot: pick instance" })
+-- Palettes — `vim.ui.select`-driven pickers under
+-- `lua/hyprpilot/palettes/`. Each one fetches its options off the
+-- daemon (instance meta or a list RPC), shows a picker, and commits
+-- via the matching setter. Every `vim.ui.select` call passes a
+-- `kind = "hyprpilot.<axis>"` field so dressing.nvim / telescope /
+-- snacks / fzf-lua can route to a custom selector per axis if you
+-- want previews or a richer view.
+set("n", "<leader>ai", function() require("hyprpilot.palettes.instances").open() end,
+  { desc = "hyprpilot: pick instance" })
+set("n", "<leader>am", function() require("hyprpilot.palettes.modes").open() end,
+  { desc = "hyprpilot: pick mode" })
+set("n", "<leader>aM", function() require("hyprpilot.palettes.models").open() end,
+  { desc = "hyprpilot: pick model" })
+set("n", "<leader>ae", function() require("hyprpilot.palettes.effort").open() end,
+  { desc = "hyprpilot: pick effort" })
+set("n", "<leader>aS", function() require("hyprpilot.palettes.sessions").open() end,
+  { desc = "hyprpilot: pick session" })
 
 -- Attach the current buffer to the active instance's next prompt.
 local composer = require("hyprpilot.ui.composer")
@@ -401,46 +406,19 @@ end, { desc = "hyprpilot: detach attachment" })
 set("n", "<leader>ap", function() composer.attach_clipboard_image() end,
   { desc = "hyprpilot: attach clipboard image" })
 
--- Mode picker — drive `instances.set_mode` from the active instance's
--- `available_modes` (read off `instances.meta`, the MetaSnapshot RPC).
-set("n", "<leader>am", function()
-  local id = hp.active_instance()
-  if id == nil then return end
-  instances.meta(id, function(err, meta)
-    if err ~= nil or meta == nil then return end
-    local modes = meta.available_modes or {}
-    if #modes == 0 then return end
-    vim.ui.select(modes, {
-      prompt = "hyprpilot mode",
-      format_item = function(m) return m.name or m.id end,
-    }, function(choice)
-      if choice ~= nil then instances.set_mode(id, choice.id) end
-    end)
-  end)
-end, { desc = "hyprpilot: pick mode" })
-
--- Model picker — same shape, swaps to `available_models` + `set_model`.
-set("n", "<leader>aM", function()
-  local id = hp.active_instance()
-  if id == nil then return end
-  instances.meta(id, function(err, meta)
-    if err ~= nil or meta == nil then return end
-    local models = meta.available_models or {}
-    if #models == 0 then return end
-    vim.ui.select(models, {
-      prompt = "hyprpilot model",
-      format_item = function(m) return m.name or m.id end,
-    }, function(choice)
-      if choice ~= nil then instances.set_model(id, choice.id) end
-    end)
-  end)
-end, { desc = "hyprpilot: pick model" })
-
 -- Pull older transcript items (deeper history) on demand.
 set("n", "<leader>au", function()
   require("hyprpilot.chat.window").load_older()
 end, { desc = "hyprpilot: load older history" })
 ```
+
+> **Sessions palette caveat.** The daemon doesn't yet expose
+> `sessions/list` and `sessions/load` on the public socket
+> dispatcher (they live as Tauri-only commands). The palette ships
+> with a graceful `-32601 method_not_found` fallback (warns + no-op,
+> no crash) so you can wire the keymap today; it lights up
+> automatically once the daemon-side handoff documented in
+> `docs/plans/2026-05-12-sessions-rpc-handoff.md` lands.
 
 ## Limitations
 
