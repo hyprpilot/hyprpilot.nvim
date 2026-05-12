@@ -67,7 +67,17 @@ function M.register(state)
   end
 end
 
----Wipe a per-instance buffer + drop the registry entry.
+---Wipe a per-instance buffer + drop the registry entry. Cascades
+---through every per-instance state store the plugin maintains so a
+---`hp.close(id)` after `instances.shutdown(id)` actually removes
+---the instance's footprint:
+---  - chat buffer (`hyprpilot://<id>`) — wiped via `buffer.wipe`.
+---  - composer buffer (`hyprpilot://composer/<id>`) + staged
+---    attachments — `composer.wipe(id)`.
+---  - render state (`render._states[id]`) — `render.forget`.
+---  - winbar meta (`winbar._meta[id]`) — `winbar.forget`.
+---  - permission row queue entries belonging to this instance —
+---    `permission_row.drop_for_instance(id)`.
 ---@param instance_id string?
 function M.close(instance_id)
   local id = instance_id or M._last_active_id
@@ -87,6 +97,8 @@ function M.close(instance_id)
 
   require("hyprpilot.chat.render").forget(id)
   require("hyprpilot.chat.winbar").forget(id)
+  require("hyprpilot.ui.composer").wipe(id)
+  require("hyprpilot.chat.permission_row").drop_for_instance(id)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)

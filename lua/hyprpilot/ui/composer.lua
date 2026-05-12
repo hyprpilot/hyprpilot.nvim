@@ -657,4 +657,15 @@ function M.wipe(instance_id)
   attachments_by_instance[instance_id] = nil
 end
 
+---Test-only seam: register a bufnr under the composer's internal
+---per-instance map so `wipe(id)` can find it. Mirrors what
+---`ensure_buffer` does at the end of its mint path; lets unit tests
+---drive `composer.wipe(id)` without standing up the real split
+---layout that `open()` needs.
+---@param instance_id string
+---@param bufnr integer
+function M._register_buffer_for_tests(instance_id, bufnr)
+  buffers[instance_id] = bufnr
+end
+
 return M
