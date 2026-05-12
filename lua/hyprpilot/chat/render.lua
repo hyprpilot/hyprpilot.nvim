@@ -132,6 +132,22 @@ function M.state(instance_id, bufnr)
     pending_fold_rows = {},
     has_more = false,
     snapshot_limit = 100,
+    -- Conversational-exchange tracking. Replay session snapshots
+    -- ship a single synthetic turn_id for every historical item
+    -- (the daemon doesn't re-emit TurnStarted boundaries during
+    -- session/load). To stop the whole replay from collapsing under
+    -- one ## pilot / ## captain header pair we partition by
+    -- exchange: each user_prompt that follows an agent item (or is
+    -- the first item) bumps `exchange_index`; the renderer
+    -- namespaces the daemon turn_id under that counter so headers
+    -- and turn layouts get a fresh bucket per exchange.
+    exchange_index = 0,
+    last_render_role = nil, ---@type "user" | "agent" | nil
+    -- Map daemon turn_id → effective (namespaced) turn_id so live
+    -- lifecycle events (turn_ended / handle_usage_update arriving
+    -- after replay finishes) can find the layout we created under
+    -- the namespaced key.
+    turn_id_map = {},
   }
 
   M._states[instance_id] = state
@@ -1273,17 +1289,62 @@ function M.render_item(state, turn_id, item)
 
   local kind = item.kind
   local is_user_kind = kind == "user_prompt" or kind == "user_text"
+  local role = is_user_kind and "user" or "agent"
 
-  -- Lazy headers — `append_turn_header` is idempotent per (turn_id,
-  -- role), so the daemon's broadcast order between user_prompt and
-  -- turn_started doesn't matter. Whichever side arrives first lands
-  -- its header; the other side's header lands on its first item.
-  if turn_id ~= nil and not is_user_kind then
-    append_turn_header(state, "agent", turn_id)
+  -- Conversational-exchange boundary detection. A user_prompt that
+  -- follows an agent item (or is the first item) starts a fresh
+  -- exchange. Bumping the counter here ensures the per-exchange
+  -- namespace below changes, which makes `headers_emitted` /
+  -- `turn_layouts` allocate fresh buckets — even when the daemon
+  -- ships the same synthetic turn_id for every replayed item.
+  if is_user_kind and state.last_render_role ~= "user" then
+    state.exchange_index = (state.exchange_index or 0) + 1
+  end
+  state.last_render_role = role
+
+  -- Namespace the daemon turn_id under the current exchange so each
+  -- exchange gets its own header + layout. `vim.NIL` (JSON null)
+  -- collapses to nil so the downstream `nil` guards behave.
+  local daemon_turn_id = turn_id
+  if daemon_turn_id == vim.NIL then
+    daemon_turn_id = nil
+  end
+  local effective_turn_id = nil
+  if daemon_turn_id ~= nil then
+    effective_turn_id = string.format("%d|%s", state.exchange_index or 0, tostring(daemon_turn_id))
+    -- Remember the translation so live lifecycle events
+    -- (turn_ended, handle_usage_update post-replay) can resolve the
+    -- daemon's turn_id back to the namespaced key we used for the
+    -- layout. The most recent exchange wins when the daemon reuses
+    -- a turn_id (it shouldn't outside replay, but the map is
+    -- best-effort either way).
+    state.turn_id_map = state.turn_id_map or {}
+    state.turn_id_map[tostring(daemon_turn_id)] = effective_turn_id
+    -- `turn_started` arrives before the first transcript item, so
+    -- `_pending_turn_started` was stashed by daemon turn_id.
+    -- Migrate it under the effective key so `append_turn_header`'s
+    -- pending-drain (it reads by `state._pending_turn_started[turn_id]`)
+    -- finds the value at the namespaced key.
+    if state._pending_turn_started ~= nil then
+      local pending = state._pending_turn_started[daemon_turn_id]
+      if pending ~= nil and state._pending_turn_started[effective_turn_id] == nil then
+        state._pending_turn_started[effective_turn_id] = pending
+        state._pending_turn_started[daemon_turn_id] = nil
+      end
+    end
+  end
+
+  -- Lazy headers — `append_turn_header` is idempotent per
+  -- (effective_turn_id, role), so the daemon's broadcast order
+  -- between user_prompt and turn_started doesn't matter. Whichever
+  -- side arrives first lands its header; the other side's header
+  -- lands on its first item.
+  if effective_turn_id ~= nil and not is_user_kind then
+    append_turn_header(state, "agent", effective_turn_id)
   end
 
   if is_user_kind then
-    append_turn_header(state, "user", turn_id)
+    append_turn_header(state, "user", effective_turn_id)
 
     chat_buffer.with_buffer(state.bufnr, function()
       append_lines(state, vim.split(item.text or "", "\n", { plain = true }))
@@ -1338,6 +1399,9 @@ function M.hydrate(state, snapshot)
   state.headers_emitted = {}
   state.turn_layouts = {}
   state.pending_fold_rows = {}
+  state.exchange_index = 0
+  state.last_render_role = nil
+  state.turn_id_map = {}
 
   require("hyprpilot.chat.permission_row").reset()
 
@@ -1421,13 +1485,20 @@ function M.handle_turn_started(event)
   -- can render its `[<elapsed>]` chip. The layout itself is created
   -- lazily by `append_turn_header` on the first agent-side item; if
   -- it doesn't exist yet, we stash on a pending table keyed by turn
-  -- id and apply when the layout shows up.
+  -- id and apply when the layout shows up. `render_item` migrates
+  -- the pending entry from `daemon_turn_id` to the namespaced
+  -- effective key on its first transcript pass, so the stash lands
+  -- correctly even though we don't know the exchange index yet.
   local started_at = event.startedAt or event.started_at
   if type(started_at) == "number" and event.turnId ~= nil then
     state._pending_turn_started = state._pending_turn_started or {}
     state._pending_turn_started[event.turnId] = started_at
 
-    local layout = state.turn_layouts[event.turnId]
+    -- If render_item has already created the effective key, look up
+    -- via the daemon→effective map; otherwise the lookup falls
+    -- through to nil and the pending stash carries the value.
+    local effective = (state.turn_id_map or {})[tostring(event.turnId)]
+    local layout = effective ~= nil and state.turn_layouts[effective] or state.turn_layouts[event.turnId]
     if layout ~= nil then
       layout.started_at_ms = started_at
       repaint_pilot_header(state, layout)
@@ -1479,7 +1550,13 @@ function M.handle_turn_ended(event)
 
   state.active_text_block = nil
 
-  if state.current_turn == event.turnId then
+  -- Translate the daemon turn_id to the plugin's effective
+  -- (exchange-namespaced) key. During replay this is what
+  -- `state.current_turn` actually holds; live flow's `turn_id_map`
+  -- also routes here for the same reason.
+  local effective_turn_id = (state.turn_id_map or {})[tostring(event.turnId)] or event.turnId
+
+  if state.current_turn == effective_turn_id then
     state.current_turn = nil
   end
 
@@ -1490,7 +1567,7 @@ function M.handle_turn_ended(event)
   -- stat pills (same pill format, same place — captain reads turn
   -- outcome at a glance from the header instead of scrolling to the
   -- end of the prose).
-  local layout = state.turn_layouts[event.turnId]
+  local layout = state.turn_layouts[effective_turn_id]
   if layout ~= nil then
     local ended_at = event.endedAt or event.ended_at or (os.time() * 1000)
     layout.ended_at_ms = ended_at
@@ -1522,9 +1599,10 @@ function M.handle_turn_ended(event)
 
   -- Legacy fallback for turns that never got a layout (captain-only or
   -- spontaneous items): fold any orphan plan / thought blocks the way
-  -- we used to.
+  -- we used to. Match against the effective key (block.turn_id is
+  -- written from state.current_turn which already holds it).
   for _, block in pairs(state.blocks) do
-    if block.turn_id == event.turnId and (block.kind == "plan" or block.kind == "agent_thought") then
+    if block.turn_id == effective_turn_id and (block.kind == "plan" or block.kind == "agent_thought") then
       local _, tail = block_range(state, block)
       local head, _ = block_range(state, block)
       if layout == nil or layout.sections[block.kind == "plan" and "tasks" or "thoughts"] == nil then
