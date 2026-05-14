@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/v1.0.0...v1.0.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **ci:** chain publish-pypi via release-please outputs (GITHUB_TOKEN anti-loop) ([#64](https://github.com/hyprpilot/hyprpilot.nvim/issues/64)) ([a49dda4](https://github.com/hyprpilot/hyprpilot.nvim/commit/a49dda45fee88c22984c88f245e24bde51d5eaa9))
+
 ## 1.0.0 (2026-05-14)
 
 
