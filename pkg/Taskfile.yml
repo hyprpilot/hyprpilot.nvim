@@ -28,6 +28,12 @@ tasks:
       - uv run pytest
 
   build:
-    desc: Build wheel and sdist.
+    desc: Build wheel and sdist into `pkg/dist/`.
     cmds:
-      - uv build
+      # `--out-dir dist` (relative to cwd, i.e. `pkg/dist`) overrides
+      # uv's default of writing workspace-member artifacts into the
+      # workspace ROOT's `dist/`. Local `task build` then drops
+      # output inside `pkg/`, and the `publish-pypi.yml` workflow's
+      # `upload-artifact path: pkg/dist/` finds them where it
+      # expects.
+      - uv build --out-dir dist
