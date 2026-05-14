@@ -17,12 +17,17 @@
 #   `fix!: rewire Z`    → major
 #   plain commit body containing `BREAKING CHANGE: <text>` → major
 #
-# Tag shape: ONE shared tag covers both packages — `vX.Y.Z`.
-# `release-please-config.json` sets `include-component-in-tag: false`
-# and uses the `linked-versions` plugin so `hyprpilot.nvim` and
-# `hyprpilot-nvim-mcp` always share the same version. The release PR
-# is also combined (`separate-pull-requests: false`) so a single PR
-# bumps both packages at once.
+# Tag shape: ONE tag, ONE version covers both surfaces — `vX.Y.Z`.
+# release-please tracks a SINGLE package (the repo root) and uses
+# `extra-files` to bump `pkg/pyproject.toml`'s version field at
+# release time, so the Python package's version is mechanically
+# locked to the Lua plugin's. The previous multi-package +
+# linked-versions setup let the Python and Lua versions drift
+# (linked-versions only normalizes bump TYPES across components,
+# not absolute version numbers — see PR #64 for the diagnosis).
+# Lua plugin "version" lives only as the git tag (lazy.nvim /
+# packer install from tags directly); the Python package gets the
+# matching version pushed to PyPI via `publish-pypi.yml`.
 
 name: Release Please
 
@@ -38,17 +43,15 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    # Surface release-please's outputs so the downstream PyPI publish
-    # job can gate on `release_created` and read `paths_released` to
-    # know whether the `pkg/` Python package was part of this release.
-    # Chaining via `needs:` here is the standard workaround for the
-    # GitHub anti-loop rule that swallows workflows triggered by
-    # `secrets.GITHUB_TOKEN` (the tag push from release-please runs as
-    # `github-actions[bot]` and won't fire `push: tags` triggers).
+    # Surface release-please's `release_created` output so the
+    # downstream PyPI publish job can gate on it. Chaining via
+    # `needs:` here is the standard workaround for the GitHub
+    # anti-loop rule that swallows workflows triggered by
+    # `secrets.GITHUB_TOKEN` (the tag push from release-please runs
+    # as `github-actions[bot]` and won't fire `push: tags` triggers).
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
-      paths_released: ${{ steps.release.outputs.paths_released }}
     steps:
       - uses: actions/checkout@v6
 
@@ -64,14 +67,11 @@ jobs:
   publish-pypi:
     name: Publish hyprpilot-nvim-mcp to PyPI
     needs: release-please
-    # `paths_released` is a JSON array of the package paths
-    # release-please cut for this run (e.g. `["pkg"]` when the Python
-    # package was part of the release, `["."]` when only the Lua
-    # plugin was). Skip when `pkg` isn't in the list — bumping the
-    # Lua plugin alone shouldn't republish the Python package.
-    if: |
-      needs.release-please.outputs.release_created == 'true'
-      && contains(fromJSON(needs.release-please.outputs.paths_released || '[]'), 'pkg')
+    # Single-package config means every release is also a Python
+    # release (the extra-files updater keeps `pkg/pyproject.toml`'s
+    # version locked to the tag). So `release_created` is the only
+    # gate we need.
+    if: needs.release-please.outputs.release_created == 'true'
     permissions:
       contents: read
       # Required for OIDC trusted publishing — `id-token: write` must
