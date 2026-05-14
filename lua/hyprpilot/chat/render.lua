@@ -1300,6 +1300,11 @@ local function render_permission_request(state, record)
     tool_kind = record.toolKind,
     options = type(record.options) == "table" and record.options or {},
     formatted = record.formatted,
+    -- The diff-preview module reads `raw_input.path` /
+    -- `.file_path` / `.old_string` / `.new_string` / `.content` /
+    -- `.edits[]` off the entry — keep the wire shape verbatim so
+    -- a per-agent normalisation lives in one place (diff_preview).
+    raw_input = record.rawInput,
   })
 end
 
@@ -1498,6 +1503,11 @@ function M.handle_permission_request(event)
       tool = event.tool,
       toolKind = event.kind,
       args = event.args,
+      -- The agent's structured input (path / old_string /
+      -- new_string / content / edits[] for the edit family). Carried
+      -- through so the diff-preview module can extract it from the
+      -- row entry without a second daemon round-trip.
+      rawInput = event.rawInput,
       options = event.options,
       formatted = event.formatted,
     })

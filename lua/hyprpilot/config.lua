@@ -13,6 +13,28 @@ local M = {}
 ---@field palettes? hyprpilot.ConfigPalettes
 ---@field completion? hyprpilot.ConfigCompletion
 ---@field notification? hyprpilot.ConfigNotification
+---@field diff_preview? hyprpilot.ConfigDiffPreview
+
+---@class hyprpilot.ConfigDiffPreview
+---@field keymaps? hyprpilot.ConfigDiffPreviewKeymaps
+---@field highlights? hyprpilot.ConfigDiffPreviewHighlights
+---@field reject_prompt? boolean         -- prompt for an optional rejection reason via `vim.ui.input` (default `true`)
+---@field send_reject_feedback? boolean  -- when `true`, captain's reject reason rides the wire as `permissions/respond.feedback`. Default `false` until the daemon-side PR lands.
+
+--- Buffer-local keymaps installed on the diff-preview target buffer
+--- while a preview is open. Same `string | string[] | false` shape
+--- captains see on every other keymap surface.
+---@class hyprpilot.ConfigDiffPreviewKeymaps
+---@field accept? string | string[] | false     -- resolve as allow + close preview
+---@field reject? string | string[] | false     -- resolve as reject (optionally prompts for feedback) + close
+---@field close? string | string[] | false      -- close preview without resolving (permission row stays)
+---@field next_hunk? string | string[] | false  -- cursor jumps to next hunk anchor
+---@field prev_hunk? string | string[] | false  -- cursor jumps to previous hunk anchor
+
+---@class hyprpilot.ConfigDiffPreviewHighlights
+---@field add? string     -- hl group for added lines (default `DiffAdd`)
+---@field delete? string  -- hl group for removed lines (default `DiffDelete`)
+---@field change? string  -- hl group for the row-level change marker (default `DiffChange`)
 
 ---@class hyprpilot.ConfigNotification
 ---@field bell? hyprpilot.ConfigNotificationBell
@@ -63,6 +85,7 @@ local M = {}
 ---@field submit? string | string[] | false      -- commit currently-focused option
 ---@field cycle_next? string | string[] | false  -- focus next option
 ---@field cycle_prev? string | string[] | false  -- focus previous option
+---@field show_diff? string | string[] | false   -- toggle inline diff preview when the head entry is an edit-shaped tool
 
 ---@class hyprpilot.ConfigChat
 ---@field keymaps? hyprpilot.ConfigChatKeymaps
@@ -150,6 +173,31 @@ local defaults = {
       submit = "<CR>",
       cycle_next = "<Tab>",
       cycle_prev = "<S-Tab>",
+      -- Opens / closes the inline diff preview for the head entry
+      -- when it's an edit-shaped tool. `<C-o>` is normally the
+      -- jumplist-back key, but the row buffer is read-only and the
+      -- jumplist is meaningless inside it — the captain's
+      -- expectation is "open this diff," which the keymap matches.
+      show_diff = "<C-o>",
+    },
+  },
+  diff_preview = {
+    reject_prompt = true,
+    -- Stays `false` until the daemon's `permissions/respond` adds a
+    -- `feedback` field (it has `deny_unknown_fields`, so flipping
+    -- this on prematurely makes every reject return `-32602`).
+    send_reject_feedback = false,
+    keymaps = {
+      accept = "<C-g>",
+      reject = "<C-r>",
+      close = "<Esc>",
+      next_hunk = "]h",
+      prev_hunk = "[h",
+    },
+    highlights = {
+      add = "DiffAdd",
+      delete = "DiffDelete",
+      change = "DiffChange",
     },
   },
   palettes = {

@@ -32,6 +32,7 @@ local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission_row")
 ---@field options table[]
 ---@field formatted? table
 ---@field focused_idx integer
+---@field raw_input? table  -- agent's structured tool input (path / old_string / new_string / content / edits[] for the edit family). Diff preview reads from here.
 
 ---@type hyprpilot.chat.permission_row.Entry[]
 M._queue = {}
@@ -187,7 +188,20 @@ local function compose()
   table.insert(lines, "")
 
   local extra = #M._queue > 1 and string.format(" (+%d more)", #M._queue - 1) or ""
-  table.insert(lines, string.format(" permission · %s%s", entry.tool or "tool", extra))
+  -- `[diff]` affordance hint for edit-shaped tools so the captain
+  -- knows the inline diff preview is available before pressing the
+  -- keymap. Tool kind discriminator + raw_input path-presence check
+  -- matches what `diff_preview.is_previewable` does.
+  local diff_hint = ""
+  if entry.tool_kind == "edit" and type(entry.raw_input) == "table" then
+    local raw = entry.raw_input
+    if raw.notebook_path == nil and (type(raw.path) == "string" or type(raw.file_path) == "string") then
+      local show_diff = ((config.options.permission_row or {}).keymaps or {}).show_diff
+      local key_label = type(show_diff) == "string" and show_diff or "<C-o>"
+      diff_hint = string.format(" [diff %s]", key_label)
+    end
+  end
+  table.insert(lines, string.format(" permission · %s%s%s", entry.tool or "tool", extra, diff_hint))
   local header_row = #lines - 1
 
   -- Body lines from the daemon's `formatted` payload (diff /
@@ -368,6 +382,19 @@ local function install_keymaps(bufnr)
   apply_action(bufnr, keymaps.cycle_prev, function()
     cycle_focus(-1)
   end, "cycle permission options (back)")
+
+  apply_action(bufnr, keymaps.show_diff, function()
+    local entry = head()
+    if entry == nil then
+      return
+    end
+    local diff_preview = require("hyprpilot.ui.diff_preview")
+    if not diff_preview.is_previewable(entry) then
+      log.debug("permission_row.show_diff: head entry isn't edit-previewable (tool_kind=%s)", tostring(entry.tool_kind))
+      return
+    end
+    diff_preview.toggle(entry)
+  end, "toggle inline diff preview for the head edit request")
 end
 
 -- Test-only affordance: open_window is the public path that
@@ -377,6 +404,21 @@ end
 ---@param bufnr integer
 function M._install_keymaps_for_tests(bufnr)
   install_keymaps(bufnr)
+end
+
+---Look up the live row entry by request_id. Used by the diff
+---preview module (which holds onto a request_id, not the entry
+---table) to refresh against the row's authoritative state at
+---accept / reject time.
+---@param request_id string
+---@return hyprpilot.chat.permission_row.Entry?
+function M._entry_by_request_id(request_id)
+  for _, entry in ipairs(M._queue) do
+    if entry.request_id == request_id then
+      return entry
+    end
+  end
+  return nil
 end
 
 ---Open the row window below the chat split, sized to fit content.
@@ -447,6 +489,7 @@ function M.enqueue(instance_id, record)
     options = options,
     formatted = record.formatted,
     focused_idx = default_focused_idx(options),
+    raw_input = record.raw_input,
   })
 
   if M.is_visible() then

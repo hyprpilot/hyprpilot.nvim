@@ -124,6 +124,14 @@ local function dispatch(raw)
     return
   end
 
+  -- ACP wire variants put the raw tool input under different keys
+  -- depending on the agent's normalisation (`rawInput` for claude-acp;
+  -- some adapters use `raw_input`). Normalize here so downstream
+  -- consumers (render, permission_row, diff_preview) see one shape.
+  if event.rawInput == nil and event.raw_input ~= nil then
+    event.rawInput = event.raw_input
+  end
+
   if event.event == "transcript" then
     render.handle_transcript(event)
     activity_for_transcript(event.item)
@@ -160,6 +168,11 @@ local function dispatch(raw)
       tool = event.tool,
       tool_kind = event.toolKind,
       options = event.options,
+      -- `raw_input` is the agent's structured tool input (path /
+      -- old_string / new_string / content / edits[] for the edit
+      -- family). Carries through to the row + diff-preview surfaces
+      -- without a second daemon round-trip.
+      raw_input = event.rawInput,
     })
   elseif event.event == "permission_resolved" then
     render.handle_permission_resolved(event)
