@@ -1,6 +1,6 @@
 [project]
 name = "hyprpilot-nvim-mcp"
-version = "1.1.1"
+version = "1.1.2"
 description = "MCP server bridging Neovim editor state into the hyprpilot agent's tool surface."
 readme = "README.md"
 requires-python = ">=3.14"
