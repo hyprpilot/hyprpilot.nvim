@@ -12,11 +12,11 @@ vim.treesitter.language.register("markdown", "hyprpilot_permission_row")
 vim.treesitter.language.register("markdown", "hyprpilot_header")
 vim.treesitter.language.register("markdown", "hyprpilot_queue_strip")
 
-require("hyprpilot.highlights").setup()
+require("hyprpilot.ui.highlights").setup()
 
 vim.api.nvim_create_autocmd("ColorScheme", {
   group = vim.api.nvim_create_augroup("HyprpilotHighlights", { clear = true }),
   callback = function()
-    require("hyprpilot.highlights").setup()
+    require("hyprpilot.ui.highlights").setup()
   end,
 })

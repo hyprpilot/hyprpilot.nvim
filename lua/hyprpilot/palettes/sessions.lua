@@ -7,7 +7,7 @@
 ---   { sessions: [{ sessionId, cwd, additionalDirectories? }], nextCursor? }
 
 local client = require("hyprpilot.client")
-local instances = require("hyprpilot.instances")
+local instances = require("hyprpilot.rpc.instances")
 local log = require("hyprpilot.log")
 local pickers = require("hyprpilot.palettes.pickers")
 

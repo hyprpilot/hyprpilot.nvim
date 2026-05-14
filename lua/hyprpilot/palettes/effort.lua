@@ -4,7 +4,7 @@
 --- rather than a flat list, so we feed `_meta_palette` a
 --- `resolve_list` hook that walks the categories array.
 
-local instances = require("hyprpilot.instances")
+local instances = require("hyprpilot.rpc.instances")
 local meta_palette = require("hyprpilot.palettes._meta-palette")
 
 local M = {}

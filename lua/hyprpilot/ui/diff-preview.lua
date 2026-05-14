@@ -18,7 +18,7 @@
 
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
-local permissions = require("hyprpilot.permissions")
+local permissions = require("hyprpilot.rpc.permissions")
 
 local M = {}
 

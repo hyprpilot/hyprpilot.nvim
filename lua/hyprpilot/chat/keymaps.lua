@@ -133,7 +133,7 @@ local function goto_file()
   end
 end
 
-local apply = require("hyprpilot.keymap-util").apply_action
+local apply = require("hyprpilot.ui.keymaps").apply_action
 
 ---Collect every tracked extmark row of a given category for the
 ---current buffer's render state. `category` is `"turn"` (uses the

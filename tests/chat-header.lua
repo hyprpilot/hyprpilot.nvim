@@ -15,7 +15,7 @@ local stub_active_instance = helpers.stub_active_instance
 ---global client and poison subsequent tests).
 ---@return fun()
 local function stub_instances_info()
-  local instances = require("hyprpilot.instances")
+  local instances = require("hyprpilot.rpc.instances")
   local original = instances.info
   instances.info = function(_id, callback)
     if callback ~= nil then

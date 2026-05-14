@@ -35,7 +35,7 @@ function M.setup(config)
   vim.api.nvim_create_autocmd("VimLeavePre", {
     group = vim.api.nvim_create_augroup("HyprpilotShutdown", { clear = true }),
     callback = function()
-      require("hyprpilot.shutdown").shutdown()
+      require("hyprpilot.rpc.shutdown").shutdown()
     end,
   })
 end
@@ -45,7 +45,7 @@ end
 --- on `VimLeavePre`; also exposed for manual hot-reload / a
 --- captain-bound "stop everything" keymap.
 function M.shutdown()
-  require("hyprpilot.shutdown").shutdown()
+  require("hyprpilot.rpc.shutdown").shutdown()
 end
 
 -- ── Window ─────────────────────────────────────────────────────────

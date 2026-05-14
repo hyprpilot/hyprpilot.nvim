@@ -8,7 +8,7 @@ local helpers = require("tests.helpers")
 local T = MiniTest.new_set()
 
 T["composer.set_text: replaces the per-instance buffer's lines with `text`"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
 
   -- Stand up a stub composer buffer the same way `ensure_buffer`
@@ -33,7 +33,7 @@ T["composer.set_text: replaces the per-instance buffer's lines with `text`"] = f
 end
 
 T["composer.set_text: non-string text → warns + no buffer change"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
 
   local bufnr = vim.api.nvim_create_buf(false, true)

@@ -5,7 +5,7 @@
 --- in three different files.
 ---
 --- Composer's per-mode `{ normal = ..., insert = ... }` shape stays
---- in `ui/composer.lua` because it's a different action type — this
+--- in `composer/init.lua` because it's a different action type — this
 --- module is the normal-mode-only baseline, not a one-size-fits-all
 --- abstraction.
 

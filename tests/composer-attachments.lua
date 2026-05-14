@@ -19,7 +19,7 @@ local function active_instance(id)
 end
 
 T["attach / detach / attachments stage and clear by slug"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -46,7 +46,7 @@ T["attach / detach / attachments stage and clear by slug"] = function()
 end
 
 T["attach with the same slug refreshes instead of duplicating"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.clear_attachments(id)
@@ -63,7 +63,7 @@ T["attach with the same slug refreshes instead of duplicating"] = function()
 end
 
 T["attach uses unique slugs when the basename collides"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.clear_attachments(id)
@@ -81,7 +81,7 @@ T["attach uses unique slugs when the basename collides"] = function()
 end
 
 T["attach skips with a warn on missing path"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.clear_attachments(id)
@@ -95,7 +95,7 @@ end
 
 T["submit includes attachments in the wire payload + clears on success"] = function()
   local restore, calls = helpers.stub_client_request()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   local bufnr = active_instance(id)
   composer.clear_attachments(id)
@@ -121,7 +121,7 @@ end
 
 T["submit forwards with_config as withConfig on prompts/send"] = function()
   local restore, calls = helpers.stub_client_request()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -140,7 +140,7 @@ end
 
 T["submit omits withConfig from prompts/send when with_config is a map (warn + skip)"] = function()
   local restore, calls = helpers.stub_client_request()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -158,7 +158,7 @@ end
 
 T["submit without attachments omits the wire field"] = function()
   local restore, calls = helpers.stub_client_request()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.clear_attachments(id)
@@ -173,7 +173,7 @@ T["submit without attachments omits the wire field"] = function()
 end
 
 T["attach renders virt_lines anchored to the composer's last buffer line"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.clear_attachments(id)
@@ -217,7 +217,7 @@ T["attach renders virt_lines anchored to the composer's last buffer line"] = fun
 end
 
 T["wipe drops staged attachments alongside the buffer"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.clear_attachments(id)

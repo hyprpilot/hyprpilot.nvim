@@ -15,7 +15,7 @@ T["composer.cancel: sends prompts/cancel as a request (with id), not a notificat
     ["prompts/cancel"] = { result = {} },
   })
 
-  require("hyprpilot.ui.composer").cancel()
+  require("hyprpilot.composer").cancel()
 
   MiniTest.expect.equality(#calls, 1)
   MiniTest.expect.equality(calls[1].method, "prompts/cancel")
@@ -29,7 +29,7 @@ T["composer.cancel: no active instance → warns + no RPC fired"] = function()
   local restore_active = helpers.stub_active_instance(nil)
   local restore_client, calls = helpers.stub_client_with({})
 
-  require("hyprpilot.ui.composer").cancel()
+  require("hyprpilot.composer").cancel()
 
   MiniTest.expect.equality(#calls, 0)
 

@@ -352,7 +352,7 @@ local function submit(patterns)
     end
   end
 
-  require("hyprpilot.permissions").respond(entry.request_id, opt.optionId, function(err)
+  require("hyprpilot.rpc.permissions").respond(entry.request_id, opt.optionId, function(err)
     if err ~= nil then
       log.warn("permission_row.respond: %s (%s/%s)", err.message, entry.request_id, opt.optionId)
     else
@@ -375,7 +375,7 @@ local function cycle_focus(delta)
   M.refresh()
 end
 
-local apply_action = require("hyprpilot.keymap-util").apply_action
+local apply_action = require("hyprpilot.ui.keymaps").apply_action
 
 ---Install the row keymaps once per buffer. Bindings are
 ---configurable via `config.permission_row.keymaps`; each action

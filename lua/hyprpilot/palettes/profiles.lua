@@ -5,8 +5,8 @@
 ---   vim.keymap.set("n", "<leader>cN",
 ---     require("hyprpilot.palettes.profiles").open)
 
-local hp_instances = require("hyprpilot.instances")
-local hp_profiles = require("hyprpilot.profiles")
+local hp_instances = require("hyprpilot.rpc.instances")
+local hp_profiles = require("hyprpilot.rpc.profiles")
 local log = require("hyprpilot.log")
 local pickers = require("hyprpilot.palettes.pickers")
 

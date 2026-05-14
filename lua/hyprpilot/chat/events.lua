@@ -151,7 +151,7 @@ local function dispatch(raw)
     -- the queued continuations.
     local reason = event.stopReason
     if type(reason) == "string" and reason:lower():find("cancel", 1, true) ~= nil then
-      require("hyprpilot.composer-queue").flush(event.instanceId)
+      require("hyprpilot.composer.queue").flush(event.instanceId)
     end
     emit_for_instance("TurnEnded", event.instanceId, {
       turn_id = event.turnId,

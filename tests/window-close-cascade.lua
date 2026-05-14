@@ -11,7 +11,7 @@ local T = MiniTest.new_set()
 
 T["window.close cascades into composer.wipe (composer buffer drops with chat buffer)"] = function()
   local window = require("hyprpilot.chat.window")
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local buffer = require("hyprpilot.chat.buffer")
 
   local id = helpers.unique_id()

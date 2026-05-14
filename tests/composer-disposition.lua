@@ -46,7 +46,7 @@ T["disposition=sent: clears composer + fires Dispatched with disposition=sent"] 
   })
   local restore_events, events = capture_events({ "HyprpilotPromptQueued", "HyprpilotPromptDispatched" })
 
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.attach({ path = "/tmp/a.txt", instance_id = id })
@@ -79,7 +79,7 @@ T["disposition=queued: clears composer + fires BOTH Queued and Dispatched"] = fu
   })
   local restore_events, events = capture_events({ "HyprpilotPromptQueued", "HyprpilotPromptDispatched" })
 
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.attach({ path = "/tmp/a.txt", instance_id = id })
@@ -120,7 +120,7 @@ T["missing disposition: backwards-compat treats it as `sent`"] = function()
   })
   local restore_events, events = capture_events({ "HyprpilotPromptQueued", "HyprpilotPromptDispatched" })
 
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -151,7 +151,7 @@ T["accepted=false: composer + attachments NOT cleared, no dispatch event"] = fun
   })
   local restore_events, events = capture_events({ "HyprpilotPromptQueued", "HyprpilotPromptDispatched" })
 
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
   composer.attach({ path = "/tmp/keep.txt", instance_id = id })

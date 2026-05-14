@@ -11,7 +11,7 @@ local T = MiniTest.new_set()
 T["respond w/o opts: only requestId + optionId on the wire (back-compat call shape)"] = function()
   local restore, calls = helpers.stub_client_with({ ["permissions/respond"] = { result = {} } })
 
-  require("hyprpilot.permissions").respond("req-1", "allow")
+  require("hyprpilot.rpc.permissions").respond("req-1", "allow")
 
   MiniTest.expect.equality(calls[1].method, "permissions/respond")
   MiniTest.expect.equality(calls[1].params.requestId, "req-1")
@@ -27,7 +27,7 @@ T["respond w/ feedback BUT flag OFF: feedback is dropped (would otherwise -32602
   config.options.diff_preview = config.options.diff_preview or {}
   config.options.diff_preview.send_reject_feedback = false
 
-  require("hyprpilot.permissions").respond("req-2", "reject", { feedback = "wrong file" })
+  require("hyprpilot.rpc.permissions").respond("req-2", "reject", { feedback = "wrong file" })
 
   MiniTest.expect.equality(calls[1].params.feedback, nil)
 
@@ -40,7 +40,7 @@ T["respond w/ feedback AND flag ON: feedback rides on the wire"] = function()
   config.options.diff_preview = config.options.diff_preview or {}
   config.options.diff_preview.send_reject_feedback = true
 
-  require("hyprpilot.permissions").respond("req-3", "reject", { feedback = "not the right file" })
+  require("hyprpilot.rpc.permissions").respond("req-3", "reject", { feedback = "not the right file" })
 
   MiniTest.expect.equality(calls[1].params.feedback, "not the right file")
 
@@ -54,7 +54,7 @@ T["respond legacy 3-arg shape still works (opts_or_callback as callback)"] = fun
   local restore = helpers.stub_client_with({ ["permissions/respond"] = { result = { ok = true } } })
 
   local captured
-  require("hyprpilot.permissions").respond("req-legacy", "allow", function(err, result)
+  require("hyprpilot.rpc.permissions").respond("req-legacy", "allow", function(err, result)
     captured = { err = err, result = result }
   end)
 

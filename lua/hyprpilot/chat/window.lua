@@ -119,9 +119,9 @@ function M.close(instance_id)
 
   require("hyprpilot.chat.render").forget(id)
   require("hyprpilot.chat.winbar").forget(id)
-  require("hyprpilot.ui.composer").wipe(id)
+  require("hyprpilot.composer").wipe(id)
   require("hyprpilot.chat.permission-row").drop_for_instance(id)
-  require("hyprpilot.composer-queue").reset(id)
+  require("hyprpilot.composer.queue").reset(id)
   require("hyprpilot.notification.attention")._clear_instance(id)
 
   if M._last_active_id == id then
@@ -214,7 +214,7 @@ function M.show(instance_id)
   -- on the first call.
   if instance_id == nil and has_no_instances() then
     log.debug("window.show: no instances registered, auto-spawning default")
-    require("hyprpilot.instances").spawn({}, function(err, info)
+    require("hyprpilot.rpc.instances").spawn({}, function(err, info)
       if err ~= nil then
         log.warn("window.show: auto-spawn failed: %s", err.message)
         return
@@ -277,7 +277,7 @@ function M.show(instance_id)
   require("hyprpilot.chat.permission-row").refresh_if_queued()
 
   if resolved_id ~= nil then
-    require("hyprpilot.ui.composer").open()
+    require("hyprpilot.composer").open()
   end
 
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
@@ -294,7 +294,7 @@ local function close_children()
   -- Wrap each close in pcall: a child surface in a half-built
   -- state should not block teardown of its siblings.
   pcall(function()
-    require("hyprpilot.ui.composer").close()
+    require("hyprpilot.composer").close()
   end)
   pcall(function()
     require("hyprpilot.chat.queue-strip").close()
@@ -392,7 +392,7 @@ function M.switch(instance_id)
     -- `focus = false` keeps the captain's cursor where it was —
     -- switch is a peek-at-the-other-instance gesture, not an "I'm
     -- about to type" gesture.
-    require("hyprpilot.ui.composer").open({ focus = false })
+    require("hyprpilot.composer").open({ focus = false })
 
     -- Header reads via active_instance() and emits its own update on
     -- HyprpilotInstanceChanged; the explicit refresh covers the case

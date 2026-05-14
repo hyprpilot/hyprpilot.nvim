@@ -12,7 +12,7 @@ T["instances.spawn: forwards with_config patches as `withConfig` on the wire"] =
     ["instances/spawn"] = { result = { instanceId = "inst-new" } },
   })
 
-  require("hyprpilot.instances").spawn({
+  require("hyprpilot.rpc.instances").spawn({
     profile_id = "engineer",
     show = false,
     with_config = {
@@ -34,7 +34,7 @@ T["instances.spawn: omits `withConfig` from the wire when no patches given"] = f
     ["instances/spawn"] = { result = { instanceId = "inst-new" } },
   })
 
-  require("hyprpilot.instances").spawn({ profile_id = "engineer", show = false })
+  require("hyprpilot.rpc.instances").spawn({ profile_id = "engineer", show = false })
 
   MiniTest.expect.equality(calls[1].method, "instances/spawn")
   MiniTest.expect.equality(calls[1].params.withConfig, nil)
@@ -47,7 +47,7 @@ T["instances.spawn: empty patch list also omitted (daemon serde-defaults to empt
     ["instances/spawn"] = { result = { instanceId = "inst-new" } },
   })
 
-  require("hyprpilot.instances").spawn({ profile_id = "engineer", show = false, with_config = {} })
+  require("hyprpilot.rpc.instances").spawn({ profile_id = "engineer", show = false, with_config = {} })
 
   MiniTest.expect.equality(calls[1].params.withConfig, nil)
 
@@ -59,7 +59,7 @@ T["instances.focus: forwards with_config on the ensure-spawn path"] = function()
     ["instances/focus"] = { result = { instanceId = "inst-new", name = "feature-x" } },
   })
 
-  require("hyprpilot.instances").focus("feature-x", {
+  require("hyprpilot.rpc.instances").focus("feature-x", {
     ensure = true,
     show = false,
     with_config = { { profiles = { { id = "engineer", default = true } } } },
@@ -79,7 +79,7 @@ T["instances.spawn: daemon rejection (-32602 invalid_params) surfaces through ca
   })
 
   local captured_err, captured_instance
-  require("hyprpilot.instances").spawn({
+  require("hyprpilot.rpc.instances").spawn({
     profile_id = "engineer",
     show = false,
     with_config = { { agents = "this is not a list" } },
@@ -101,7 +101,7 @@ T["instances.spawn: wrong-type with_config (string) is omitted from the wire"] =
   })
 
   ---@diagnostic disable-next-line: assign-type-mismatch
-  require("hyprpilot.instances").spawn({ profile_id = "engineer", show = false, with_config = "oops" })
+  require("hyprpilot.rpc.instances").spawn({ profile_id = "engineer", show = false, with_config = "oops" })
 
   MiniTest.expect.equality(calls[1].params.withConfig, nil)
 
@@ -117,7 +117,7 @@ T["instances.spawn: map-shaped with_config is omitted from the wire"] = function
   -- list of patch objects — `#tbl` is 0, `next(tbl)` is set. Warn +
   -- omit so the daemon doesn't see a JSON object where it expects
   -- an array.
-  require("hyprpilot.instances").spawn({
+  require("hyprpilot.rpc.instances").spawn({
     profile_id = "engineer",
     show = false,
     with_config = { agents = { { id = "code" } } },
@@ -133,7 +133,7 @@ T["instances.spawn(name=...) routes through focus and carries with_config"] = fu
     ["instances/focus"] = { result = { instanceId = "inst-new", name = "feature-x" } },
   })
 
-  require("hyprpilot.instances").spawn({
+  require("hyprpilot.rpc.instances").spawn({
     name = "feature-x",
     profile_id = "engineer",
     show = false,

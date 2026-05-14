@@ -27,7 +27,7 @@
 --- once captain wants it.
 
 local buffer = require("hyprpilot.chat.buffer")
-local composer_queue = require("hyprpilot.composer-queue")
+local composer_queue = require("hyprpilot.composer.queue")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local window = require("hyprpilot.chat.window")
@@ -182,7 +182,7 @@ local function send_head()
   -- straight to the daemon even if the agent is still working —
   -- the captain explicitly chose to drain, so the activity guard
   -- doesn't apply here.
-  require("hyprpilot.ui.composer").submit(entry.text, {
+  require("hyprpilot.composer").submit(entry.text, {
     instance_id = instance_id,
     attachments = entry.attachments,
     bypass_queue = true,
@@ -226,10 +226,10 @@ local function edit_head()
   if entry.attachments ~= nil and #entry.attachments > 0 then
     log.warn("queue_strip.edit_head: dropping %d attachment(s) on edit (not yet supported)", #entry.attachments)
   end
-  require("hyprpilot.ui.composer").set_text(instance_id, entry.text)
+  require("hyprpilot.composer").set_text(instance_id, entry.text)
 end
 
-local apply_action = require("hyprpilot.keymap-util").apply_action
+local apply_action = require("hyprpilot.ui.keymaps").apply_action
 
 ---Install the strip keymaps for `bufnr`. Reads from
 ---`config.options.queue_strip.keymaps`.

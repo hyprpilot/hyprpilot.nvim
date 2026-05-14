@@ -146,7 +146,7 @@ local function ensure_name(instance_id)
     return
   end
   _name_fetched[instance_id] = true
-  require("hyprpilot.instances").info(instance_id, function(err, info)
+  require("hyprpilot.rpc.instances").info(instance_id, function(err, info)
     if err ~= nil or info == nil then
       log.debug("header.ensure_name: instance=%s info failed: %s", instance_id, err and err.message or "no info")
       return
@@ -164,7 +164,7 @@ end
 
 ---Compose the header line as a list of segments. Each segment has its
 ---own highlight group so the rendered line picks up per-pill colours
----from `HyprpilotHeader*` (registered in `highlights.lua`).
+---from `HyprpilotHeader*` (registered in `ui/highlights.lua`).
 ---Mirrors the UI's `Frame.vue` row-1 layout, minus the cwd / git /
 ---title (captain explicitly dropped cwd; title isn't plumbed; git
 ---would need a separate composable). The `hyprpilot` brand stays

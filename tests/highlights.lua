@@ -49,9 +49,9 @@ local function row_of(bufnr, needle)
 end
 
 T["highlights.setup registers each Hyprpilot* group"] = function()
-  require("hyprpilot.highlights").setup()
+  require("hyprpilot.ui.highlights").setup()
 
-  for name, _ in pairs(require("hyprpilot.highlights").LINKS) do
+  for name, _ in pairs(require("hyprpilot.ui.highlights").LINKS) do
     local hl = vim.api.nvim_get_hl(0, { name = name })
     MiniTest.expect.equality(hl ~= nil, true)
   end

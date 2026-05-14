@@ -9,7 +9,7 @@ local T = MiniTest.new_set()
 
 T["window.show with no instances + no id calls instances.spawn({}) and reroutes"] = function()
   local window = require("hyprpilot.chat.window")
-  local instances = require("hyprpilot.instances")
+  local instances = require("hyprpilot.rpc.instances")
 
   -- Nuke whatever state lingered from the runner — the auto-spawn
   -- branch only fires when `_instances` is empty AND no id was

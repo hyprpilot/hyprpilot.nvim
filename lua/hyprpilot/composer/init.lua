@@ -794,7 +794,7 @@ function M.submit(text, opts)
   if not opts.bypass_queue then
     local activity = require("hyprpilot.status").get().activity
     if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
-      require("hyprpilot.composer-queue").enqueue(instance_id, {
+      require("hyprpilot.composer.queue").enqueue(instance_id, {
         text = text,
         attachments = attachments_snapshot,
       })
