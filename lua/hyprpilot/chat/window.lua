@@ -100,6 +100,7 @@ function M.close(instance_id)
   require("hyprpilot.ui.composer").wipe(id)
   require("hyprpilot.chat.permission_row").drop_for_instance(id)
   require("hyprpilot.composer_queue").reset(id)
+  require("hyprpilot.notification.attention")._clear_instance(id)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)

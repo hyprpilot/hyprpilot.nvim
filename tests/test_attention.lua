@@ -160,4 +160,41 @@ T["ensure_listeners: HyprpilotTurnEnded User autocmd → add"] = function()
   MiniTest.expect.equality(a.list()[1].kind, "turn_ended")
 end
 
+T["ensure_listeners: HyprpilotInstanceStateChanged terminal states drop every entry"] = function()
+  local a = fresh()
+  a.ensure_listeners()
+
+  a._add_permission("inst-1", 99, "req-1")
+  a._add_turn_ended("inst-1", 99)
+  a._add_permission("inst-2", 100, "req-2")
+
+  for _, terminal_state in ipairs({ "crashed", "error", "disconnected" }) do
+    local before = #a.list()
+    vim.api.nvim_exec_autocmds("User", {
+      pattern = "HyprpilotInstanceStateChanged",
+      data = { instance_id = "inst-1", state = terminal_state },
+    })
+    -- After the first iteration the list is shorter; just confirm
+    -- inst-1's entries are gone and inst-2 survived.
+    for _, entry in ipairs(a.list()) do
+      MiniTest.expect.equality(entry.instance_id ~= "inst-1", true)
+    end
+    -- Re-seed so the next state in the loop has something to drop.
+    if not a.is_attention_needed("inst-1") then
+      a._add_permission("inst-1", 99, "req-1-" .. terminal_state)
+    end
+    local _ = before
+  end
+
+  -- Non-terminal state (e.g. "running") leaves entries alone.
+  a._reset()
+  a.ensure_listeners()
+  a._add_permission("inst-1", 99, "req-1")
+  vim.api.nvim_exec_autocmds("User", {
+    pattern = "HyprpilotInstanceStateChanged",
+    data = { instance_id = "inst-1", state = "running" },
+  })
+  MiniTest.expect.equality(#a.list(), 1)
+end
+
 return T

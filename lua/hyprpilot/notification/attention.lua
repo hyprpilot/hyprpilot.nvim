@@ -213,6 +213,23 @@ function M.ensure_listeners()
     end,
   })
 
+  -- Terminal daemon-side states drop every entry for the instance.
+  -- A crashed / errored / disconnected instance will never resolve
+  -- its pending permissions, so leaving them on the list would
+  -- dangle forever and a picker dispatch would target a dead
+  -- buffer.
+  vim.api.nvim_create_autocmd("User", {
+    group = group,
+    pattern = "HyprpilotInstanceStateChanged",
+    callback = function(args)
+      local data = args.data or {}
+      local terminal_states = { crashed = true, error = true, disconnected = true }
+      if type(data.instance_id) == "string" and terminal_states[data.state] then
+        M._clear_instance(data.instance_id)
+      end
+    end,
+  })
+
   -- Focus-clears: the captain entering an instance's chat buffer
   -- counts as "I saw what happened, drop the turn_ended marker".
   -- Permissions don't auto-clear here — they need an explicit
