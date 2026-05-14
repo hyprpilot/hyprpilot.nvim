@@ -135,6 +135,50 @@ T["submit without attachments omits the wire field"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["attach renders virt_lines anchored to the composer's last buffer line"] = function()
+  local composer = require("hyprpilot.ui.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+  composer.clear_attachments(id)
+
+  -- Mint the composer buffer via the test seam so the indicator has
+  -- a buffer to paint on without needing a real window stack.
+  local name = "hyprpilot://composer/" .. id
+  local cbuf = require("hyprpilot.chat.buffer").find_by_name(name)
+    or (function()
+      local b = vim.api.nvim_create_buf(false, true)
+      vim.api.nvim_buf_set_name(b, name)
+      composer._register_buffer_for_tests(id, b)
+      return b
+    end)()
+  vim.api.nvim_buf_set_lines(cbuf, 0, -1, false, { "writing this prompt", "across two lines" })
+
+  composer.attach({ path = "/tmp/diagram.png", title = "Architecture" })
+  composer.attach({ path = "/tmp/notes.md" })
+
+  local ns = vim.api.nvim_get_namespaces()["hyprpilot.composer.attachments"]
+  MiniTest.expect.equality(ns ~= nil, true)
+
+  local marks = vim.api.nvim_buf_get_extmarks(cbuf, ns, 0, -1, { details = true })
+  MiniTest.expect.equality(#marks, 1)
+
+  local row = marks[1][2]
+  local details = marks[1][4]
+  -- Anchored to the last real line (0-indexed) so the stack stays at
+  -- the bottom of the visible composer.
+  MiniTest.expect.equality(row, vim.api.nvim_buf_line_count(cbuf) - 1)
+  MiniTest.expect.equality(#details.virt_lines, 2)
+  MiniTest.expect.equality(details.virt_lines[1][1][1], "  - Architecture")
+  MiniTest.expect.equality(details.virt_lines[2][1][1], "  - notes.md")
+
+  composer.clear_attachments(id)
+  -- After clear, the namespace should hold no extmarks.
+  MiniTest.expect.equality(#vim.api.nvim_buf_get_extmarks(cbuf, ns, 0, -1, {}), 0)
+
+  composer.wipe(id)
+  helpers.cleanup_instance(id)
+end
+
 T["wipe drops staged attachments alongside the buffer"] = function()
   local composer = require("hyprpilot.ui.composer")
   local id = helpers.unique_id()
