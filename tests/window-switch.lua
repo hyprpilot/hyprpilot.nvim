@@ -6,7 +6,7 @@ local helpers = require("tests.helpers")
 local T = MiniTest.new_set()
 
 T["window.switch drains the permission_row queue (no cross-instance leak)"] = function()
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local permission_row = require("hyprpilot.chat.permission-row")
   local window = require("hyprpilot.chat.window")
   permission_row.reset()
 

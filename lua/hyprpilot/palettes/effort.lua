@@ -5,7 +5,7 @@
 --- `resolve_list` hook that walks the categories array.
 
 local instances = require("hyprpilot.instances")
-local meta_palette = require("hyprpilot.palettes._meta_palette")
+local meta_palette = require("hyprpilot.palettes._meta-palette")
 
 local M = {}
 

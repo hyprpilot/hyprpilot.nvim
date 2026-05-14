@@ -7,6 +7,14 @@
 
 local helpers = require("tests.helpers")
 
+-- Pin glyph maps so assertions on the rendered chip text stay
+-- readable (defaults are nerd-font glyphs).
+require("hyprpilot.config").setup({
+  icons = {
+    turn_status = { ok = "", cancelled = "", error = "" },
+  },
+})
+
 local T = MiniTest.new_set()
 
 local function fresh_dispatch()

@@ -2,9 +2,10 @@
 ---
 --- 1. `window.focus()` returns `false` when `_winid` is invalid or
 ---    `nvim_set_current_win` throws, instead of letting the throw
----    bubble through our event dispatch (the symptom was a markview
----    `treesitter.start` failure cascading from
----    `permission_row.enqueue` and killing the client RPC loop).
+---    bubble through our event dispatch (the symptom was a
+---    third-party `BufEnter` `vim.treesitter.start()` failure
+---    cascading from `permission_row.enqueue` and killing the
+---    client RPC loop).
 ---
 --- 2. The `WinClosed` autocmd resets `_winid` and drains the child
 ---    surfaces (composer / header / queue_strip / permission_row)
@@ -41,8 +42,8 @@ T["WinClosed on the chat winid drains children and resets _winid"] = function()
   local window = require("hyprpilot.chat.window")
   local composer = require("hyprpilot.ui.composer")
   local header = require("hyprpilot.chat.header")
-  local queue_strip = require("hyprpilot.chat.queue_strip")
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local queue_strip = require("hyprpilot.chat.queue-strip")
+  local permission_row = require("hyprpilot.chat.permission-row")
 
   -- Capture each child's close call. Stub-and-restore keeps other
   -- tests in this file independent of side effects.

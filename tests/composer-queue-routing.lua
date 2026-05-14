@@ -1,6 +1,6 @@
 --- Behavioural tests for `composer.submit`'s queue routing.
 --- When the agent is non-idle the submit must park in
---- `composer_queue` instead of firing the wire RPC. When idle,
+--- `composer-queue` instead of firing the wire RPC. When idle,
 --- the wire RPC fires as before. `bypass_queue = true` forces the
 --- wire RPC regardless of activity (used by the queue strip's
 --- "send head now" path).
@@ -33,7 +33,7 @@ end
 T["composer.submit while activity != idle enqueues + no wire call"] = function()
   local restore_active = helpers.stub_active_instance("inst-1")
   local restore_client, calls = helpers.stub_client_with({})
-  local queue = require("hyprpilot.composer_queue")
+  local queue = require("hyprpilot.composer-queue")
   queue.reset("inst-1")
 
   local _ = mint_composer_buffer("inst-1")
@@ -63,7 +63,7 @@ T["composer.submit while idle fires prompts/send (no queue)"] = function()
   local restore_client, calls = helpers.stub_client_with({
     ["prompts/send"] = { result = { ok = true } },
   })
-  local queue = require("hyprpilot.composer_queue")
+  local queue = require("hyprpilot.composer-queue")
   queue.reset("inst-1")
 
   local _ = mint_composer_buffer("inst-1")
@@ -90,7 +90,7 @@ T["composer.submit with bypass_queue=true fires the wire even when busy"] = func
   local restore_client, calls = helpers.stub_client_with({
     ["prompts/send"] = { result = { ok = true } },
   })
-  local queue = require("hyprpilot.composer_queue")
+  local queue = require("hyprpilot.composer-queue")
   queue.reset("inst-1")
 
   local _ = mint_composer_buffer("inst-1")
@@ -116,7 +116,7 @@ end
 
 T["turn_ended with stopReason=cancelled flushes the queue"] = function()
   local events = require("hyprpilot.chat.events")
-  local queue = require("hyprpilot.composer_queue")
+  local queue = require("hyprpilot.composer-queue")
   queue.reset("inst-1")
 
   queue.enqueue("inst-1", { text = "a" })
@@ -167,7 +167,7 @@ end
 
 T["turn_ended with non-cancel stopReason leaves the queue alone"] = function()
   local events = require("hyprpilot.chat.events")
-  local queue = require("hyprpilot.composer_queue")
+  local queue = require("hyprpilot.composer-queue")
   queue.reset("inst-1")
 
   queue.enqueue("inst-1", { text = "stays" })

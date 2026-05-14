@@ -5,13 +5,13 @@
 
 local T = MiniTest.new_set()
 
-local diff_preview = require("hyprpilot.ui.diff_preview")
+local diff_preview = require("hyprpilot.ui.diff-preview")
 
 ---Build a fake permission-row entry shape that the preview API
 ---consumes. Caller fills in `raw_input`.
 ---@param raw any
 ---@param overrides? table
----@return hyprpilot.chat.permission_row.Entry
+---@return hyprpilot.chat.permission-row.Entry
 local function mk_entry(raw, overrides)
   local entry = {
     instance_id = "inst-x",
@@ -138,7 +138,7 @@ T["open: edit-shape against a temp file paints hunks + cleans up on close"] = fu
 
   -- An extmark must exist in the diff_preview namespace on the target buffer.
   local target_bufnr = diff_preview._state.bufnr
-  local ns = vim.api.nvim_get_namespaces()["hyprpilot.ui.diff_preview"]
+  local ns = vim.api.nvim_get_namespaces()["hyprpilot.ui.diff-preview"]
   local marks = vim.api.nvim_buf_get_extmarks(target_bufnr, ns, 0, -1, {})
   MiniTest.expect.equality(#marks > 0, true)
 

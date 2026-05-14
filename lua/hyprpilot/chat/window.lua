@@ -57,11 +57,11 @@ end
 
 ---Switch focus to the chat window. Returns true on success, false
 ---when the window is invalid or a third-party `BufEnter` autocmd
----throws (markview / render-markdown can fault when treesitter
----can't resolve a parser for the registered alias). Callers that
----follow `focus()` with `vim.cmd("split")` should bail on `false`
----to keep one bad autocmd from cascading through our event
----dispatch.
+---throws (third-party markdown / treesitter decorators can fault
+---when the parser can't be resolved for the registered alias).
+---Callers that follow `focus()` with `vim.cmd("split")` should
+---bail on `false` to keep one bad autocmd from cascading through
+---our event dispatch.
 ---@return boolean
 function M.focus()
   if not M.is_visible() then
@@ -120,8 +120,8 @@ function M.close(instance_id)
   require("hyprpilot.chat.render").forget(id)
   require("hyprpilot.chat.winbar").forget(id)
   require("hyprpilot.ui.composer").wipe(id)
-  require("hyprpilot.chat.permission_row").drop_for_instance(id)
-  require("hyprpilot.composer_queue").reset(id)
+  require("hyprpilot.chat.permission-row").drop_for_instance(id)
+  require("hyprpilot.composer-queue").reset(id)
   require("hyprpilot.notification.attention")._clear_instance(id)
 
   if M._last_active_id == id then
@@ -163,11 +163,14 @@ local function open_split(ui, bufnr)
   M._winid = vim.api.nvim_get_current_win()
 
   vim.api.nvim_win_set_buf(M._winid, bufnr)
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
+  buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
+  -- `winfixwidth` keeps `<C-W>=` and any layout-manager equalise
+  -- pass from redistributing column space onto the chat sidebar.
+  -- The captain chose `ui.width` for a reason; honour it across
+  -- layout churn.
+  vim.wo[M._winid].winfixwidth = true
   -- Manual folds: render.lua programmatically calls `:N,Mfold` when
   -- a turn ends or a block reaches a terminal state. Foldexpr would
   -- recompute on every motion and clobber fold open/closed state we
@@ -188,11 +191,41 @@ local function open_split(ui, bufnr)
   -- activity exactly when the captain wanted them visible.
 end
 
+---True when no per-instance entry has been registered yet — the
+---captain has nothing live and we'd otherwise show the placeholder
+---buffer plus a "spawn one" instruction.
+---@return boolean
+local function has_no_instances()
+  return next(M._instances) == nil
+end
+
 ---Show the chat window, switching to `instance_id` (or the last active).
 ---Hydrates the buffer from the daemon's snapshot + ensures the live
----event stream is wired.
+---event stream is wired. When the captain has no instances at all
+---and no specific `instance_id` was requested, kicks off a default
+---`instances.spawn({})` and re-runs `show()` from the spawn callback
+---— the captain never has to manually spawn before opening the chat.
 ---@param instance_id string?
 function M.show(instance_id)
+  -- Auto-spawn path: no specific instance requested + no instances
+  -- registered yet → spin up a default one and reroute. The async
+  -- spawn callback re-enters `M.show(new_id)` once the daemon is
+  -- ready, so the captain's keybind lands them in a populated chat
+  -- on the first call.
+  if instance_id == nil and has_no_instances() then
+    log.debug("window.show: no instances registered, auto-spawning default")
+    require("hyprpilot.instances").spawn({}, function(err, info)
+      if err ~= nil then
+        log.warn("window.show: auto-spawn failed: %s", err.message)
+        return
+      end
+      if type(info) == "table" and type(info.id) == "string" then
+        M.show(info.id)
+      end
+    end)
+    return
+  end
+
   local previous = M._last_active_id
   local bufnr = resolve_target_buffer(instance_id)
 
@@ -233,8 +266,15 @@ function M.show(instance_id)
   -- instance has parked prompts. Subscriber wiring lives in
   -- `ensure_listeners`; the strip stays hidden when the queue is
   -- empty.
-  require("hyprpilot.chat.queue_strip").ensure_listeners()
-  require("hyprpilot.chat.queue_strip").refresh()
+  require("hyprpilot.chat.queue-strip").ensure_listeners()
+  require("hyprpilot.chat.queue-strip").refresh()
+  -- Permission row mirrors the same pattern — when the chat
+  -- re-appears (after a `:q`-driven WinClosed cascade or a
+  -- captain-driven `hp.hide()` + `hp.show()`), surface any still-
+  -- pending permissions that are sitting in the local queue. The
+  -- daemon-side resolution slot lives until something resolves it,
+  -- so this never replays a stale prompt.
+  require("hyprpilot.chat.permission-row").refresh_if_queued()
 
   if resolved_id ~= nil then
     require("hyprpilot.ui.composer").open()
@@ -257,13 +297,13 @@ local function close_children()
     require("hyprpilot.ui.composer").close()
   end)
   pcall(function()
-    require("hyprpilot.chat.queue_strip").close()
+    require("hyprpilot.chat.queue-strip").close()
   end)
   pcall(function()
     require("hyprpilot.chat.header").close()
   end)
   pcall(function()
-    require("hyprpilot.chat.permission_row").close()
+    require("hyprpilot.chat.permission-row").close()
   end)
 end
 
@@ -345,7 +385,7 @@ function M.switch(instance_id)
     -- The daemon still holds the resolution slot — captain can
     -- replay via `permissions/pending` after switching back if a
     -- pending request was lost from the row.
-    require("hyprpilot.chat.permission_row").reset()
+    require("hyprpilot.chat.permission-row").reset()
 
     -- Composer.open() is idempotent: when the composer's already
     -- visible it swaps its buffer to the new instance's draft.

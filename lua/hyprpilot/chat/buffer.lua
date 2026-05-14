@@ -47,6 +47,7 @@ local function apply_options(bufnr, name)
   vim.bo[bufnr].buflisted = false
   vim.bo[bufnr].modifiable = false
   vim.bo[bufnr].readonly = true
+  M.suppress_external_ui(bufnr)
 end
 
 ---Look up the first valid buffer whose name matches `name` exactly.
@@ -125,16 +126,88 @@ function M.placeholder()
   apply_options(bufnr, name)
 
   M.with_buffer(bufnr, function()
+    -- Passive placeholder: no captain-facing instructions because
+    -- `chat.window.M.show()` auto-spawns a default instance when
+    -- none exists. The captain only ever sees this buffer for the
+    -- single tick between the spawn RPC firing and the daemon
+    -- replying with the new instance id.
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
       "# hyprpilot",
       "",
-      "No instances. Spawn one via `require('hyprpilot.instances').spawn({})`.",
+      "starting…",
     })
   end)
 
   _placeholder_bufnr = bufnr
 
   return bufnr
+end
+
+---Buffer-level opt-out markers for the well-known buffer-local
+---keys third-party UI plugins look for when they hook
+---`BufEnter` / `BufRead` and decorate every buffer they see (sign
+---column scribbles, blame virt_text, diagnostic icons,
+---indent-guide lines, diff hunks). Each key follows the upstream
+---convention — set the marker, the plugin skips us. Idempotent;
+---safe to call from `apply_options` and from the per-window paths
+---each module owns.
+---
+---NOT included on purpose: layout-manager opt-out keys. Captains
+---who want a layout manager (any plugin that adopts windows by
+---filetype into a managed sidebar) to handle hyprpilot register
+---our filetypes (`hyprpilot`, `hyprpilot_input`,
+---`hyprpilot_header`, `hyprpilot_queue_strip`,
+---`hyprpilot_permission_row`) in that plugin's config and we get
+---adoption for free. Captains who DON'T want adoption set the
+---layout manager's opt-out marker themselves in a `FileType
+---hyprpilot*` autocmd.
+---@param bufnr integer
+function M.suppress_external_ui(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  -- Suppress git-sign / hunk decorations on the buffer.
+  vim.b[bufnr].gitsigns_disable = true
+  -- Don't lint our render buffers.
+  vim.b[bufnr].lint_disabled = true
+  -- Suppress indent-guide line drawing — busy noise on our
+  -- markdown-shaped UI.
+  vim.b[bufnr].miniindentscope_disable = true
+end
+
+---Strip Neovim's stock chrome off a plugin window: hide the
+---statusline (set to a single space — Neovim renders nothing
+---visible), suppress numbers / fold column / sign column, and
+---remap the `EndOfBuffer` `~` glyphs to invisible so a short
+---surface doesn't show fill rows. Does NOT touch `winhighlight` —
+---callers that need a custom Normal: group set it themselves.
+---@param winid integer
+function M.clean_window_chrome(winid)
+  if not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+  vim.wo[winid].number = false
+  vim.wo[winid].relativenumber = false
+  vim.wo[winid].signcolumn = "no"
+  vim.wo[winid].foldcolumn = "0"
+  vim.wo[winid].cursorline = false
+  vim.wo[winid].cursorcolumn = false
+  vim.wo[winid].colorcolumn = ""
+  vim.wo[winid].spell = false
+  vim.wo[winid].list = false
+  -- Empty statusline + winbar → the global status / any
+  -- external statusline plugin skips us. A single space is
+  -- universally rendered as blank without breaking the global
+  -- `laststatus` setting.
+  vim.wo[winid].statusline = " "
+  vim.wo[winid].winbar = ""
+  -- Suppress the `~` end-of-buffer glyphs by remapping them to a
+  -- space via fillchars; cheap visual cleanup for the small
+  -- auxiliary surfaces.
+  local existing = vim.wo[winid].fillchars or ""
+  if not existing:match("eob:") then
+    vim.wo[winid].fillchars = (existing == "" and "" or existing .. ",") .. "eob: "
+  end
 end
 
 ---Returns true when `bufnr` is one of ours.

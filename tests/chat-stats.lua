@@ -5,6 +5,14 @@
 --- rely on. If a new chip variant lands on the daemon side and we
 --- want it rendered, that goes here first.
 
+-- Pin the turn-status glyphs to the empty string so the stop-chip
+-- assertions stay readable (defaults are nerd-font glyphs).
+require("hyprpilot.config").setup({
+  icons = {
+    turn_status = { ok = "", cancelled = "", error = "" },
+  },
+})
+
 local T = MiniTest.new_set()
 
 T["format_tokens compacts large counts with k/M suffixes"] = function()

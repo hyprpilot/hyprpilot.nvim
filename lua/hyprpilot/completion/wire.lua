@@ -1,8 +1,7 @@
 --- Thin wrapper over the daemon's `completion/{query,resolve,cancel}`
 --- RPCs. Keeps the camelCase ↔ snake_case translation + parameter
---- shaping in one place so multiple completion adapters (blink.cmp
---- today; potentially nvim-cmp / coq later) can share the same
---- contract.
+--- shaping in one place so multiple per-completion-engine adapters
+--- can share the same wire contract.
 ---
 --- Wire shapes mirror `agent-client-protocol-schema` /
 --- `src-tauri/src/completion/dispatch.rs`:

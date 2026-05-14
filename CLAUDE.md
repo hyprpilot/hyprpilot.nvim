@@ -52,8 +52,10 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
     everything else stays flat in `lua/hyprpilot/`.
 - **Plugin entry:** `plugin/hyprpilot.lua` runs once at load
   (`vim.treesitter.language.register("markdown", "hyprpilot")`).
-- **Style anchor:** [`cenk1cenk2/schema-companion.nvim`](https://github.com/cenk1cenk2/schema-companion.nvim).
-  The `init`/`config`/`log` shape is lifted near-verbatim. Match it.
+- **Module shape:** `init` exposes `setup`; `config` holds `defaults`
+  + `M.options = vim.deepcopy(defaults)`; `log` is a single
+  `vim.notify`-backed leveled logger. The shape is intentionally
+  flat and reused across the captain's plugin portfolio — match it.
 
 ## Conventions
 
@@ -138,6 +140,34 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   re-creates `M.options` via `vim.tbl_deep_extend("force", {},
   defaults, user)`. Reads before setup resolve to the deep-copied
   defaults, not a separate stub.
+- **Glyph defaults are nerd-font, configurable, ASCII fallback in
+  tests** — `config.options.icons.{tool_status, tool_kind,
+  task_status, turn_status}` ship as Font Awesome glyphs (literal
+  UTF-8 PUA bytes — `\u{XXXX}` escapes break selene's parser).
+  Renderers (`tool_status_badge`, `tool_icon`, `render_plan`,
+  `format_stop_chip`) read from these maps with a hard-coded
+  ASCII fallback for the case where the captain pre-emptively
+  clears the table. Behavioural tests pin the maps to ASCII
+  (`[ok]` / `[x]` / etc.) so visible-output assertions stay
+  source-readable. Empty-string is treated as "unset" by
+  glyph-prefixing helpers — never use Lua truthiness as a
+  presence check on user-supplied strings.
+- **Don't fight peer plugins** — buffer-level opt-out markers we
+  set (the well-known buffer-local keys for git-sign decorators,
+  linters, and indent-guide drawers) cover decorations that would
+  visually corrupt our render. Layout managers — anything that
+  inspects filetype to adopt windows into a managed sidebar —
+  get NO opt-out marker. Captains who want adoption register our
+  filetypes in their layout-manager config; captains who don't
+  set the opt-out themselves. Default stance is "let peers see
+  us"; the plugin only opts out where the third-party decoration
+  would actively corrupt our render, never preemptively.
+- **Auto-spawn on first show** — `chat.window.show()` with no
+  `instance_id` argument and an empty `_instances` registry kicks
+  off `instances.spawn({})` and re-enters from the callback. Never
+  show captain-facing instructions like "spawn one first" — the
+  plugin owns the bootstrap. Placeholder buffer text stays passive
+  ("starting…").
 - **Behaviour tests, not idiomatic ones** — every Lua test in
   `tests/test_*.lua` drives a real public entry point (the same call
   shape a live wire event or captain keypress would produce) and
@@ -152,23 +182,27 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 
 ## Decision Log
 
-- **Style anchor**
-  - Chose: mirror `cenk1cenk2/schema-companion.nvim` layout, logger,
-    config/setup pattern.
-  - Why: captain's own conventions, already battle-tested. Reduces
-    cognitive load across the captain's plugin portfolio.
-  - Rejected: bespoke layout — would diverge from the captain's other
-    plugins for no gain.
+- **Module shape**
+  - Chose: flat `init` / `config` / `log` modules, one `local M = {}`
+    per file, `setup(opts)` as the only entry point, `M.options`
+    deep-copied from a single `defaults` literal in `config.lua`.
+  - Why: matches the rest of the captain's plugin portfolio so a
+    one-look read on any file is enough to find the surface.
+  - Rejected: bespoke layout per concern (separate `init`/`bootstrap`/
+    `start` files, OO wrapper around the module table) — every
+    re-spelling of the same shape is a cognitive tax for no gain.
 
 - **Logger source**
-  - Chose: copy `schema-companion`'s `log.lua` near-verbatim, swap the
-    plugin name. It is the rxi → tjdevries (`vlog.nvim`) chain.
-  - Why: same shape across the captain's plugins; `vim.notify`-backed
-    so it respects user notify backends; two namespaces per level
-    (`log.info` deep-inspects via `vim.inspect`, `log.p.info` is plain
+  - Chose: a single `vim.notify`-backed leveled logger
+    (`log.trace/debug/info/warn/error`) auto-wired at module load, no
+    `setup()` order dependency. Two namespaces per level (`log.info`
+    deep-inspects via `vim.inspect`, `log.p.info` is plain
     `string.format`).
-  - Rejected: rolling our own from scratch — schema-companion's logger
-    is already battle-tested and matches the captain's other plugins.
+  - Why: `vim.notify` is the captain's own routing surface, so log
+    output respects whatever notification backend they wire.
+  - Rejected: rolling a custom file-tail / structured-event logger —
+    overkill for a frontend plugin; `:messages` plus the captain's
+    notify backend is the canonical Neovim log surface.
 
 - **Transport (shipped in #12)**
   - Chose: `vim.fn.sockconnect("pipe", path, { on_data = fn })` —
@@ -224,7 +258,7 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
     bullshit" for a local socket.
 
 - **Composer keymaps shape (shipped in #15)**
-  - Chose: avante-style nested config —
+  - Chose: nested per-mode config —
     `composer.keymaps = { submit = { normal = ..., insert = ... },
     cancel = { ... }, close = { ... } }`. Each value is `string |
     string[] | false`. Captain disables an action with `submit =
@@ -232,17 +266,17 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   - Why: terse, every action visible at a glance, list values
     cover multi-key bindings. `vim.tbl_deep_extend` keeps any
     sub-field the captain doesn't override.
-  - Rejected: codecompanion's heavier `{ modes = { n = ..., i = ... },
-    callback = ..., description = ... }` — overkill for our small
-    action set.
+  - Rejected: heavier `{ modes = { n = ..., i = ... }, callback =
+    ..., description = ... }` shape — overkill for our small
+    action set; the per-mode collapse beats it on read-time.
 
-- **Permission UX (planned)**
-  - Will use avante's `ButtonGroupLine` pattern (`lua/avante/ui/
-    button_group_line.lua`): horizontal `[ Accept ] [ Reject ] [...]`
-    with `<Tab>` cycling focus, `<CR>` clicking, per-buffer dispatch
-    registry routing keys by cursor row, fall-through when off the
-    button line. Smart-match `g`/`d` shortcuts jump-focus + commit
-    Accept/Reject on demand.
+- **Permission UX (shipped)**
+  - Horizontal button strip `[ Accept ] [ Reject ] [ Diff ]` with
+    `<Tab>` cycling focus, `<CR>` committing the focused option,
+    smart-match `<localleader>a` / `<localleader>d` jump-focusing
+    Accept / Reject on demand. The strip lives in its own pinned
+    1-row split below the chat (auto-grows to `max_height`); the
+    chat buffer never carries permission UI inline.
 
 - **`init.lua` re-exports (shipped in #13/#15)**
   - Chose: don't re-export module APIs from `init.lua` by default.
@@ -257,9 +291,63 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   - Chose: `CLAUDE.md` at the repo root.
   - Why: captain's explicit instruction at bootstrap.
 
+- **Window chrome / icon / keymap conventions (shipped in #60)**
+  - **`buffer.suppress_external_ui(bufnr)` + `buffer.clean_window_chrome(winid)`** —
+    paired helpers in `chat/buffer.lua` applied to every plugin-
+    owned buffer / window (chat, header, queue strip, permission
+    row, composer). Sets the documented buffer-local opt-out keys
+    for git-sign decorators, linters, and indent-guide drawers;
+    sets blank `statusline` / `winbar`, no numbers / signcolumn /
+    cursorline / fold column, hides EOB `~` glyphs via `fillchars
+    eob: `. Chat re-asserts its own `foldcolumn = "1"` afterward
+    since folds are interactive there.
+  - Why a single helper pair: every plugin window had been
+    re-spelling the same six `vim.wo` lines. One helper means a
+    new opt-out marker gets added in exactly one place.
+  - **`config.icons.{tool_status, tool_kind, task_status, turn_status}`** —
+    nerd-font glyphs by default (Font Awesome subset). Pasted as
+    literal UTF-8 PUA bytes (NOT `\u{XXXX}` escapes — selene's
+    parser rejects them). Captains without a nerd font override
+    with ASCII via `setup({ icons = { ... } })`. Tests pin to
+    ASCII fallback so visual assertions (`[ok]`, `[run]`, `[x]`,
+    etc.) stay readable in source.
+  - Why nerd-font defaults: the captain's terminal already ships
+    one for everything else (LSP signs, tree-sitter folds, file
+    explorers). Defaulting to ASCII would make hyprpilot the
+    odd-one-out; ASCII is opt-in for the no-font case.
+  - **`<localleader>` defaults across permission row / diff preview /
+    composer cancel** — sidesteps every collision class (`<C-o>` =
+    jumplist back, `<C-g>` = file info, `<C-r>` = redo, `<C-c>` =
+    pending-operator interrupt) without claiming top-level keys.
+    Captains who prefer the older `<C-*>` binds add them as
+    `accept = { "<localleader>a", "<C-g>" }` (list form) — no API
+    break.
+  - **`[h`/`]h` (turn) + `[s`/`]s` (section) jump keymaps** in
+    `chat/keymaps.lua`. Anchor rows come from the live
+    `render._states[*].turn_layouts[*].pilot_header_mark` /
+    `sections[*].head_mark` extmarks (re-exported as `render.NS`
+    so `keymaps.lua` doesn't redeclare the namespace string). The
+    `[h`/`]h` pair follows vim's stock next-of-kind family
+    (`]m`, `]s`); `[s`/`]s` would normally claim spell-check, but
+    the chat buffer is read-only with `spell = false` so reusing
+    it for "section" doesn't fight anything.
+
+- **Auto load-older on cursor-near-top (shipped in #60)**
+  - Chose: `CursorMoved` autocmd on the chat buffer; when
+    `vim.fn.line('w0') <= 3` and `state.has_more`, fire
+    `events.load_older(instance_id)` once. In-flight lock
+    (`state._load_older_lock`) released in the hydrate callback
+    so a fast `<C-u>` doesn't queue N daemon round-trips.
+  - Why: a manual "load older" keybind is friction; the captain
+    expects scrollback to extend as they scroll up, the way every
+    chat client does it. The throttle keeps the daemon happy.
+  - Rejected: `WinScrolled` only — fires per scroll event without
+    a position guard; would over-trigger. `CursorMoved` plus a
+    `w0 <= 3` check is the cheap right thing.
+
 - **Lua test framework: `mini.test`**
   - Chose: `mini.test` (from `echasnovski/mini.nvim`), shallow-cloned
-    into `vim.fn.tempname()` by `scripts/minimal_init.lua` on every
+    into `vim.fn.tempname()` by `scripts/minimal-init.lua` on every
     `task test-lua` invocation. Neovim wipes the temp dir on exit;
     nothing persists in the repo or the user's cache.
   - Why: `plenary.nvim`'s `busted` is the de facto standard but
@@ -299,7 +387,8 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   in review under "config knobs ship with their behaviour, not
   before". Don't add fields/helpers without an active consumer.
 - **Hard-coded composer keymaps (#15)** — captain wanted them
-  config-driven. Adopted avante's nested-action shape.
+  config-driven. Adopted the per-mode nested-action shape under
+  `composer.keymaps.{submit,cancel,close}.{normal,insert}`.
 - **Re-exporting every module API through `init.lua` (#13, #15)** —
   captain wants modules self-contained for now: "we will think about
   whether we will reexport them or not". Pulled the new re-exports.
@@ -314,13 +403,51 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 - **Single-use method constants (`SUBSCRIBE_METHOD`,
   `NOTIFICATION_METHOD`, `SNAPSHOT_METHOD` in #16)** — caught by the
   inline-single-use rule. Inlined.
+- **`prompts/cancel` as `client.notify`** — daemon's handler returns
+  `HandlerOutcome::Reply` (request-shaped, requires id). Notification
+  shape got back `id: null` + `-32600 "missing or invalid id"` and
+  silently no-op'd `<C-c>`. Re-shipped as `client.request` with a
+  warn-on-error callback. Lesson: always cross-check the wire shape
+  in `src-tauri/src/rpc/handlers/*.rs` before picking
+  `request` vs `notify`.
+- **Default permission focus computed plugin-side only** — the daemon
+  now ships `defaultOptionId` on `PermissionRequestSnapshot`
+  (`src-tauri/src/adapters/permission.rs`). The local `kind` /
+  `^allow` heuristic stays as a fallback (older daemons), but the
+  daemon hint wins when present so policy decisions stay server-side.
+- **`<C-o>` for show_diff** — collided with vim's jumplist-back. Re-
+  bound to `<localleader>g`; same swap for accept (`<localleader>a`)
+  / reject (`<localleader>d`) on permission row + diff preview.
+  Composer cancel kept `<C-c>` for insert mode (TUI muscle memory)
+  but flipped normal-mode to `<localleader>c` so it doesn't race
+  vim's pending-operator interrupt.
+- **Pre-emptive opt-out from layout-manager adoption** — captain
+  rejected: layout-manager peer plugins should be free to adopt
+  our windows when the captain registers our filetypes with them.
+  We keep buffer-local opt-outs for git-sign decorators / linters /
+  indent-guide drawers (those produce visual noise on a pure UI
+  buffer) but stay hands-off on layout managers. Lesson: respect
+  peer plugins; opt out only when the third-party decoration would
+  make our surface unreadable.
+- **Empty-string glyph treated as truthy in `format_stop_chip`** —
+  Lua's `truthy` includes `""`, so a captain who clears
+  `icons.turn_status.ok = ""` would have gotten ` ok end_turn`
+  with a leading space. Switched to explicit `nil`/`""` check via
+  a `with_glyph(glyph, body)` helper. Lesson: never use Lua's
+  short-circuit truthiness as a "is this set?" check for strings.
+- **"Spawn a session first" placeholder text** — captain rejected:
+  "if a session does not exists please spawn it with empty
+  variables". `chat.window.M.show()` now auto-fires
+  `instances.spawn({})` and re-enters with the new id when the
+  registry is empty. Placeholder text reduced to "starting…" — the
+  captain shouldn't be told to do something the plugin can do for
+  them.
 
 ## Tools & MCP Usage
 
-- **`stylua`** — formatter. `.stylua.toml` is verbatim from
-  `schema-companion`: 180 col, 2-space, prefer-double quotes,
-  `collapse_simple_statement = "Never"`. `task format` runs it; `task
-  lint` runs `stylua --check`.
+- **`stylua`** — formatter. `.stylua.toml` pins 180 col, 2-space,
+  prefer-double quotes, `collapse_simple_statement = "Never"`.
+  `task format` runs it; `task lint` runs `stylua --check`.
 - **`selene`** — linter. `selene.toml` uses `std = "vim"` with
   `mixed_table = "allow"`. `vim.toml` declares the vim/jit/test
   globals (`describe`, `it`, `assert`, `MiniTest`).
@@ -328,11 +455,11 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   entry points. `task test-lua` runs the Lua suite via `mini.test`;
   `task test` chains `test-lua` + `pkg:test`. CI calls `task lint`
   per language and `task test-lua` / `task pkg:test` separately.
-- **`mini.test`** — Lua test runner. `scripts/minimal_init.lua`
+- **`mini.test`** — Lua test runner. `scripts/minimal-init.lua`
   clones `mini.nvim` into `vim.fn.tempname()` on every invocation;
   Neovim wipes the temp dir on exit, so the repo (and the user's
   cache / data dirs) stay untouched. Then `nvim --headless -u
-  scripts/minimal_init.lua -c "lua MiniTest.run()" -c "qa!"` collects
+  scripts/minimal-init.lua -c "lua MiniTest.run()" -c "qa!"` collects
   every `tests/test_*.lua`. The clone is `--depth=1
   --filter=blob:none` so it stays fast even without caching.
 - **`mise.toml`** — pins `aqua:Kampfkarren/selene` and `stylua` to
@@ -363,9 +490,9 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   the chat buffer (Phase 2+) sets `vim.bo[buf].filetype = "hyprpilot"`
   imperatively when opened. The `language.register` call gives full
   markdown highlighting for free without writing a custom parser.
-- **Logger uses `vim.notify`** — output respects the user's notify
-  backend (e.g. `nvim-notify`, `noice`). Do not bypass it with
-  `print`/`vim.api.nvim_echo` for plugin output.
+- **Logger uses `vim.notify`** — output respects whatever notify
+  backend the captain has wired. Do not bypass it with
+  `print` / `vim.api.nvim_echo` for plugin output.
 - **`vim.fn.sockconnect` `on_data` runs on the main thread** — unlike
   `vim.uv.new_pipe`'s `read_start`, you don't need `vim.schedule`
   before touching Neovim API state. The newer-API choice removes a

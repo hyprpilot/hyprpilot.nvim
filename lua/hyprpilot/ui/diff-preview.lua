@@ -22,7 +22,7 @@ local permissions = require("hyprpilot.permissions")
 
 local M = {}
 
-local NS = vim.api.nvim_create_namespace("hyprpilot.ui.diff_preview")
+local NS = vim.api.nvim_create_namespace("hyprpilot.ui.diff-preview")
 local AUGROUP = vim.api.nvim_create_augroup("HyprpilotDiffPreview", { clear = true })
 
 ---@class hyprpilot.diff_preview.Hunk
@@ -115,7 +115,7 @@ end
 ---`(new_lines, reason)`; reason is set when we can't compute (e.g.
 ---old_string not in buffer). When reason is set, new_lines is the
 ---unchanged original — caller renders an "out of sync" pill.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 ---@param current_lines string[]   -- buffer's current content
 ---@return string[], string?
 local function compute_new_lines(entry, current_lines)
@@ -326,7 +326,7 @@ end
 local function install_keymaps(bufnr, state)
   local keymaps = (config.options.diff_preview or {}).keymaps or {}
 
-  local function apply(spec, handler)
+  local function apply(spec, handler, desc)
     if spec == false or spec == nil then
       return
     end
@@ -334,7 +334,12 @@ local function install_keymaps(bufnr, state)
       spec = { spec }
     end
     for _, key in ipairs(spec) do
-      vim.keymap.set("n", key, handler, { buffer = bufnr, silent = true, nowait = true })
+      vim.keymap.set("n", key, handler, {
+        buffer = bufnr,
+        silent = true,
+        nowait = true,
+        desc = "hyprpilot: " .. desc,
+      })
     end
   end
 
@@ -347,7 +352,7 @@ local function install_keymaps(bufnr, state)
     -- own accept path uses the same patterns; mirroring keeps the
     -- two surfaces in sync. We look the entry up fresh in case it
     -- mutated under us (focus change etc.).
-    local row = require("hyprpilot.chat.permission_row")
+    local row = require("hyprpilot.chat.permission-row")
     local entry = row._entry_by_request_id and row._entry_by_request_id(state.request_id)
     if entry == nil then
       log.debug("diff_preview.accept: entry vanished, closing")
@@ -369,10 +374,10 @@ local function install_keymaps(bufnr, state)
     end
     permissions.respond(state.request_id, opt.optionId)
     M.close()
-  end)
+  end, "diff preview: allow + close")
 
   apply(keymaps.reject or "<C-r>", function()
-    local row = require("hyprpilot.chat.permission_row")
+    local row = require("hyprpilot.chat.permission-row")
     local entry = row._entry_by_request_id and row._entry_by_request_id(state.request_id)
     if entry == nil then
       log.debug("diff_preview.reject: entry vanished, closing")
@@ -420,11 +425,11 @@ local function install_keymaps(bufnr, state)
     else
       respond(nil)
     end
-  end)
+  end, "diff preview: reject (with optional feedback prompt)")
 
   apply(keymaps.close or "<Esc>", function()
     M.close()
-  end)
+  end, "diff preview: close without resolving")
 
   apply(keymaps.next_hunk or "]h", function()
     if M._state == nil then
@@ -438,7 +443,7 @@ local function install_keymaps(bufnr, state)
         return
       end
     end
-  end)
+  end, "diff preview: jump to next hunk")
 
   apply(keymaps.prev_hunk or "[h", function()
     if M._state == nil then
@@ -457,7 +462,7 @@ local function install_keymaps(bufnr, state)
       pcall(vim.api.nvim_win_set_cursor, 0, { last_before.old_start, 0 })
       vim.cmd("normal! zz")
     end
-  end)
+  end, "diff preview: jump to previous hunk")
 
   local keys = {}
   for _, name in ipairs({ "accept", "reject", "close", "next_hunk", "prev_hunk" }) do
@@ -515,7 +520,7 @@ end
 ---Open a preview for `entry`. Idempotent: re-opening for the same
 ---request id is a no-op; re-opening for a different request closes
 ---the previous preview first.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 function M.open(entry)
   if entry == nil or type(entry.request_id) ~= "string" then
     log.warn("diff_preview.open: missing entry / request_id")
@@ -579,8 +584,9 @@ function M.open(entry)
 
   local host_win = resolve_host_window()
   -- pcall around the BufEnter-firing focus call: a third-party plugin
-  -- that throws on its `BufEnter` (markview without a markdown parser,
-  -- etc.) should not abort the diff-preview flow. The window itself
+  -- that throws on its `BufEnter` (third-party markdown decorator
+  -- without a markdown parser, etc.) should not abort the
+  -- diff-preview flow. The window itself
   -- can also be stale if `resolve_host_window` raced with an external
   -- layout change.
   if not vim.api.nvim_win_is_valid(host_win) then
@@ -642,7 +648,7 @@ end
 
 ---Toggle the preview for `entry`. Closes if currently open for the
 ---same request; opens otherwise.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 function M.toggle(entry)
   if entry == nil then
     return
@@ -657,7 +663,7 @@ end
 ---True when the entry is an edit-shaped request the preview can
 ---render (tool_kind == "edit" AND raw_input carries a path-like
 ---field). Excludes notebook edits (no preview in v1).
----@param entry hyprpilot.chat.permission_row.Entry?
+---@param entry hyprpilot.chat.permission-row.Entry?
 ---@return boolean
 function M.is_previewable(entry)
   if entry == nil then

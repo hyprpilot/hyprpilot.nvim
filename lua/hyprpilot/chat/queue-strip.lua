@@ -1,6 +1,6 @@
 --- Pinned queue band between the permission row and the composer.
 ---
---- Mirrors the structural pattern of `chat/permission_row.lua`: a
+--- Mirrors the structural pattern of `chat/permission-row.lua`: a
 --- shared 1-buffer / 1-window pinned strip that auto-shows when the
 --- active instance has queued prompts, auto-resizes to fit content
 --- (clamped via `config.queue_strip.max_height`), auto-hides on
@@ -27,7 +27,7 @@
 --- once captain wants it.
 
 local buffer = require("hyprpilot.chat.buffer")
-local composer_queue = require("hyprpilot.composer_queue")
+local composer_queue = require("hyprpilot.composer-queue")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local window = require("hyprpilot.chat.window")
@@ -35,7 +35,7 @@ local window = require("hyprpilot.chat.window")
 local M = {}
 
 local BUFFER_NAME = "hyprpilot://queue_strip"
-local NS = vim.api.nvim_create_namespace("hyprpilot.chat.queue_strip")
+local NS = vim.api.nvim_create_namespace("hyprpilot.chat.queue-strip")
 
 ---@type integer?
 M._winid = nil
@@ -79,6 +79,7 @@ local function ensure_buffer()
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
   vim.bo[bufnr].modifiable = false
+  buffer.suppress_external_ui(bufnr)
 
   M._bufnr = bufnr
   return bufnr
@@ -213,15 +214,19 @@ local function edit_head()
   if entry == nil then
     return
   end
-  -- Drop the popped entry's text into the composer buffer so the
-  -- captain can edit. Resubmit re-enqueues at the head if the
-  -- agent is still busy.
-  local composer = require("hyprpilot.ui.composer")
-  composer.open({ focus = true })
-  -- We don't have a public setter on the composer buffer for an
-  -- arbitrary string; the captain can edit-then-submit and the
-  -- queue tail flow will handle it. For v1 we just dispatch.
-  composer.submit(entry.text, { instance_id = instance_id, attachments = entry.attachments })
+  -- Drop the popped entry's text into the composer buffer for
+  -- editing — matches the desktop overlay's `onQueueEdit` behaviour
+  -- (load + edit, no auto-dispatch). Captain hits submit (or the
+  -- composer's <CR>) when they're ready; if the agent is still busy
+  -- the prompt will naturally re-enqueue at the tail.
+  -- TODO: preserve attachments — `composer.set_text` only carries
+  -- text today; the staged attachment list on `entry.attachments` is
+  -- dropped on edit. Once we expose a public attach-from-list API
+  -- on the composer, restore them here.
+  if entry.attachments ~= nil and #entry.attachments > 0 then
+    log.warn("queue_strip.edit_head: dropping %d attachment(s) on edit (not yet supported)", #entry.attachments)
+  end
+  require("hyprpilot.ui.composer").set_text(instance_id, entry.text)
 end
 
 ---Bind one action's configured keys. Mirrors permission_row's
@@ -254,7 +259,7 @@ local function install_keymaps(bufnr)
   apply_action(bufnr, keymaps.edit_head, edit_head, "edit queued head in composer")
 end
 
--- Test-only seam: see `permission_row.lua` for rationale.
+-- Test-only seam: see `permission-row.lua` for rationale.
 ---@param bufnr integer
 function M._install_keymaps_for_tests(bufnr)
   install_keymaps(bufnr)
@@ -298,13 +303,10 @@ local function open_window()
   vim.api.nvim_win_set_buf(M._winid, bufnr)
   install_keymaps(bufnr)
 
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
-  vim.wo[M._winid].foldcolumn = "0"
+  buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = false
   vim.wo[M._winid].winfixheight = true
-  vim.wo[M._winid].cursorline = false
+  vim.wo[M._winid].winfixwidth = true
 
   if vim.api.nvim_win_is_valid(previous_win) then
     vim.api.nvim_set_current_win(previous_win)

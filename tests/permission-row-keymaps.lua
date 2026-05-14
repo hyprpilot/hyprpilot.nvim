@@ -1,8 +1,8 @@
 --- Behavioural tests for `chat.permission_row::install_keymaps`.
 --- Covers F8 — the keymaps are configurable via
---- `config.permission_row.keymaps` and the defaults are `<C-g>`
---- (accept), `<C-r>` (reject), `<CR>` (submit), `<Tab>` /
---- `<S-Tab>` (cycle).
+--- `config.permission_row.keymaps` and the defaults are
+--- `<localleader>a` (accept), `<localleader>d` (reject), `<CR>`
+--- (submit), `<Tab>` / `<S-Tab>` (cycle).
 
 local T = MiniTest.new_set()
 
@@ -13,7 +13,7 @@ local T = MiniTest.new_set()
 ---delete it first to drop accumulated keymaps from prior cases.
 ---@return integer bufnr
 local function enqueue_and_get_buffer()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
   if pr._bufnr ~= nil and vim.api.nvim_buf_is_valid(pr._bufnr) then
     pcall(vim.api.nvim_buf_delete, pr._bufnr, { force = true })
@@ -51,7 +51,7 @@ local function bufmap_for(bufnr, lhs)
 end
 
 ---Manually invoke `install_keymaps` on the given bufnr. The
----function is local to `permission_row.lua` — we drive it via the
+---function is local to `permission-row.lua` — we drive it via the
 ---public `open_window` path is overkill for tests, so we shell out
 ---to a Lua eval against the module's internal binding.
 ---@param bufnr integer
@@ -65,21 +65,24 @@ local function install_keymaps(bufnr)
   -- Since the module doesn't expose install_keymaps directly, we
   -- mount the bufnr in a scratch window briefly and call
   -- open_window. The keymap-install fires regardless of focus.
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   if pr._install_keymaps_for_tests ~= nil then
     pr._install_keymaps_for_tests(bufnr)
   end
 end
 
-T["permission_row default keymaps: <C-g> / <C-r> / <CR> / <Tab> / <S-Tab>"] = function()
+T["permission_row default keymaps: <localleader>a / <localleader>d / <CR> / <Tab> / <S-Tab>"] = function()
   -- Reset config to defaults before the test.
   require("hyprpilot.config").setup({})
 
   local bufnr = enqueue_and_get_buffer()
   install_keymaps(bufnr)
 
-  local accept = bufmap_for(bufnr, "<C-G>") -- nvim normalises to upper-case
-  local reject = bufmap_for(bufnr, "<C-R>")
+  -- Localleader is interpolated by Neovim into the configured key
+  -- string at map-install time. Tests run without a custom
+  -- localleader, so it expands to the default `\\` (backslash).
+  local accept = bufmap_for(bufnr, "\\a")
+  local reject = bufmap_for(bufnr, "\\d")
   local submit = bufmap_for(bufnr, "<CR>")
   local cycle_next = bufmap_for(bufnr, "<Tab>")
   local cycle_prev = bufmap_for(bufnr, "<S-Tab>")
@@ -90,7 +93,7 @@ T["permission_row default keymaps: <C-g> / <C-r> / <CR> / <Tab> / <S-Tab>"] = fu
   MiniTest.expect.equality(cycle_next ~= nil, true)
   MiniTest.expect.equality(cycle_prev ~= nil, true)
 
-  require("hyprpilot.chat.permission_row").reset()
+  require("hyprpilot.chat.permission-row").reset()
 end
 
 T["permission_row keymaps: captain config override binds new keys"] = function()
@@ -114,7 +117,7 @@ T["permission_row keymaps: captain config override binds new keys"] = function()
   MiniTest.expect.equality(bufmap_for(bufnr, "j") ~= nil, true)
   MiniTest.expect.equality(bufmap_for(bufnr, "k") ~= nil, true)
 
-  require("hyprpilot.chat.permission_row").reset()
+  require("hyprpilot.chat.permission-row").reset()
   -- Restore defaults for downstream tests.
   require("hyprpilot.config").setup({})
 end
@@ -141,7 +144,7 @@ T["permission_row keymaps: false disables the binding"] = function()
   -- Other actions still bound.
   MiniTest.expect.equality(bufmap_for(bufnr, "<C-R>") ~= nil, true)
 
-  require("hyprpilot.chat.permission_row").reset()
+  require("hyprpilot.chat.permission-row").reset()
   require("hyprpilot.config").setup({})
 end
 
@@ -164,7 +167,7 @@ T["permission_row keymaps: list of keys binds each entry"] = function()
   MiniTest.expect.equality(bufmap_for(bufnr, "<C-G>") ~= nil, true)
   MiniTest.expect.equality(bufmap_for(bufnr, "ga") ~= nil, true)
 
-  require("hyprpilot.chat.permission_row").reset()
+  require("hyprpilot.chat.permission-row").reset()
   require("hyprpilot.config").setup({})
 end
 

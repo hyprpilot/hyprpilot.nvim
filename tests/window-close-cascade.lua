@@ -56,7 +56,7 @@ end
 
 T["window.close drops permission-row queue entries for the closed instance"] = function()
   local window = require("hyprpilot.chat.window")
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local permission_row = require("hyprpilot.chat.permission-row")
   local buffer = require("hyprpilot.chat.buffer")
 
   local id_a = helpers.unique_id()

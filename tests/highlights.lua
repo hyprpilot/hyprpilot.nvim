@@ -6,6 +6,17 @@
 
 local helpers = require("tests.helpers")
 
+-- Pin the badge glyphs to ASCII so the row-lookup assertions below
+-- match (defaults are nerd-font glyphs). See `test_chat_render.lua`
+-- for the same overlay.
+require("hyprpilot.config").setup({
+  icons = {
+    tool_status = { completed = "[ok]", failed = "[fail]", pending = "[wait]", running = "[run]" },
+    task_status = { pending = "[ ]", in_progress = "[~]", completed = "[x]" },
+    turn_status = { ok = "", cancelled = "", error = "" },
+  },
+})
+
 local T = MiniTest.new_set()
 
 local HL_NS = vim.api.nvim_create_namespace("hyprpilot.render.hl")
@@ -123,7 +134,7 @@ T["plan applies header + per-step highlights"] = function()
 end
 
 T["permission_row enqueue paints the header/button highlights on its own buffer"] = function()
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local permission_row = require("hyprpilot.chat.permission-row")
   permission_row.reset()
 
   permission_row.enqueue("inst-1", {
@@ -144,7 +155,7 @@ T["permission_row enqueue paints the header/button highlights on its own buffer"
   MiniTest.expect.equality(row_bufnr ~= nil, true)
 
   -- Permission row owns its own namespace; lookup directly there.
-  local row_ns = vim.api.nvim_create_namespace("hyprpilot.chat.permission_row")
+  local row_ns = vim.api.nvim_create_namespace("hyprpilot.chat.permission-row")
   local function row_line_hl(row)
     local marks = vim.api.nvim_buf_get_extmarks(row_bufnr, row_ns, { row, 0 }, { row, -1 }, { details = true })
     for _, mark in ipairs(marks) do
@@ -156,7 +167,10 @@ T["permission_row enqueue paints the header/button highlights on its own buffer"
     return nil
   end
 
-  MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "permission ·")), "HyprpilotPermissionHeader")
+  -- Header is now a markdown `#` line containing the tool name; the
+  -- old `permission ·` prefix was retired in favour of the icon-led
+  -- format. Locate it by the tool name "Bash".
+  MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "Bash")), "HyprpilotPermissionHeader")
   MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "[> Allow <]")), "HyprpilotPermissionButton")
 
   permission_row.reset()

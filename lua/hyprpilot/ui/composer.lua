@@ -204,20 +204,21 @@ local function ensure_buffer(instance_id)
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
+  require("hyprpilot.chat.buffer").suppress_external_ui(bufnr)
 
   local keymaps = (config.options.composer or {}).keymaps or {}
 
   apply_action(bufnr, keymaps.submit, function()
     M.submit()
-  end, "submit prompt")
+  end, "submit composer prompt")
 
   apply_action(bufnr, keymaps.cancel, function()
     M.cancel()
-  end, "cancel in-flight")
+  end, "cancel in-flight turn")
 
   apply_action(bufnr, keymaps.close, function()
     M.close()
-  end, "close composer")
+  end, "close composer split")
 
   -- Repaint the attachment indicator (whose virt_lines are anchored
   -- to the current last buffer line) and re-resize the window on
@@ -688,15 +689,14 @@ function M.open(opts)
   M._winid = vim.api.nvim_get_current_win()
 
   vim.api.nvim_win_set_buf(M._winid, bufnr)
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
+  require("hyprpilot.chat.buffer").clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   -- `winfixheight` keeps `<C-W>=` and other equalisation passes from
   -- redistributing space onto the composer, so our auto-resize stays
   -- the source of truth.
   vim.wo[M._winid].winfixheight = true
+  vim.wo[M._winid].winfixwidth = true
 
   paint_indicator(instance_id)
   M.resize()
@@ -794,7 +794,7 @@ function M.submit(text, opts)
   if not opts.bypass_queue then
     local activity = require("hyprpilot.status").get().activity
     if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
-      require("hyprpilot.composer_queue").enqueue(instance_id, {
+      require("hyprpilot.composer-queue").enqueue(instance_id, {
         text = text,
         attachments = attachments_snapshot,
       })
@@ -829,10 +829,11 @@ function M.submit(text, opts)
     end
   end
 
-  -- Fire BEFORE the daemon round-trip so handlers (markview detach,
-  -- statusline "sending…" pill) can run while the request is still
-  -- in flight. Captains who hook this won't double-fire when a
-  -- submit is queue-parked — that path returns above.
+  -- Fire BEFORE the daemon round-trip so captain autocmd handlers
+  -- (UI detach, statusline "sending…" pill, etc.) can run while
+  -- the request is still in flight. Captains who hook this won't
+  -- double-fire when a submit is queue-parked — that path returns
+  -- above.
   pcall(vim.api.nvim_exec_autocmds, "User", {
     pattern = "HyprpilotComposerSubmitted",
     data = { instance_id = instance_id, bufnr = bufnr, text = text },
@@ -898,7 +899,15 @@ function M.cancel(instance_id)
     return
   end
 
-  client.notify("prompts/cancel", { instanceId = id })
+  -- `prompts/cancel` is request-shaped on the daemon
+  -- (`HandlerOutcome::Reply` in `rpc/handlers/prompts.rs`) — sending
+  -- it as a notification gets back `id: null` + `-32600
+  -- "missing or invalid id"` and the captain's <C-c> silently no-ops.
+  client.request("prompts/cancel", { instanceId = id }, nil, function(err)
+    if err ~= nil then
+      log.warn("composer.cancel: prompts/cancel failed: %s", err.message)
+    end
+  end)
 end
 
 ---Wipe the composer buffer for a given instance. Used when the
@@ -913,6 +922,40 @@ function M.wipe(instance_id)
 
   buffers[instance_id] = nil
   attachments_by_instance[instance_id] = nil
+end
+
+---Replace the composer buffer's content for `instance_id` with
+---`text`. Used by the queue strip's `edit_head` so a captain who
+---wants to tweak a queued prompt before resubmit gets the prompt
+---loaded into the composer (matching the desktop overlay's
+---`onQueueEdit` behaviour) instead of an immediate dispatch.
+---Opens the composer + drops the cursor at end-of-buffer in
+---insert mode so the captain can keep typing immediately.
+---@param instance_id string
+---@param text string
+function M.set_text(instance_id, text)
+  if type(text) ~= "string" then
+    log.warn("composer.set_text: text must be a string")
+    return
+  end
+
+  local bufnr = ensure_buffer(instance_id)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(text, "\n", { plain = true }))
+  paint_indicator(instance_id)
+
+  -- Surface the composer for editing. `focus = true` is the default,
+  -- which also enters insert mode below.
+  M.open({ focus = true })
+
+  -- Land the cursor at the end of the loaded text so typing extends
+  -- rather than overwrites. Guard against the composer window not
+  -- being visible in headless / test contexts where `M.open` is a
+  -- no-op without a chat split.
+  if M._winid ~= nil and vim.api.nvim_win_is_valid(M._winid) then
+    local last_row = vim.api.nvim_buf_line_count(bufnr)
+    local last_line = vim.api.nvim_buf_get_lines(bufnr, last_row - 1, last_row, false)[1] or ""
+    pcall(vim.api.nvim_win_set_cursor, M._winid, { last_row, #last_line })
+  end
 end
 
 ---Test-only seam: register a bufnr under the composer's internal

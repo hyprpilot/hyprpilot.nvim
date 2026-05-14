@@ -16,20 +16,20 @@
 --- Wired from `chat/events.lua`.
 ---
 --- Per-instance state keyed by daemon `instance_id`. The strip UI
---- (`chat/queue_strip.lua`) subscribes via `M.on_change` so it
+--- (`chat/queue-strip.lua`) subscribes via `M.on_change` so it
 --- repaints whenever the queue mutates without polling.
 
 local log = require("hyprpilot.log")
 
 local M = {}
 
----@class hyprpilot.composer_queue.Item
+---@class hyprpilot.composer-queue.Item
 ---@field id string                 -- plugin-side UUID for keymap addressing + edit roundtrip
 ---@field text string                -- the prompt body
 ---@field attachments? table[]       -- composer attachments snapshot at enqueue time
 ---@field enqueued_at_ms integer     -- wall-clock for the strip's "queued Ns ago" label
 
----@type table<string, hyprpilot.composer_queue.Item[]>
+---@type table<string, hyprpilot.composer-queue.Item[]>
 local queues = {}
 
 ---@type fun(instance_id: string)[]
@@ -64,7 +64,7 @@ end
 ---the persisted entry (id + enqueued_at_ms populated).
 ---@param instance_id string
 ---@param item { text: string, attachments?: table[] }
----@return hyprpilot.composer_queue.Item
+---@return hyprpilot.composer-queue.Item
 function M.enqueue(instance_id, item)
   queues[instance_id] = queues[instance_id] or {}
   local entry = {
@@ -82,7 +82,7 @@ end
 ---Pop the head of `instance_id`'s queue. Returns the popped entry
 ---or nil when empty.
 ---@param instance_id string
----@return hyprpilot.composer_queue.Item?
+---@return hyprpilot.composer-queue.Item?
 function M.pop_head(instance_id)
   local slot = queues[instance_id]
   if slot == nil or #slot == 0 then
@@ -99,7 +99,7 @@ end
 ---(edit round-trip).
 ---@param instance_id string
 ---@param entry_id string
----@return hyprpilot.composer_queue.Item?, integer?
+---@return hyprpilot.composer-queue.Item?, integer?
 function M.pop_by_id(instance_id, entry_id)
   local slot = queues[instance_id]
   if slot == nil then
@@ -121,7 +121,7 @@ end
 ---@param instance_id string
 ---@param position integer            -- 1-indexed insertion slot
 ---@param item { text: string, attachments?: table[] }
----@return hyprpilot.composer_queue.Item
+---@return hyprpilot.composer-queue.Item
 function M.insert_at(instance_id, position, item)
   queues[instance_id] = queues[instance_id] or {}
   local slot = queues[instance_id]
@@ -184,7 +184,7 @@ end
 ---Read-only view of the queue. Returns an empty list when the
 ---instance has no slot yet.
 ---@param instance_id string
----@return hyprpilot.composer_queue.Item[]
+---@return hyprpilot.composer-queue.Item[]
 function M.list(instance_id)
   return queues[instance_id] or {}
 end

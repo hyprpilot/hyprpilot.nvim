@@ -17,6 +17,7 @@
 --- the head + tail extmarks and gets exposed via `foldexpr`.
 
 local chat_buffer = require("hyprpilot.chat.buffer")
+local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local stats = require("hyprpilot.chat.stats")
 
@@ -97,6 +98,10 @@ local rescan_code_block_folds
 M._states = {}
 
 local NS = vim.api.nvim_create_namespace("hyprpilot.render")
+-- Re-export the tracking namespace so consumers (chat/keymaps for
+-- turn / section jump anchors) can read extmarks without duplicating
+-- the namespace string.
+M.NS = NS
 -- Highlights live in a sibling namespace so a `clear_namespace` for a
 -- block's range can wipe `line_hl_group` extmarks without disturbing
 -- the block's head/tail tracking marks (which live in `NS`).
@@ -793,7 +798,20 @@ local function append_agent_text(state, text)
       -- `response_header_emitted` is per-layout so a re-streamed
       -- turn (continuation after cancel, etc.) doesn't double up.
       if layout ~= nil and not layout.response_header_emitted then
-        insert_at_prose_anchor(state, turn_id, { "### response", "" })
+        -- For agent turns whose only content is prose (no preceding
+        -- `### tasks` / `### thoughts` / `### tools` section), the
+        -- agent header lays down `## pilot` immediately followed by
+        -- the prose anchor — there's no blank between `## pilot`
+        -- and the lazy `### response` subhead. Pre-pad with a blank
+        -- when the row above the anchor isn't already empty so the
+        -- two headings don't collide.
+        local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
+        local line_above = ""
+        if anchor_row > 0 then
+          line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
+        end
+        local subhead_lines = line_above == "" and { "### response", "" } or { "", "### response", "" }
+        insert_at_prose_anchor(state, turn_id, subhead_lines)
         layout.response_header_emitted = true
       end
       insert_at_prose_anchor(state, turn_id, chunks)
@@ -886,41 +904,44 @@ local function append_placeholder(state, label, detail)
   state.active_text_block = nil
 end
 
----Render the tool-call kind icon prefix.
+---Resolve the first non-empty string from a list. Treats both
+---`nil` and `""` as "unset" — Lua's truthy-by-default `or` chain
+---would happily return `""` and produce double-space artifacts in
+---the header line. Mirrors the CLAUDE.md convention codified
+---alongside `format_stop_chip`'s `with_glyph` helper.
+---@param ... string?
+---@return string
+local function first_nonempty(...)
+  for i = 1, select("#", ...) do
+    local v = select(i, ...)
+    if type(v) == "string" and v ~= "" then
+      return v
+    end
+  end
+  return ""
+end
+
+---Render the tool-call kind icon prefix. Reads from
+---`config.options.icons.tool_kind` so the captain can swap the
+---defaults (nerd-font glyphs) for ASCII or alternate glyph sets.
+---Returns `""` when nothing resolves; `tool_header_line` strips
+---empty components so we never emit a doubled space.
 ---@param tool_kind? string
 ---@return string
 local function tool_icon(tool_kind)
-  if tool_kind == "execute" or tool_kind == "terminal" then
-    return "$"
-  elseif tool_kind == "edit" or tool_kind == "write" then
-    return "~"
-  elseif tool_kind == "read" or tool_kind == "fetch" then
-    return "?"
-  elseif tool_kind == "search" or tool_kind == "glob" then
-    return "/"
-  elseif tool_kind == "delete" then
-    return "x"
-  elseif tool_kind == "think" then
-    return "*"
-  end
-
-  return "->"
+  local map = (config.options.icons or {}).tool_kind or {}
+  return first_nonempty(tool_kind ~= nil and map[tool_kind] or nil, map.default, "->")
 end
 
 ---Status badge for tool-call state (`pending` / `running` /
----`completed` / `failed`).
+---`completed` / `failed`). Reads from
+---`config.options.icons.tool_status`. Returns `""` when nothing
+---resolves so the caller's join can drop the slot.
 ---@param state_str? string
 ---@return string
 local function tool_status_badge(state_str)
-  if state_str == "completed" then
-    return "[ok]"
-  elseif state_str == "failed" then
-    return "[fail]"
-  elseif state_str == "pending" then
-    return "[wait]"
-  end
-
-  return "[run]"
+  local map = (config.options.icons or {}).tool_status or {}
+  return first_nonempty(state_str ~= nil and map[state_str] or nil, map.running, "[run]")
 end
 
 ---Heuristic: pick a fenced-code language hint for a tool's output
@@ -951,8 +972,8 @@ end
 ---above and below each rule, blank lines between paragraphs, and a
 ---trailing blank that doubles as the inter-block separator inside a
 ---section. The result reads like a well-formed markdown document and
----renders cleanly in markdown viewers (markview / render-markdown)
----instead of running rules into adjacent content (which CommonMark
+---renders cleanly in any markdown viewer instead of running rules
+---into adjacent content (which CommonMark
 ---requires a preceding blank for to recognise as a horizontal rule
 ---at all — without it many parsers treat `---` as a setext heading
 ---underline for the line above).
@@ -1062,20 +1083,27 @@ local function tool_body_lines(formatted, tool_kind)
   return wrap_in_rules(paragraphs)
 end
 
----Compose the header line for a tool-call block.
+---Compose the header line for a tool-call block. Drops empty
+---glyph slots before joining so a captain who clears
+---`icons.tool_kind.default` (or any specific kind) doesn't end up
+---with a doubled space at the start of the header.
 ---@param record table
 ---@return string
 local function tool_header_line(record)
   local title = (record.formatted and record.formatted.title) or record.title or record.toolKind or "tool"
-  local badge = tool_status_badge(record.state)
-  local icon = tool_icon(record.toolKind)
   local pill_labels = {}
 
   if record.formatted and type(record.formatted.stats) == "table" then
     pill_labels = stats.from_wire_stats(record.formatted.stats)
   end
 
-  return string.format("%s %s %s", icon, badge, title) .. stats.format_pills(pill_labels)
+  local parts = {}
+  for _, piece in ipairs({ tool_icon(record.toolKind), tool_status_badge(record.state), title }) do
+    if type(piece) == "string" and piece ~= "" then
+      table.insert(parts, piece)
+    end
+  end
+  return table.concat(parts, " ") .. stats.format_pills(pill_labels)
 end
 
 ---Render a tool-call block (initial). Body holds description + fields
@@ -1233,15 +1261,13 @@ local function render_plan(state, record)
   if #steps == 0 then
     table.insert(body, "  (no steps)")
   else
+    local task_glyphs = (config.options.icons or {}).task_status or {}
+    -- Fall back to the legacy ASCII so a captain who pre-emptively
+    -- nukes `icons.task_status` still gets a readable mark.
+    local fallback = { pending = "[ ]", in_progress = "[~]", completed = "[x]" }
     for _, step in ipairs(steps) do
-      local mark
-      if step.status == "completed" then
-        mark = "[x]"
-      elseif step.status == "in_progress" then
-        mark = "[~]"
-      else
-        mark = "[ ]"
-      end
+      local key = step.status or "pending"
+      local mark = task_glyphs[key] or fallback[key] or fallback.pending
       local priority = step.priority and (" (" .. step.priority .. ")") or ""
       local content = type(step.content) == "string" and step.content or ""
       table.insert(body, string.format("  %s %s%s", mark, content:gsub("\n", " "), priority))
@@ -1294,12 +1320,18 @@ local function render_permission_request(state, record)
   -- can find it. We don't create a chat-buffer block.
   state.permissions[record.requestId] = "row:" .. record.requestId
 
-  require("hyprpilot.chat.permission_row").enqueue(state.instance_id, {
+  require("hyprpilot.chat.permission-row").enqueue(state.instance_id, {
     request_id = record.requestId,
     tool = record.tool or record.toolKind or "tool",
     tool_kind = record.toolKind,
     options = type(record.options) == "table" and record.options or {},
     formatted = record.formatted,
+    -- Daemon-computed pre-select. Honoured by `permission-row`'s
+    -- `default_focused_idx` when it points at a real option id; the
+    -- local kind-based heuristic still runs as the fallback so older
+    -- daemons (or events the daemon couldn't classify) still get a
+    -- sane Allow focus.
+    default_option_id = record.defaultOptionId,
     -- The diff-preview module reads `raw_input.path` /
     -- `.file_path` / `.old_string` / `.new_string` / `.content` /
     -- `.edits[]` off the entry — keep the wire shape verbatim so
@@ -1320,7 +1352,7 @@ function M.mark_permission_resolved(state, request_id, resolved_label)
   end
 
   state.permissions[request_id] = nil
-  require("hyprpilot.chat.permission_row").resolve(request_id, resolved_label)
+  require("hyprpilot.chat.permission-row").resolve(request_id, resolved_label)
 end
 
 ---Render one transcript item (from snapshot or live transcript event).
@@ -1449,7 +1481,7 @@ function M.hydrate(state, snapshot)
   state.last_render_role = nil
   state.turn_id_map = {}
 
-  require("hyprpilot.chat.permission_row").reset()
+  require("hyprpilot.chat.permission-row").reset()
 
   for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)
@@ -1476,9 +1508,9 @@ function M.handle_transcript(event)
     M.render_item(state, event.turnId, event.item)
   end)
 
-  -- Per-tick render notification. Captains hook this for markview
-  -- reattach / treesitter refresh / statusline animations that need
-  -- to follow the stream. Fires on every transcript item — keep
+  -- Per-tick render notification. Captains hook this for any
+  -- treesitter / decoration / statusline animation that needs to
+  -- follow the stream. Fires on every transcript item — keep
   -- handlers cheap.
   pcall(vim.api.nvim_exec_autocmds, "User", {
     pattern = "HyprpilotChatRendered",
@@ -2149,14 +2181,77 @@ end
 ---`+-- N lines: <line>` chrome which clobbers the head row's own
 ---icon / status / title we want visible at a glance.
 ---@return string
+---Map a section `kind` to a captain-readable noun. Singular when
+---there's only one entry, plural otherwise.
+local SECTION_NOUNS = {
+  thoughts = { one = "thought", many = "thoughts" },
+  tools = { one = "tool call", many = "tool calls" },
+  tasks = { one = "task", many = "tasks" },
+  attachments = { one = "attachment", many = "attachments" },
+  adapter = { one = "adapter note", many = "adapter notes" },
+}
+
+---Resolve the per-buffer render state for the buffer the foldtext
+---is being asked about. Cheap linear scan; the live `_states` table
+---is keyed by instance, not bufnr, so we walk it once. Returns nil
+---when the buffer isn't a per-instance chat (placeholder, scratch).
+---@param bufnr integer
+---@return hyprpilot.render.State?
+local function state_for_bufnr(bufnr)
+  for _, st in pairs(M._states) do
+    if st.bufnr == bufnr then
+      return st
+    end
+  end
+  return nil
+end
+
+---Find the section whose header extmark sits at `header_row` in
+---`state.bufnr`. Returns the section table + its kind, or nil when
+---no section starts there (e.g. the fold is over an arbitrary
+---block, not a section header).
+---@param state hyprpilot.render.State
+---@param header_row integer  -- 0-indexed
+---@return table?, string?
+local function find_section_at_row(state, header_row)
+  for _, layout in pairs(state.turn_layouts) do
+    if type(layout.sections) == "table" then
+      for kind, section in pairs(layout.sections) do
+        local pos = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})
+        if pos[1] == header_row then
+          return section, kind
+        end
+      end
+    end
+  end
+  return nil, nil
+end
+
+---Custom foldtext: when a fold opens on a section header row
+---(`### thoughts` / `### tools` / etc.), surface the captain-
+---facing item count (`### thoughts  3 thoughts`) instead of the
+---raw line count Vim would otherwise tack on. Falls back to the
+---bare header line + line count for non-section folds (turn
+---headers, ad-hoc folds the captain creates).
 function M.foldtext()
   local fs = vim.v.foldstart or 1
   local fe = vim.v.foldend or fs
   local line = vim.fn.getline(fs) or ""
-  local count = fe - fs + 1
 
-  -- Strip any leading tab that vim's default would have replaced with
-  -- "+" to make room for the chrome — we own the line, render it as-is.
+  local bufnr = vim.api.nvim_get_current_buf()
+  local state = state_for_bufnr(bufnr)
+  if state ~= nil then
+    local section, kind = find_section_at_row(state, fs - 1)
+    if section ~= nil and kind ~= nil then
+      local count = section.item_count or #(section.block_ids or {})
+      local nouns = SECTION_NOUNS[kind] or { one = kind, many = kind }
+      local noun = count == 1 and nouns.one or nouns.many
+      return string.format("%s  [%d %s]", line, count, noun)
+    end
+  end
+
+  -- Fallback: line count (the previous behaviour).
+  local count = fe - fs + 1
   return string.format("%s  ▸ %d", line, count)
 end
 

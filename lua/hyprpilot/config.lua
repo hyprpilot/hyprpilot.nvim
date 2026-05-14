@@ -14,6 +14,18 @@ local M = {}
 ---@field completion? hyprpilot.ConfigCompletion
 ---@field notification? hyprpilot.ConfigNotification
 ---@field diff_preview? hyprpilot.ConfigDiffPreview
+---@field icons? hyprpilot.ConfigIcons
+
+--- Glyph overrides for tool status badges and tool-kind prefixes
+--- rendered into the chat. Defaults are nerd-font glyphs (the
+--- captain's terminal is expected to ship one); ASCII fallbacks
+--- live a few lines below in case the captain prefers a no-font
+--- look or copies their setup to a non-nerd-font terminal.
+---@class hyprpilot.ConfigIcons
+---@field tool_status? table<string, string>  -- keys: completed | failed | pending | running | awaiting_permission
+---@field tool_kind? table<string, string>    -- keys: execute | terminal | edit | write | read | fetch | search | glob | delete | think | default
+---@field task_status? table<string, string>  -- keys: pending | in_progress | completed (mirror of daemon's PlanStepStatus)
+---@field turn_status? table<string, string>  -- keys: ok | cancelled | error (rendered into the turn-end stop chip)
 
 ---@class hyprpilot.ConfigDiffPreview
 ---@field keymaps? hyprpilot.ConfigDiffPreviewKeymaps
@@ -94,7 +106,11 @@ local M = {}
 --- is `string | string[] | false` — `false` disables, lists bind
 --- multiple keys to the same action.
 ---@class hyprpilot.ConfigChatKeymaps
----@field goto_file? string | string[] | false  -- open the file ref under cursor (default `gf`)
+---@field goto_file? string | string[] | false      -- open the file ref under cursor (default `gf`)
+---@field next_turn? string | string[] | false      -- jump to next `## pilot` / `## captain` header (default `]h`)
+---@field prev_turn? string | string[] | false      -- jump to previous turn header (default `[h`)
+---@field next_section? string | string[] | false   -- jump to next `### tools` / `### thoughts` / etc (default `]s`)
+---@field prev_section? string | string[] | false   -- jump to previous section header (default `[s`)
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -164,21 +180,22 @@ local defaults = {
       return math.max(3, math.floor(lines * 0.4))
     end,
     keymaps = {
-      -- `<C-g>` / `<C-r>` defaults dodge vim's bare-`g` prefix
-      -- (with bare `g`, the captain couldn't type `gg` to top of
-      -- the row). The captain can override any action with a
-      -- string / list / `false` (disable).
-      accept = "<C-g>",
-      reject = "<C-r>",
+      -- `<localleader>` defaults stay clear of vim's normal-mode
+      -- prefixes — `<C-o>` (the previous diff binding) collides with
+      -- the jumplist; `<C-g>` / `<C-r>` collide with file info /
+      -- redo if the captain ever switches into the row from a
+      -- modifiable buffer. Each action accepts `string |
+      -- string[] | false`, so captains who prefer the older
+      -- bindings can pass `accept = { "<localleader>a", "<C-g>" }`
+      -- (or the bare list) without code changes.
+      accept = "<localleader>a",
+      reject = "<localleader>d",
       submit = "<CR>",
       cycle_next = "<Tab>",
       cycle_prev = "<S-Tab>",
       -- Opens / closes the inline diff preview for the head entry
-      -- when it's an edit-shaped tool. `<C-o>` is normally the
-      -- jumplist-back key, but the row buffer is read-only and the
-      -- jumplist is meaningless inside it — the captain's
-      -- expectation is "open this diff," which the keymap matches.
-      show_diff = "<C-o>",
+      -- when it's an edit-shaped tool.
+      show_diff = "<localleader>g",
     },
   },
   diff_preview = {
@@ -188,8 +205,10 @@ local defaults = {
     -- this on prematurely makes every reject return `-32602`).
     send_reject_feedback = false,
     keymaps = {
-      accept = "<C-g>",
-      reject = "<C-r>",
+      -- Match the row's `<localleader>a/d/g` so the captain doesn't
+      -- have to learn a second alphabet inside the diff preview.
+      accept = "<localleader>a",
+      reject = "<localleader>d",
       close = "<Esc>",
       next_hunk = "]h",
       prev_hunk = "[h",
@@ -213,12 +232,60 @@ local defaults = {
   },
   notification = {
     bell = {
-      enabled = false,
+      enabled = true,
     },
   },
   chat = {
     keymaps = {
       goto_file = "gf",
+      -- `[`/`]` family follows vim's stock next-of-kind motions
+      -- (`]m`, `]s`, etc.). `h` for "header" stays clear of `]s`
+      -- which spell-checking would normally claim — but the chat
+      -- buffer is read-only with `spell = false`, so reusing it
+      -- for "section" doesn't fight anything.
+      next_turn = "]h",
+      prev_turn = "[h",
+      next_section = "]s",
+      prev_section = "[s",
+    },
+  },
+  -- Nerd-font glyphs by default (Font Awesome set, mirrors the
+  -- desktop overlay's `@fortawesome/free-solid-svg-icons` choices in
+  -- `ui/src/lib/tools/presentation.ts`). Captains without a nerd
+  -- font override with ASCII via `setup({ icons = { tool_status =
+  -- { completed = "[ok]", ... } } })`. Glyphs are pasted as literal
+  -- UTF-8 — they look blank in editors that don't ship a nerd font
+  -- but render correctly in Neovim under one.
+  icons = {
+    tool_status = {
+      completed = "", -- nf-fa-check (U+F00C)
+      failed = "", -- nf-fa-times (U+F00D)
+      pending = "", -- nf-fa-clock_o (U+F017)
+      running = "", -- nf-fa-refresh (U+F021)
+      awaiting_permission = "", -- nf-fa-exclamation_triangle (U+F071)
+    },
+    tool_kind = {
+      execute = "", -- nf-fa-terminal (U+F120)
+      terminal = "", -- nf-fa-terminal (U+F120)
+      edit = "", -- nf-fa-pencil (faPen) (U+F040)
+      write = "", -- nf-fa-edit (faPenToSquare) (U+F044)
+      read = "", -- nf-fa-file_text_o (faFileLines) (U+F15C)
+      fetch = "", -- nf-fa-globe (U+F0AC)
+      search = "", -- nf-fa-search (faMagnifyingGlass) (U+F002)
+      glob = "", -- nf-fa-star (faStarOfLife approximation) (U+F005)
+      delete = "", -- nf-fa-trash (U+F1F8)
+      think = "", -- nf-fa-lightbulb_o (faBrain approximation) (U+F0EB)
+      default = "", -- nf-fa-cog (U+F013)
+    },
+    task_status = {
+      pending = "", -- nf-fa-square_o (U+F0C8)
+      in_progress = "", -- nf-fa-dot_circle_o (U+F192)
+      completed = "", -- nf-fa-check_square (U+F14A)
+    },
+    turn_status = {
+      ok = "", -- nf-fa-check (U+F00C)
+      cancelled = "", -- nf-fa-times (captain aborted)
+      error = "", -- nf-fa-exclamation_triangle
     },
   },
   composer = {
@@ -228,7 +295,12 @@ local defaults = {
     end,
     keymaps = {
       submit = { normal = "<CR>", insert = "<C-s>" },
-      cancel = { normal = "<C-c>", insert = "<C-c>" },
+      -- `<C-c>` stays the insert-mode cancel because that's the
+      -- muscle-memory key in every TUI prompt. Normal mode swaps to
+      -- `<localleader>c` so a captain who escapes-then-aborts isn't
+      -- racing vim's normal-mode `<C-c>` (which interrupts pending
+      -- operators and visual selections).
+      cancel = { normal = "<localleader>c", insert = "<C-c>" },
       close = { normal = "q" },
     },
   },
