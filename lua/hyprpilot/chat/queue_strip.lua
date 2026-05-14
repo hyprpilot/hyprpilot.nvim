@@ -278,8 +278,20 @@ local function open_window()
   end
 
   local previous_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_set_current_win(window._winid)
-  vim.cmd("belowright 1split")
+  -- See `permission_row.open_window` — `window.focus()` absorbs third-
+  -- party BufEnter throws so a missing markdown parser can't kill our
+  -- event loop.
+  if not window.focus() then
+    return
+  end
+  local ok_split = pcall(vim.cmd, "belowright 1split")
+  if not ok_split then
+    log.warn("queue_strip.open: belowright 1split failed")
+    if vim.api.nvim_win_is_valid(previous_win) then
+      pcall(vim.api.nvim_set_current_win, previous_win)
+    end
+    return
+  end
 
   M._winid = vim.api.nvim_get_current_win()
   local bufnr = ensure_buffer()

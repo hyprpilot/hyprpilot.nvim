@@ -434,8 +434,23 @@ local function open_window()
 
   local previous_win = vim.api.nvim_get_current_win()
 
-  vim.api.nvim_set_current_win(window._winid)
-  vim.cmd("belowright 1split")
+  -- `window.focus()` wraps the BufEnter-firing `nvim_set_current_win`
+  -- in pcall. Third-party autocmds (markview, render-markdown) that
+  -- bind on BufEnter and call `vim.treesitter.start()` will throw when
+  -- the captain's environment lacks the markdown parser; absorbing
+  -- the throw here keeps that environment problem from killing our
+  -- event dispatch loop.
+  if not window.focus() then
+    return
+  end
+  local ok_split = pcall(vim.cmd, "belowright 1split")
+  if not ok_split then
+    log.warn("permission_row.open_window: belowright 1split failed")
+    if vim.api.nvim_win_is_valid(previous_win) then
+      pcall(vim.api.nvim_set_current_win, previous_win)
+    end
+    return
+  end
 
   M._winid = vim.api.nvim_get_current_win()
   local bufnr = ensure_buffer()
