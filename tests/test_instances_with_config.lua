@@ -73,6 +73,61 @@ T["instances.focus: forwards with_config on the ensure-spawn path"] = function()
   restore_client()
 end
 
+T["instances.spawn: daemon rejection (-32602 invalid_params) surfaces through callback"] = function()
+  local restore_client = helpers.stub_client_with({
+    ["instances/spawn"] = { err = { kind = "rpc", code = -32602, message = "bad merged config" } },
+  })
+
+  local captured_err, captured_instance
+  require("hyprpilot.instances").spawn({
+    profile_id = "engineer",
+    show = false,
+    with_config = { { agents = "this is not a list" } },
+  }, function(err, instance)
+    captured_err = err
+    captured_instance = instance
+  end)
+
+  MiniTest.expect.equality(captured_err.code, -32602)
+  MiniTest.expect.equality(captured_err.message, "bad merged config")
+  MiniTest.expect.equality(captured_instance, nil)
+
+  restore_client()
+end
+
+T["instances.spawn: wrong-type with_config (string) is omitted from the wire"] = function()
+  local restore_client, calls = helpers.stub_client_with({
+    ["instances/spawn"] = { result = { instanceId = "inst-new" } },
+  })
+
+  ---@diagnostic disable-next-line: assign-type-mismatch
+  require("hyprpilot.instances").spawn({ profile_id = "engineer", show = false, with_config = "oops" })
+
+  MiniTest.expect.equality(calls[1].params.withConfig, nil)
+
+  restore_client()
+end
+
+T["instances.spawn: map-shaped with_config is omitted from the wire"] = function()
+  local restore_client, calls = helpers.stub_client_with({
+    ["instances/spawn"] = { result = { instanceId = "inst-new" } },
+  })
+
+  -- Captain accidentally builds a single patch object instead of a
+  -- list of patch objects — `#tbl` is 0, `next(tbl)` is set. Warn +
+  -- omit so the daemon doesn't see a JSON object where it expects
+  -- an array.
+  require("hyprpilot.instances").spawn({
+    profile_id = "engineer",
+    show = false,
+    with_config = { agents = { { id = "code" } } },
+  })
+
+  MiniTest.expect.equality(calls[1].params.withConfig, nil)
+
+  restore_client()
+end
+
 T["instances.spawn(name=...) routes through focus and carries with_config"] = function()
   local restore_client, calls = helpers.stub_client_with({
     ["instances/focus"] = { result = { instanceId = "inst-new", name = "feature-x" } },

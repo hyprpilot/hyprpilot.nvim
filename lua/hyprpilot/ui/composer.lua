@@ -721,8 +721,14 @@ end
 ---`QueueStrip.vue` behaviour — captain stays in control of when
 ---the next prompt lands. Pass `opts.bypass_queue = true` to skip
 ---the queue check (the queue strip's send-now path uses this).
+---`opts.with_config` mirrors `instances.spawn`'s field — only the
+---daemon's auto-spawn fallback on `prompts/send` (no `instance_id`
+---resolved live) actually uses it, but the composer carries it
+---through for completeness so a captain calling
+---`composer.submit(text, { with_config = ... })` against a not-yet-
+---spawned instance gets the patches honoured.
 ---@param text string?
----@param opts { instance_id?: string, attachments?: table[], bypass_queue?: boolean }?
+---@param opts { instance_id?: string, attachments?: table[], bypass_queue?: boolean, with_config?: hyprpilot.ConfigPatch[] }?
 function M.submit(text, opts)
   opts = opts or {}
   local instance_id = opts.instance_id or window.active_instance()
@@ -791,6 +797,20 @@ function M.submit(text, opts)
   local payload = { instanceId = instance_id, text = text }
   if attachments_snapshot ~= nil and #attachments_snapshot > 0 then
     payload.attachments = attachments_snapshot
+  end
+  -- Match the validation / log shape used by `instances.spawn`'s
+  -- with_config branch — bad input (non-list / map-shaped) logs
+  -- and skips so captain misuse surfaces in `:messages`.
+  if opts.with_config ~= nil then
+    if type(opts.with_config) ~= "table" then
+      log.warn("composer.submit: with_config must be a list of patch tables, got %s — omitting", type(opts.with_config))
+    elseif #opts.with_config == 0 then
+      if next(opts.with_config) ~= nil then
+        log.warn("composer.submit: with_config must be a list (array-shaped table), got map / sparse — omitting")
+      end
+    else
+      payload.withConfig = opts.with_config
+    end
   end
 
   -- Fire BEFORE the daemon round-trip so handlers (markview detach,
