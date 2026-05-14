@@ -4,7 +4,6 @@ local M = {}
 ---@field log_level? number
 ---@field socket? string
 ---@field ui? hyprpilot.ConfigUi
----@field mcp? hyprpilot.ConfigMcp
 ---@field client? hyprpilot.ConfigClient
 ---@field chat? hyprpilot.ConfigChat
 ---@field composer? hyprpilot.ConfigComposer
@@ -116,9 +115,6 @@ local M = {}
 ---@field position? "left" | "right"
 ---@field width? number | (fun(columns: number): number?)
 
----@class hyprpilot.ConfigMcp
----@field enabled? boolean
-
 ---@class hyprpilot.ConfigClient
 ---@field timeout_ms? integer        -- per-request timeout
 ---@field connect_attempts? integer  -- connect tries before giving up
@@ -151,9 +147,6 @@ local defaults = {
 
       return 80
     end,
-  },
-  mcp = {
-    enabled = true,
   },
   client = {
     timeout_ms = 5000,

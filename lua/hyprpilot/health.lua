@@ -144,13 +144,6 @@ local function check_listen_socket()
 end
 
 local function check_mcp()
-  local config = require("hyprpilot.config").options.mcp or {}
-
-  if config.enabled == false then
-    health.info("MCP bridge disabled (`mcp.enabled = false`)")
-    return
-  end
-
   local ok, mcp = pcall(require, "hyprpilot.mcp")
   if not ok then
     health.warn("`hyprpilot.mcp` failed to load: " .. tostring(mcp))

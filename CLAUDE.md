@@ -42,13 +42,21 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   (`task format` / `task lint`), `mise.toml` pins versions.
 - **Layout:**
   - **Root modules:** `init`, `config`, `log`, `health`, `client`,
-    `status`, `mcp`. The root is reserved for plugin-wide entry
-    points and the wire transport — every other concern lives in
-    a subdirectory.
+    `status`. The root is reserved for plugin-wide entry points
+    and the wire transport — every other concern lives in a
+    subdirectory.
   - `rpc/` — daemon RPC wrappers: `instances`, `permissions`,
     `profiles`, `shutdown`. One file per RPC namespace; each module
     is a thin camelCase ↔ snake_case translation layer over
     `client.request` / `client.notify`.
+  - `mcp/` — Lua-side MCP tool registry (`init.lua`) plus
+    captain-opt-in tool categories (`lsp`, `editor`, `open`). The
+    Python bridge in `pkg/` queries `require("hyprpilot.mcp").list()`
+    and re-exposes whatever the captain registered. Tool names
+    follow `<category>_<verb>` (e.g. `lsp_definition`,
+    `editor_grep`, `open_url`); category modules expose a
+    `register_all()` helper plus a `M.tools` table for selective
+    registration.
   - `chat/` — chat surface (the per-instance markdown buffer):
     `buffer`, `window`, `render`, `events`, `header`, `keymaps`,
     `permission-row`, `queue-strip`, `winbar`, `stats`.
@@ -176,6 +184,28 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   set the opt-out themselves. Default stance is "let peers see
   us"; the plugin only opts out where the third-party decoration
   would actively corrupt our render, never preemptively.
+- **MCP tool registration is captain-opt-in, not config-driven** —
+  every category module under `lua/hyprpilot/mcp/` ships a
+  `register_all()` helper plus a `M.tools` table, but the
+  captain calls them from their own config. There's no
+  `setup({ mcp = { lsp = true, ... } })` flag because the
+  captain already has finer-grained control on the daemon side
+  (per-profile allow / deny / auto-allow per tool name) and a
+  config-side flag would just be a coarser duplicate of that
+  policy. Tool names follow `<category>_<verb>` so the agent
+  reads the prefix and knows the surface (`lsp_*` for language
+  server, `editor_*` for editor state, `open_*` for system
+  dispatch).
+- **MCP tool implementations vet against current Neovim APIs,
+  not third-party plugins** — `mcp/lsp.lua` uses per-client
+  `client:request_sync()` (not the soft-deprecated
+  `vim.lsp.buf_request_sync`), `make_text_document_params(bufnr)`
+  + manual position (not `make_position_params()` which ignores
+  `bufnr`), and carries `client.offset_encoding` into
+  `locations_to_items` / `apply_workspace_edit` so multi-encoding
+  setups don't mis-translate columns. The `mcp-diagnostics.nvim`
+  reference repo got the tool surface right but wired the older
+  APIs throughout — we took the shape, not the code.
 - **Auto-spawn on first show** — `chat.window.show()` with no
   `instance_id` argument and an empty `_instances` registry kicks
   off `instances.spawn({})` and re-enters from the callback. Never
