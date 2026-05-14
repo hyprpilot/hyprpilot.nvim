@@ -75,6 +75,7 @@ M.LINKS = {
   -- Permission row (pinned single-line bar between chat and composer
   -- while at least one permission is pending)
   HyprpilotPermissionRow = "WarningMsg",
+  HyprpilotPermissionDiffIndicator = "Special",
 
   -- Queue strip (pinned bar between permission row and composer
   -- while at least one prompt is queued for the active instance).
