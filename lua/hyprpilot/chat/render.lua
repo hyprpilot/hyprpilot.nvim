@@ -31,6 +31,7 @@ local M = {}
 ---| "plan"
 ---| "permission_request"
 ---| "placeholder"
+---| "adapter"
 
 ---@class hyprpilot.render.Block
 ---@field id string
@@ -275,9 +276,15 @@ end
 ---Per-turn section ordering. Sections appear in this order (top to
 ---bottom) between the `## pilot` header and the prose. The values
 ---double as priority ranks for new-section insertion.
-local SECTION_ORDER = { tasks = 1, thoughts = 2, tools = 3, attachments = 4 }
+---
+---`adapter` sits at the top because it surfaces session-context
+---changes (mode / model / effort flips, system prompt injection)
+---that frame everything else in the turn — captain sees "what is
+---this turn running with" before reading what the agent did.
+local SECTION_ORDER = { adapter = 0, tasks = 1, thoughts = 2, tools = 3, attachments = 4 }
 
 local SECTION_HEADER = {
+  adapter = "### adapter",
   tasks = "### tasks",
   thoughts = "### thoughts",
   tools = "### tools",
@@ -567,6 +574,8 @@ local function section_header_line(kind, item_count)
     unit = item_count == 1 and "call" or "calls"
   elseif kind == "attachments" then
     unit = item_count == 1 and "file" or "files"
+  elseif kind == "adapter" then
+    unit = item_count == 1 and "change" or "changes"
   else
     unit = "items"
   end
@@ -1539,6 +1548,137 @@ function M.handle_turn_started(event)
       repaint_pilot_header(state, layout)
     end
   end
+end
+
+---Resolve the display name for a wire id via a `{ id, name }` list
+---(`available_modes` / `available_models` / `options`). Falls back
+---to the id when the list doesn't carry a name for it — better the
+---wire id than nothing.
+---@param wire_id string
+---@param list table[]?
+---@return string
+local function resolve_display_name(wire_id, list)
+  if type(list) == "table" then
+    for _, item in ipairs(list) do
+      if item.id == wire_id or item.value == wire_id then
+        if type(item.name) == "string" and item.name ~= "" then
+          return item.name
+        end
+      end
+    end
+  end
+  return wire_id
+end
+
+---Mint a stable block id for an adapter note. One id per (turn,
+---kind) pair so re-firing the same notification kind dedups against
+---the existing block instead of stacking duplicates.
+---@param turn_id string
+---@param kind string
+---@return string
+local function adapter_block_id(turn_id, kind)
+  return "adapter:" .. turn_id .. ":" .. kind
+end
+
+---Append (or dedup-update) an adapter note row in the current
+---turn's `### adapter` section. `kind` is the wire-level category
+---("mode" / "effort" / "model" / "system_prompt"). `label` is the
+---fully-formatted display string. Dedups against the last value
+---recorded for `kind` on this turn — repeating the same value is a
+---silent no-op to avoid spam from a chatty daemon.
+---@param state hyprpilot.render.State
+---@param kind string
+---@param label string
+local function add_adapter_note(state, kind, label)
+  local turn_id = state.current_turn
+  if turn_id == nil then
+    return
+  end
+
+  local layout = state.turn_layouts[turn_id]
+  if layout == nil then
+    return
+  end
+
+  layout.adapter_last = layout.adapter_last or {}
+  if layout.adapter_last[kind] == label then
+    return
+  end
+  layout.adapter_last[kind] = label
+
+  insert_block_into_section(state, turn_id, "adapter", adapter_block_id(turn_id, kind) .. ":" .. tostring(vim.uv.hrtime()), "adapter", { label })
+end
+
+---Live `current_mode_update` event. Drops a `mode · <name>` row in
+---the adapter section. Resolves the display name from the cached
+---`available_modes` list when available; falls back to the wire id
+---otherwise.
+---@param event table
+function M.handle_current_mode_update(event)
+  local state = M._states[event.instanceId]
+  if state == nil then
+    return
+  end
+
+  local available = (require("hyprpilot.chat.winbar")._meta[event.instanceId] or {}).available_modes
+  local label = "mode · " .. resolve_display_name(event.currentModeId, available)
+  add_adapter_note(state, "mode", label)
+end
+
+---Live `config_options_update` event — one row per category whose
+---`currentValue` actually changed (dedup is per-kind so reruns with
+---the same selection collapse). `effort` / future vendor toggles
+---flow through here.
+---@param event table
+function M.handle_config_options_update(event)
+  local state = M._states[event.instanceId]
+  if state == nil then
+    return
+  end
+
+  local categories = event.categories
+  if type(categories) ~= "table" then
+    return
+  end
+
+  for _, category in ipairs(categories) do
+    if type(category) == "table" and type(category.id) == "string" and type(category.currentValue) == "string" then
+      local value_label = resolve_display_name(category.currentValue, category.options)
+      local category_label = (type(category.name) == "string" and category.name ~= "") and category.name or category.id
+      local label = string.format("%s · %s", category_label:lower(), value_label)
+      add_adapter_note(state, "config:" .. category.id, label)
+    end
+  end
+end
+
+---Live `system_prompt_injected` event. Drops a `system prompt ·
+---<files>` row in the adapter section. Files are joined by commas;
+---basenames only so the row stays readable.
+---@param event table
+function M.handle_system_prompt_injected(event)
+  local state = M._states[event.instanceId]
+  if state == nil then
+    return
+  end
+
+  local files = event.files
+  if type(files) ~= "table" or #files == 0 then
+    return
+  end
+
+  local basenames = {}
+  for _, path in ipairs(files) do
+    if type(path) == "string" then
+      table.insert(basenames, vim.fs.basename(path) or path)
+    end
+  end
+
+  if #basenames == 0 then
+    return
+  end
+
+  local label = "system prompt · " .. table.concat(basenames, ", ")
+  add_adapter_note(state, "system_prompt", label)
 end
 
 ---Live `usage_update` event. Attaches the latest reading to the
