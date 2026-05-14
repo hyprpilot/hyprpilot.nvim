@@ -5,7 +5,7 @@
 local T = MiniTest.new_set()
 
 T["enqueue: raw_input lands on the Entry verbatim"] = function()
-  local row = require("hyprpilot.chat.permission_row")
+  local row = require("hyprpilot.chat.permission-row")
   row.reset()
 
   row.enqueue("inst-1", {
@@ -26,7 +26,7 @@ T["enqueue: raw_input lands on the Entry verbatim"] = function()
 end
 
 T["_entry_by_request_id returns nil for unknown ids"] = function()
-  local row = require("hyprpilot.chat.permission_row")
+  local row = require("hyprpilot.chat.permission-row")
   row.reset()
   MiniTest.expect.equality(row._entry_by_request_id("nope"), nil)
 end

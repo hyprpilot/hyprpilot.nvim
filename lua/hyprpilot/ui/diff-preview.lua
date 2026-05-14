@@ -22,7 +22,7 @@ local permissions = require("hyprpilot.permissions")
 
 local M = {}
 
-local NS = vim.api.nvim_create_namespace("hyprpilot.ui.diff_preview")
+local NS = vim.api.nvim_create_namespace("hyprpilot.ui.diff-preview")
 local AUGROUP = vim.api.nvim_create_augroup("HyprpilotDiffPreview", { clear = true })
 
 ---@class hyprpilot.diff_preview.Hunk
@@ -115,7 +115,7 @@ end
 ---`(new_lines, reason)`; reason is set when we can't compute (e.g.
 ---old_string not in buffer). When reason is set, new_lines is the
 ---unchanged original — caller renders an "out of sync" pill.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 ---@param current_lines string[]   -- buffer's current content
 ---@return string[], string?
 local function compute_new_lines(entry, current_lines)
@@ -352,7 +352,7 @@ local function install_keymaps(bufnr, state)
     -- own accept path uses the same patterns; mirroring keeps the
     -- two surfaces in sync. We look the entry up fresh in case it
     -- mutated under us (focus change etc.).
-    local row = require("hyprpilot.chat.permission_row")
+    local row = require("hyprpilot.chat.permission-row")
     local entry = row._entry_by_request_id and row._entry_by_request_id(state.request_id)
     if entry == nil then
       log.debug("diff_preview.accept: entry vanished, closing")
@@ -377,7 +377,7 @@ local function install_keymaps(bufnr, state)
   end, "diff preview: allow + close")
 
   apply(keymaps.reject or "<C-r>", function()
-    local row = require("hyprpilot.chat.permission_row")
+    local row = require("hyprpilot.chat.permission-row")
     local entry = row._entry_by_request_id and row._entry_by_request_id(state.request_id)
     if entry == nil then
       log.debug("diff_preview.reject: entry vanished, closing")
@@ -520,7 +520,7 @@ end
 ---Open a preview for `entry`. Idempotent: re-opening for the same
 ---request id is a no-op; re-opening for a different request closes
 ---the previous preview first.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 function M.open(entry)
   if entry == nil or type(entry.request_id) ~= "string" then
     log.warn("diff_preview.open: missing entry / request_id")
@@ -648,7 +648,7 @@ end
 
 ---Toggle the preview for `entry`. Closes if currently open for the
 ---same request; opens otherwise.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 function M.toggle(entry)
   if entry == nil then
     return
@@ -663,7 +663,7 @@ end
 ---True when the entry is an edit-shaped request the preview can
 ---render (tool_kind == "edit" AND raw_input carries a path-like
 ---field). Excludes notebook edits (no preview in v1).
----@param entry hyprpilot.chat.permission_row.Entry?
+---@param entry hyprpilot.chat.permission-row.Entry?
 ---@return boolean
 function M.is_previewable(entry)
   if entry == nil then

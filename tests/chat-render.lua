@@ -366,7 +366,7 @@ end
 
 T["permission_request never lands in the chat buffer (handled by permission_row)"] = function()
   local render = require("hyprpilot.chat.render")
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local permission_row = require("hyprpilot.chat.permission-row")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
   local bufnr = buffer.create(id)
@@ -488,7 +488,7 @@ end
 
 T["permission_resolved drops the request from the row queue"] = function()
   local render = require("hyprpilot.chat.render")
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local permission_row = require("hyprpilot.chat.permission-row")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
   local bufnr = buffer.create(id)

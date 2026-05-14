@@ -1320,13 +1320,13 @@ local function render_permission_request(state, record)
   -- can find it. We don't create a chat-buffer block.
   state.permissions[record.requestId] = "row:" .. record.requestId
 
-  require("hyprpilot.chat.permission_row").enqueue(state.instance_id, {
+  require("hyprpilot.chat.permission-row").enqueue(state.instance_id, {
     request_id = record.requestId,
     tool = record.tool or record.toolKind or "tool",
     tool_kind = record.toolKind,
     options = type(record.options) == "table" and record.options or {},
     formatted = record.formatted,
-    -- Daemon-computed pre-select. Honoured by `permission_row`'s
+    -- Daemon-computed pre-select. Honoured by `permission-row`'s
     -- `default_focused_idx` when it points at a real option id; the
     -- local kind-based heuristic still runs as the fallback so older
     -- daemons (or events the daemon couldn't classify) still get a
@@ -1352,7 +1352,7 @@ function M.mark_permission_resolved(state, request_id, resolved_label)
   end
 
   state.permissions[request_id] = nil
-  require("hyprpilot.chat.permission_row").resolve(request_id, resolved_label)
+  require("hyprpilot.chat.permission-row").resolve(request_id, resolved_label)
 end
 
 ---Render one transcript item (from snapshot or live transcript event).
@@ -1481,7 +1481,7 @@ function M.hydrate(state, snapshot)
   state.last_render_role = nil
   state.turn_id_map = {}
 
-  require("hyprpilot.chat.permission_row").reset()
+  require("hyprpilot.chat.permission-row").reset()
 
   for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)

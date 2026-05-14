@@ -53,11 +53,11 @@ function M.shutdown()
   end)
 
   -- Queue-strip listener teardown. The subscriber otherwise keeps
-  -- a closure on `composer_queue` alive across hot-reload cycles,
+  -- a closure on `composer-queue` alive across hot-reload cycles,
   -- which fires `open_window()` against a stale `chat.window`
   -- module reference.
   step("queue_strip._reset", function()
-    require("hyprpilot.chat.queue_strip")._reset()
+    require("hyprpilot.chat.queue-strip")._reset()
   end)
 
   -- Attention list + bell teardown. Drops every entry and the

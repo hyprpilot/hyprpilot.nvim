@@ -347,7 +347,7 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 
 - **Lua test framework: `mini.test`**
   - Chose: `mini.test` (from `echasnovski/mini.nvim`), shallow-cloned
-    into `vim.fn.tempname()` by `scripts/minimal_init.lua` on every
+    into `vim.fn.tempname()` by `scripts/minimal-init.lua` on every
     `task test-lua` invocation. Neovim wipes the temp dir on exit;
     nothing persists in the repo or the user's cache.
   - Why: `plenary.nvim`'s `busted` is the de facto standard but
@@ -455,11 +455,11 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   entry points. `task test-lua` runs the Lua suite via `mini.test`;
   `task test` chains `test-lua` + `pkg:test`. CI calls `task lint`
   per language and `task test-lua` / `task pkg:test` separately.
-- **`mini.test`** — Lua test runner. `scripts/minimal_init.lua`
+- **`mini.test`** — Lua test runner. `scripts/minimal-init.lua`
   clones `mini.nvim` into `vim.fn.tempname()` on every invocation;
   Neovim wipes the temp dir on exit, so the repo (and the user's
   cache / data dirs) stay untouched. Then `nvim --headless -u
-  scripts/minimal_init.lua -c "lua MiniTest.run()" -c "qa!"` collects
+  scripts/minimal-init.lua -c "lua MiniTest.run()" -c "qa!"` collects
   every `tests/test_*.lua`. The clone is `--depth=1
   --filter=blob:none` so it stays fast even without caching.
 - **`mise.toml`** — pins `aqua:Kampfkarren/selene` and `stylua` to

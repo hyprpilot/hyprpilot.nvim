@@ -1,6 +1,6 @@
 --- Pinned queue band between the permission row and the composer.
 ---
---- Mirrors the structural pattern of `chat/permission_row.lua`: a
+--- Mirrors the structural pattern of `chat/permission-row.lua`: a
 --- shared 1-buffer / 1-window pinned strip that auto-shows when the
 --- active instance has queued prompts, auto-resizes to fit content
 --- (clamped via `config.queue_strip.max_height`), auto-hides on
@@ -27,7 +27,7 @@
 --- once captain wants it.
 
 local buffer = require("hyprpilot.chat.buffer")
-local composer_queue = require("hyprpilot.composer_queue")
+local composer_queue = require("hyprpilot.composer-queue")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local window = require("hyprpilot.chat.window")
@@ -35,7 +35,7 @@ local window = require("hyprpilot.chat.window")
 local M = {}
 
 local BUFFER_NAME = "hyprpilot://queue_strip"
-local NS = vim.api.nvim_create_namespace("hyprpilot.chat.queue_strip")
+local NS = vim.api.nvim_create_namespace("hyprpilot.chat.queue-strip")
 
 ---@type integer?
 M._winid = nil
@@ -259,7 +259,7 @@ local function install_keymaps(bufnr)
   apply_action(bufnr, keymaps.edit_head, edit_head, "edit queued head in composer")
 end
 
--- Test-only seam: see `permission_row.lua` for rationale.
+-- Test-only seam: see `permission-row.lua` for rationale.
 ---@param bufnr integer
 function M._install_keymaps_for_tests(bufnr)
   install_keymaps(bufnr)

@@ -7,7 +7,7 @@
 local T = MiniTest.new_set()
 
 T["refresh_if_queued: empty queue → no-op (no window opened)"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   pr.refresh_if_queued()
@@ -16,7 +16,7 @@ T["refresh_if_queued: empty queue → no-op (no window opened)"] = function()
 end
 
 T["refresh_if_queued: queue non-empty + chat hidden → no-op (open_window guards on chat visibility)"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   local window = require("hyprpilot.chat.window")
 
   -- Force the chat to look hidden so `open_window`'s guard short-

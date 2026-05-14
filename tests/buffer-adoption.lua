@@ -23,7 +23,7 @@ local function spawn_ghost_buffer(name)
 end
 
 T["permission_row.refresh adopts the existing `hyprpilot://permission_row` buffer"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   if pr._bufnr and vim.api.nvim_buf_is_valid(pr._bufnr) then
     pcall(vim.api.nvim_buf_delete, pr._bufnr, { force = true })
   end

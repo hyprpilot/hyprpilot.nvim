@@ -1,4 +1,4 @@
---- Regression tests for `permission_row`'s default-focus matcher.
+--- Regression tests for `permission-row`'s default-focus matcher.
 --- The daemon's `PermissionOptionView.kind` field is wire-normalised
 --- to `allow_*` / `reject_*` and is the canonical allow/reject
 --- discriminator. Our matcher MUST prefer `kind` over the more
@@ -8,7 +8,7 @@
 local T = MiniTest.new_set()
 
 T["enqueue focuses the option whose `kind` starts with `allow` (even when id is opaque)"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   -- Vendor-style options: opaque ids, neutral names, but `kind`
@@ -32,7 +32,7 @@ T["enqueue focuses the option whose `kind` starts with `allow` (even when id is 
 end
 
 T["enqueue falls back to id/name when `kind` is empty (defensive)"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   pr.enqueue("inst-1", {
@@ -54,7 +54,7 @@ T["enqueue picks `allow_session` / future variants via the prefix match"] = func
   -- Forward-compat: daemon may add `allow_session` / `allow_workspace`
   -- variants. As long as they start with `allow`, the matcher picks
   -- them — same contract as the daemon's `is_allow_kind`.
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   pr.enqueue("inst-1", {

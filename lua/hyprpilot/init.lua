@@ -27,7 +27,7 @@ function M.setup(config)
   -- it stops being meaningful. The preview itself is captain-opened
   -- via `<C-o>` on the permission row; this is just the cleanup
   -- side of the lifecycle.
-  require("hyprpilot.ui.diff_preview").ensure_listeners()
+  require("hyprpilot.ui.diff-preview").ensure_listeners()
 
   -- Graceful teardown on Neovim exit. `clear = true` on the group
   -- so a captain who re-calls `setup()` (hot reload, config swap)

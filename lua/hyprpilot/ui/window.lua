@@ -29,8 +29,8 @@ local function is_hyprpilot_window(winid)
   local probe = {
     chat_window,
     package.loaded["hyprpilot.chat.header"],
-    package.loaded["hyprpilot.chat.permission_row"],
-    package.loaded["hyprpilot.chat.queue_strip"],
+    package.loaded["hyprpilot.chat.permission-row"],
+    package.loaded["hyprpilot.chat.queue-strip"],
     package.loaded["hyprpilot.ui.composer"],
   }
 

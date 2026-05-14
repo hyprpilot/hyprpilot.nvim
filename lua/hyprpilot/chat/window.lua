@@ -59,10 +59,9 @@ end
 ---when the window is invalid or a third-party `BufEnter` autocmd
 ---throws (third-party markdown / treesitter decorators can fault
 ---when the parser can't be resolved for the registered alias).
----Callers that
----follow `focus()` with `vim.cmd("split")` should bail on `false`
----to keep one bad autocmd from cascading through our event
----dispatch.
+---Callers that follow `focus()` with `vim.cmd("split")` should
+---bail on `false` to keep one bad autocmd from cascading through
+---our event dispatch.
 ---@return boolean
 function M.focus()
   if not M.is_visible() then
@@ -121,8 +120,8 @@ function M.close(instance_id)
   require("hyprpilot.chat.render").forget(id)
   require("hyprpilot.chat.winbar").forget(id)
   require("hyprpilot.ui.composer").wipe(id)
-  require("hyprpilot.chat.permission_row").drop_for_instance(id)
-  require("hyprpilot.composer_queue").reset(id)
+  require("hyprpilot.chat.permission-row").drop_for_instance(id)
+  require("hyprpilot.composer-queue").reset(id)
   require("hyprpilot.notification.attention")._clear_instance(id)
 
   if M._last_active_id == id then
@@ -267,15 +266,15 @@ function M.show(instance_id)
   -- instance has parked prompts. Subscriber wiring lives in
   -- `ensure_listeners`; the strip stays hidden when the queue is
   -- empty.
-  require("hyprpilot.chat.queue_strip").ensure_listeners()
-  require("hyprpilot.chat.queue_strip").refresh()
+  require("hyprpilot.chat.queue-strip").ensure_listeners()
+  require("hyprpilot.chat.queue-strip").refresh()
   -- Permission row mirrors the same pattern — when the chat
   -- re-appears (after a `:q`-driven WinClosed cascade or a
   -- captain-driven `hp.hide()` + `hp.show()`), surface any still-
   -- pending permissions that are sitting in the local queue. The
   -- daemon-side resolution slot lives until something resolves it,
   -- so this never replays a stale prompt.
-  require("hyprpilot.chat.permission_row").refresh_if_queued()
+  require("hyprpilot.chat.permission-row").refresh_if_queued()
 
   if resolved_id ~= nil then
     require("hyprpilot.ui.composer").open()
@@ -298,13 +297,13 @@ local function close_children()
     require("hyprpilot.ui.composer").close()
   end)
   pcall(function()
-    require("hyprpilot.chat.queue_strip").close()
+    require("hyprpilot.chat.queue-strip").close()
   end)
   pcall(function()
     require("hyprpilot.chat.header").close()
   end)
   pcall(function()
-    require("hyprpilot.chat.permission_row").close()
+    require("hyprpilot.chat.permission-row").close()
   end)
 end
 
@@ -386,7 +385,7 @@ function M.switch(instance_id)
     -- The daemon still holds the resolution slot — captain can
     -- replay via `permissions/pending` after switching back if a
     -- pending request was lost from the row.
-    require("hyprpilot.chat.permission_row").reset()
+    require("hyprpilot.chat.permission-row").reset()
 
     -- Composer.open() is idempotent: when the composer's already
     -- visible it swaps its buffer to the new instance's draft.

@@ -15,7 +15,7 @@ local OPTIONS = {
 }
 
 T["enqueue: daemon-supplied default_option_id wins over local Allow heuristic"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   pr.enqueue("inst-1", {
@@ -35,7 +35,7 @@ T["enqueue: daemon-supplied default_option_id wins over local Allow heuristic"] 
 end
 
 T["enqueue: missing default_option_id → falls back to first allow-shaped option"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   pr.enqueue("inst-1", {
@@ -53,7 +53,7 @@ T["enqueue: missing default_option_id → falls back to first allow-shaped optio
 end
 
 T["enqueue: default_option_id pointing at unknown id falls back to heuristic (no crash)"] = function()
-  local pr = require("hyprpilot.chat.permission_row")
+  local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
   pr.enqueue("inst-1", {

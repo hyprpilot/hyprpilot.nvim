@@ -32,7 +32,14 @@ vim.opt.rtp:prepend(repo_root)
 require("mini.test").setup({
   collect = {
     find_files = function()
-      return vim.fn.glob(repo_root .. "/tests/test_*.lua", true, true)
+      -- Every `tests/*.lua` is a test module (the `test_` prefix was
+      -- dropped because the directory already names them as tests).
+      -- `helpers.lua` is excluded — it's a shared helper module, not
+      -- a test file (it doesn't return a MiniTest set).
+      local files = vim.fn.glob(repo_root .. "/tests/*.lua", true, true)
+      return vim.tbl_filter(function(path)
+        return not path:match("/helpers%.lua$")
+      end, files)
     end,
   },
 })

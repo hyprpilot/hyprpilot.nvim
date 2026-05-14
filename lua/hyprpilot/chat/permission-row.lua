@@ -22,9 +22,9 @@ local window = require("hyprpilot.chat.window")
 local M = {}
 
 local BUFFER_NAME = "hyprpilot://permission_row"
-local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission_row")
+local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission-row")
 
----@class hyprpilot.chat.permission_row.Entry
+---@class hyprpilot.chat.permission-row.Entry
 ---@field instance_id string
 ---@field request_id string
 ---@field tool string
@@ -34,7 +34,7 @@ local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission_row")
 ---@field focused_idx integer
 ---@field raw_input? table  -- agent's structured tool input (path / old_string / new_string / content / edits[] for the edit family). Diff preview reads from here.
 
----@type hyprpilot.chat.permission_row.Entry[]
+---@type hyprpilot.chat.permission-row.Entry[]
 M._queue = {}
 
 ---@type integer?
@@ -158,7 +158,7 @@ local function smart_match(options, patterns)
 end
 
 ---Resolve the active entry (head of queue).
----@return hyprpilot.chat.permission_row.Entry?
+---@return hyprpilot.chat.permission-row.Entry?
 local function head()
   return M._queue[1]
 end
@@ -168,7 +168,7 @@ end
 ---Mirrors `diff_preview.is_previewable` without the require cycle —
 ---compose() needs the answer before keymaps fire, and we don't
 ---want the heavier module loaded just to build a button label.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 ---@return boolean
 local function diff_previewable(entry)
   if entry.tool_kind ~= "edit" or type(entry.raw_input) ~= "table" then
@@ -186,7 +186,7 @@ end
 ---`[ Diff ]` button at the tail when the entry is edit-previewable
 ---so the captain sees the affordance instead of having to remember
 ---the `show_diff` keymap.
----@param entry hyprpilot.chat.permission_row.Entry
+---@param entry hyprpilot.chat.permission-row.Entry
 ---@return string
 local function button_line(entry)
   local parts = {}
@@ -429,7 +429,7 @@ local function install_keymaps(bufnr)
     if entry == nil then
       return
     end
-    local diff_preview = require("hyprpilot.ui.diff_preview")
+    local diff_preview = require("hyprpilot.ui.diff-preview")
     if not diff_preview.is_previewable(entry) then
       log.debug("permission_row.show_diff: head entry isn't edit-previewable (tool_kind=%s)", tostring(entry.tool_kind))
       return
@@ -452,7 +452,7 @@ end
 ---table) to refresh against the row's authoritative state at
 ---accept / reject time.
 ---@param request_id string
----@return hyprpilot.chat.permission_row.Entry?
+---@return hyprpilot.chat.permission-row.Entry?
 function M._entry_by_request_id(request_id)
   for _, entry in ipairs(M._queue) do
     if entry.request_id == request_id then

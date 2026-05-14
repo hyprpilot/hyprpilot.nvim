@@ -3,7 +3,7 @@
 --- Concrete config; orchestration lives in `_meta_palette`.
 
 local instances = require("hyprpilot.instances")
-local meta_palette = require("hyprpilot.palettes._meta_palette")
+local meta_palette = require("hyprpilot.palettes._meta-palette")
 
 local M = {}
 

@@ -42,8 +42,8 @@ T["WinClosed on the chat winid drains children and resets _winid"] = function()
   local window = require("hyprpilot.chat.window")
   local composer = require("hyprpilot.ui.composer")
   local header = require("hyprpilot.chat.header")
-  local queue_strip = require("hyprpilot.chat.queue_strip")
-  local permission_row = require("hyprpilot.chat.permission_row")
+  local queue_strip = require("hyprpilot.chat.queue-strip")
+  local permission_row = require("hyprpilot.chat.permission-row")
 
   -- Capture each child's close call. Stub-and-restore keeps other
   -- tests in this file independent of side effects.
