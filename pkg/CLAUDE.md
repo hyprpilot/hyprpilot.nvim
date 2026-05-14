@@ -189,14 +189,32 @@ need on the Lua side. Two management tools (`reload_dynamic_tools`,
 
 ## Publishing to PyPI
 
-The `.github/workflows/publish-pypi.yml` workflow publishes
-`hyprpilot-nvim-mcp` to PyPI on every `v*` tag (release-please cuts
-these on `main` after merging the version-bump PR). Auth is **PyPI
-Trusted Publishing (OIDC)** — no API token is stored in GitHub. PyPI
-verifies the workflow's identity via OIDC and issues a short-lived
-publish token at runtime.
+The `build-pypi` + `publish-pypi` jobs in
+`.github/workflows/release-please.yml` publish `hyprpilot-nvim-mcp`
+to PyPI as a downstream chain of the `release-please` job, gated
+on `release_created == 'true'`. Auth is **PyPI Trusted Publishing
+(OIDC)** — no API token is stored in GitHub. PyPI verifies the
+workflow's identity via OIDC and issues a short-lived publish token
+at runtime.
+
+The publish jobs live in `release-please.yml` (not a separate
+`publish-pypi.yml` reusable workflow) because PyPI's trusted-
+publisher matches the OIDC token's `job_workflow_ref` claim
+against the registered workflow file. With `workflow_call`, that
+claim points at the CALLING workflow regardless of where the
+job's steps are defined — so a reusable workflow path requires
+PyPI to register the CALLER's filename, which is confusing and
+error-prone. Inlining keeps OIDC identity = trusted-publisher
+filename = `release-please.yml`.
 
 ### One-time setup (captain only)
+
+> **Migrating from a `publish-pypi.yml`-named publisher?** If you
+> registered the trusted publisher with `Workflow name:
+> publish-pypi.yml` (the pre-PR-#67 setup), update it to
+> `release-please.yml`. PyPI: project settings → "Trusted
+> publishers" → the existing entry → edit the workflow name. No
+> other field changes.
 
 **1. Create the PyPI project** (skip if already published).
    The first publish has to seed the project; PyPI doesn't accept a
@@ -220,7 +238,7 @@ publish token at runtime.
    | PyPI Project Name | `hyprpilot-nvim-mcp` |
    | Owner | `hyprpilot` |
    | Repository name | `hyprpilot.nvim` |
-   | Workflow name | `publish-pypi.yml` |
+   | Workflow name | `release-please.yml` |
    | Environment name | `pypi` |
 
    The environment binding scopes the OIDC grant to a single
@@ -256,12 +274,16 @@ publish token at runtime.
 ### How it runs
 
 1. Captain merges the release-please PR on `main`. release-please
-   cuts a `v0.X.Y` tag and a GitHub Release.
-2. The tag push triggers `publish-pypi.yml`. The `build` job
-   produces the wheel + sdist via `task build` (uv backend); the
-   `publish` job downloads the artifact and calls
-   `pypa/gh-action-pypi-publish` which OIDC-authenticates against
-   PyPI's trusted-publisher entry.
+   cuts a `vX.Y.Z` tag and a GitHub Release.
+2. The same workflow's `build-pypi` job (gated on
+   `release_created == 'true'`) produces the wheel + sdist via
+   `task build` (uv backend); `publish-pypi` downloads the
+   artifact and calls `pypa/gh-action-pypi-publish` which
+   OIDC-authenticates against PyPI's trusted-publisher entry.
+   Both run in the same workflow run as `release-please` — no
+   tag-push trigger involved (and none would fire anyway, because
+   `secrets.GITHUB_TOKEN`-pushed tags don't trigger workflows by
+   GitHub's anti-loop design).
 3. PyPI verifies the OIDC claims (repo, workflow, environment) match
    the registered publisher and accepts the upload. Captain sees
    the new version on
