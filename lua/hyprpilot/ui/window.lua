@@ -46,39 +46,71 @@ end
 ---@class hyprpilot.ui.window.FocusOpts
 ---@field target? "composer" | "chat"  -- default: composer (where the captain types)
 
+---Resolve the winid to focus on for `target_name`. Composer is the
+---default but may not exist yet (no active instance, placeholder
+---buffer, post-hide reopen) — fall back to chat in that case.
+---@param target_name "composer" | "chat"
+---@return integer? target_winid, integer? composer_winid
+local function resolve_target_winid(target_name)
+  local composer_winid = (package.loaded["hyprpilot.ui.composer"] or {})._winid
+
+  if target_name == "chat" then
+    return chat_window._winid, composer_winid
+  end
+
+  if composer_winid ~= nil and vim.api.nvim_win_is_valid(composer_winid) then
+    return composer_winid, composer_winid
+  end
+  return chat_window._winid, composer_winid
+end
+
+---Jump the cursor to `target_winid`; enter insert mode when that
+---happens to be the composer (so the captain lands ready to type).
+---@param target_winid integer
+---@param composer_winid integer?
+local function jump_to(target_winid, composer_winid)
+  vim.api.nvim_set_current_win(target_winid)
+  if target_winid == composer_winid then
+    vim.cmd("startinsert")
+  end
+end
+
 ---Toggle the captain's focus between a hyprpilot chrome window and
----wherever they came from. From outside, save the current window
----and jump to `opts.target` (default composer). From inside any
----chrome window, jump back to the saved previous window.
+---wherever they came from:
 ---
----Auto-opens the chat split when hidden — the captain's mental
----model is "go to hyprpilot", not "go to hyprpilot but only if
----it's already open".
+---  - chat hidden       → show the split + jump to target
+---  - chat visible, out → stash prev + jump to target
+---  - chat visible, in  → jump back to the stashed prev
+---
+---Default target is the composer (typing surface); `target = "chat"`
+---steers to the read-only chat for scrolling.
 ---@param opts? hyprpilot.ui.window.FocusOpts
 function M.focus(opts)
   opts = opts or {}
   local target_name = opts.target or "composer"
 
+  -- Show-then-focus path. `chat_window.show()` already mints the
+  -- composer split and lands the cursor inside it; we then steer to
+  -- the explicit target so `target = "chat"` actually wins over
+  -- composer's auto-focus, and the stashed prev points at the
+  -- captain's original window (not the chrome show() left us in).
   if not chat_window.is_visible() then
     M._prev_winid = vim.api.nvim_get_current_win()
     chat_window.show()
-  end
 
-  local composer_winid = (package.loaded["hyprpilot.ui.composer"] or {})._winid
-  local target_winid
-  if target_name == "chat" then
-    target_winid = chat_window._winid
-  else
-    target_winid = composer_winid
-    -- Composer may not have minted its split yet (placeholder buffer,
-    -- post-hide reopen, no active instance). Fall back to chat.
+    local target_winid, composer_winid = resolve_target_winid(target_name)
     if target_winid == nil or not vim.api.nvim_win_is_valid(target_winid) then
-      target_winid = chat_window._winid
+      log.warn("ui.window.focus: show() left no focusable window (no active instance?)")
+      return
     end
+    jump_to(target_winid, composer_winid)
+    return
   end
 
+  -- chat visible — in/out toggle.
+  local target_winid, composer_winid = resolve_target_winid(target_name)
   if target_winid == nil or not vim.api.nvim_win_is_valid(target_winid) then
-    log.warn("ui.window.focus: no target window available (chat_visible=%s)", tostring(chat_window.is_visible()))
+    log.warn("ui.window.focus: no target window available")
     return
   end
 
@@ -94,11 +126,7 @@ function M.focus(opts)
   end
 
   M._prev_winid = current
-  vim.api.nvim_set_current_win(target_winid)
-
-  if target_winid == composer_winid then
-    vim.cmd("startinsert")
-  end
+  jump_to(target_winid, composer_winid)
 end
 
 ---Toggle chat window visibility.
