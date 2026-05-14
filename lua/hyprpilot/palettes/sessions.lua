@@ -19,10 +19,10 @@ local M = {}
 ---@field additional_directories? string[]
 
 ---@class hyprpilot.palettes.sessions.Opts
----@field instance_id? string  -- reuse a live instance's actor for the list call
----@field agent_id? string     -- direct ACP agent id (skip profile resolution)
----@field profile_id? string   -- profile to resolve against when no instance / agent specified
----@field cwd? string          -- filter to sessions whose cwd matches; default: every session
+---@field instance_id? string         -- reuse a live instance's actor for the list call
+---@field agent_id? string            -- direct ACP agent id (skip profile resolution)
+---@field profile_id? string          -- profile to resolve against when no instance / agent specified
+---@field cwd? string | false         -- filter & load cwd; default `vim.fn.getcwd()`; `false` disables the filter (every session)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
 
 ---@param wire table
@@ -69,6 +69,22 @@ end
 function M.open(opts)
   opts = opts or {}
 
+  -- `opts.cwd = false` is the explicit "no filter" opt-out; nil/absent
+  -- defaults to vim's cwd. Resolved load-side cwd always falls back to
+  -- vim.fn.getcwd() because `sessions/load` needs a non-nil cwd to
+  -- spawn the loaded session.
+  local cwd_filter, cwd_for_load
+  if opts.cwd == false then
+    cwd_filter = nil
+    cwd_for_load = vim.fn.getcwd()
+  elseif opts.cwd == nil then
+    cwd_filter = vim.fn.getcwd()
+    cwd_for_load = cwd_filter
+  else
+    cwd_filter = opts.cwd
+    cwd_for_load = opts.cwd
+  end
+
   local params = {}
   if opts.instance_id ~= nil then
     params.instanceId = opts.instance_id
@@ -79,8 +95,8 @@ function M.open(opts)
   if opts.profile_id ~= nil then
     params.profileId = opts.profile_id
   end
-  if opts.cwd ~= nil then
-    params.cwd = opts.cwd
+  if cwd_filter ~= nil then
+    params.cwd = cwd_filter
   end
 
   client.request("sessions/list", params, nil, function(err, result)
@@ -115,7 +131,7 @@ function M.open(opts)
             instanceId = opts.instance_id,
             agentId = opts.agent_id,
             profileId = opts.profile_id,
-            cwd = choice.cwd or opts.cwd,
+            cwd = choice.cwd or cwd_for_load,
           },
           nil,
           function(load_err, load_result)

@@ -310,6 +310,50 @@ T["palettes.sessions: pick → fires sessions/load with the chosen sessionId + c
   restore_client()
 end
 
+T["palettes.sessions: omitted cwd defaults the list filter to vim's cwd"] = function()
+  local restore_client, calls = stub_client_with({
+    ["sessions/list"] = { result = { sessions = {} } },
+  })
+  local restore_select = stub_ui_select(function() end)
+
+  require("hyprpilot.palettes.sessions").open()
+
+  local list_call
+  for _, c in ipairs(calls) do
+    if c.method == "sessions/list" then
+      list_call = c
+      break
+    end
+  end
+  MiniTest.expect.equality(list_call ~= nil, true)
+  MiniTest.expect.equality(list_call.params.cwd, vim.fn.getcwd())
+
+  restore_select()
+  restore_client()
+end
+
+T["palettes.sessions: `cwd = false` disables the filter (list every session)"] = function()
+  local restore_client, calls = stub_client_with({
+    ["sessions/list"] = { result = { sessions = {} } },
+  })
+  local restore_select = stub_ui_select(function() end)
+
+  require("hyprpilot.palettes.sessions").open({ cwd = false })
+
+  local list_call
+  for _, c in ipairs(calls) do
+    if c.method == "sessions/list" then
+      list_call = c
+      break
+    end
+  end
+  MiniTest.expect.equality(list_call ~= nil, true)
+  MiniTest.expect.equality(list_call.params.cwd, nil)
+
+  restore_select()
+  restore_client()
+end
+
 T["palettes.sessions.format_item composes `cwd · short-id`"] = function()
   local format = require("hyprpilot.palettes.sessions").format_item
   -- ACP-spec session entry: just sessionId + cwd. The format string
