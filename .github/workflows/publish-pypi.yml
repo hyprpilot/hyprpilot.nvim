@@ -1,11 +1,16 @@
 ---
-# Publishes the `hyprpilot-nvim-mcp` Python package to PyPI on every
-# release tag.
+# Publishes the `hyprpilot-nvim-mcp` Python package to PyPI.
 #
-# Trigger: any tag matching `v*` (release-please cuts these on
-# `main` after merging the version-bump PR; both packages share the
-# same `vX.Y.Z` tag per `release-please-config.json`'s
-# `include-component-in-tag: false`).
+# Triggers:
+#   * `workflow_call` — the canonical path. `release-please.yml`
+#     calls this workflow as a downstream job after cutting a
+#     `v*` tag. Must be `workflow_call` (not `push: tags`) because
+#     release-please pushes tags using `secrets.GITHUB_TOKEN`, and
+#     GitHub deliberately won't fire workflows from token-driven
+#     events (anti-loop protection).
+#   * `workflow_dispatch` — manual escape hatch. The captain can
+#     re-run a publish from the Actions UI if PyPI was down or a
+#     tag needs reshipping.
 #
 # Auth: PyPI Trusted Publishing (OIDC). NO API token is stored in
 # the repo. PyPI verifies the GitHub Actions identity by matching:
@@ -13,22 +18,16 @@
 #   - workflow:      .github/workflows/publish-pypi.yml
 #   - environment:   pypi
 # against the trusted-publisher entry the captain configured on
-# PyPI's project settings (one-time, see CONTRIBUTING.md).
-#
-# Why an environment: PyPI's trusted-publisher config can pin the
-# publish to one GitHub environment, which lets the captain layer
-# extra protections (required reviewers, deployment branch rules)
-# on the publish step without touching repo-wide settings.
+# PyPI's project settings (one-time, see `pkg/CLAUDE.md`).
 
 name: Publish to PyPI
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
+  workflow_dispatch:
 
-# Cancel an in-flight publish if the same tag is force-pushed (rare,
-# but a torn release is worse than a cancelled one).
+# Serialise publishes against the same ref so a torn release can't
+# race itself.
 concurrency:
   group: pypi-${{ github.ref }}
   cancel-in-progress: false
