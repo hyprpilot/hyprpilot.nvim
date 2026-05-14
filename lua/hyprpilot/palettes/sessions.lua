@@ -24,6 +24,11 @@ local M = {}
 ---@field profile_id? string          -- profile to resolve against when no instance / agent specified
 ---@field cwd? string | false         -- filter & load cwd; default `vim.fn.getcwd()`; `false` disables the filter (every session)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
+---@field with_config? hyprpilot.ConfigPatch[]
+--- Same shape as `instances.spawn`'s `with_config`. Stacks on top of
+--- `config.options.with_config`; daemon folds the merged list onto
+--- the resolved profile before spawning the resumed instance and
+--- stores it on the instance for restart replay.
 
 ---@param wire table
 ---@return hyprpilot.palettes.sessions.Session
@@ -119,39 +124,37 @@ function M.open(opts)
       format_item = format_item,
       preview = format_preview,
       on_pick = function(choice)
-        client.request(
-          "sessions/load",
-          {
-            sessionId = choice.session_id,
-            instanceId = opts.instance_id,
-            agentId = opts.agent_id,
-            profileId = opts.profile_id,
-            cwd = choice.cwd or cwd_for_load,
-          },
-          nil,
-          function(load_err, load_result)
-            if load_err ~= nil then
-              log.p.warn("palettes.sessions: sessions/load failed: " .. tostring(load_err.message))
-              return
-            end
+        local load_params = {
+          sessionId = choice.session_id,
+          instanceId = opts.instance_id,
+          agentId = opts.agent_id,
+          profileId = opts.profile_id,
+          cwd = choice.cwd or cwd_for_load,
+        }
+        require("hyprpilot.rpc.with-config").apply(load_params, opts.with_config)
 
-            local instance_id = load_result and load_result.instanceId
-            if instance_id == nil then
-              log.warn("palettes.sessions: sessions/load returned no instanceId")
-              return
-            end
-
-            instances.info(instance_id, function(info_err, info)
-              if info_err ~= nil then
-                log.p.warn("palettes.sessions: instances/info post-load failed: " .. tostring(info_err.message))
-                return
-              end
-              local bufnr = require("hyprpilot.chat.buffer").create(info.id)
-              require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name })
-              require("hyprpilot.chat.window").show(info.id)
-            end)
+        client.request("sessions/load", load_params, nil, function(load_err, load_result)
+          if load_err ~= nil then
+            log.p.warn("palettes.sessions: sessions/load failed: " .. tostring(load_err.message))
+            return
           end
-        )
+
+          local instance_id = load_result and load_result.instanceId
+          if instance_id == nil then
+            log.warn("palettes.sessions: sessions/load returned no instanceId")
+            return
+          end
+
+          instances.info(instance_id, function(info_err, info)
+            if info_err ~= nil then
+              log.p.warn("palettes.sessions: instances/info post-load failed: " .. tostring(info_err.message))
+              return
+            end
+            local bufnr = require("hyprpilot.chat.buffer").create(info.id)
+            require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name })
+            require("hyprpilot.chat.window").show(info.id)
+          end)
+        end)
       end,
     })
   end)
