@@ -28,8 +28,13 @@ This repository ships **two packages** managed together:
 is a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/):
 the root `pyproject.toml` declares `pkg/` as a member, so `uv.lock` and
 `.venv/` live at the repo root and are shared across the workspace.
-`release-please` is configured for both packages independently — tags
-are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
+`release-please` treats the repo as a single versioned project — one
+`vX.Y.Z` tag covers both surfaces. The Lua plugin's "version" lives
+only as the git tag (lazy.nvim / packer install from tags directly);
+`pkg/pyproject.toml`'s `version` field is mechanically locked to the
+tag via release-please's `extra-files` updater. The publish workflow
+(`.github/workflows/publish-pypi.yml`) chains off the release-please
+job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
 
 ## Stack & Structure (Lua plugin)
 
