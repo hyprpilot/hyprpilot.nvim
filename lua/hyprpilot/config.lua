@@ -14,6 +14,16 @@ local M = {}
 ---@field completion? hyprpilot.ConfigCompletion
 ---@field notification? hyprpilot.ConfigNotification
 ---@field diff_preview? hyprpilot.ConfigDiffPreview
+---@field icons? hyprpilot.ConfigIcons
+
+--- Glyph overrides for tool status badges and tool-kind prefixes
+--- rendered into the chat. Defaults are nerd-font glyphs (the
+--- captain's terminal is expected to ship one); ASCII fallbacks
+--- live a few lines below in case the captain prefers a no-font
+--- look or copies their setup to a non-nerd-font terminal.
+---@class hyprpilot.ConfigIcons
+---@field tool_status? table<string, string>  -- keys: completed | failed | pending | running
+---@field tool_kind? table<string, string>    -- keys: execute | terminal | edit | write | read | fetch | search | glob | delete | think | default
 
 ---@class hyprpilot.ConfigDiffPreview
 ---@field keymaps? hyprpilot.ConfigDiffPreviewKeymaps
@@ -164,21 +174,22 @@ local defaults = {
       return math.max(3, math.floor(lines * 0.4))
     end,
     keymaps = {
-      -- `<C-g>` / `<C-r>` defaults dodge vim's bare-`g` prefix
-      -- (with bare `g`, the captain couldn't type `gg` to top of
-      -- the row). The captain can override any action with a
-      -- string / list / `false` (disable).
-      accept = "<C-g>",
-      reject = "<C-r>",
+      -- `<localleader>` defaults stay clear of vim's normal-mode
+      -- prefixes — `<C-o>` (the previous diff binding) collides with
+      -- the jumplist; `<C-g>` / `<C-r>` collide with file info /
+      -- redo if the captain ever switches into the row from a
+      -- modifiable buffer. Each action accepts `string |
+      -- string[] | false`, so captains who prefer the older
+      -- bindings can pass `accept = { "<localleader>a", "<C-g>" }`
+      -- (or the bare list) without code changes.
+      accept = "<localleader>a",
+      reject = "<localleader>d",
       submit = "<CR>",
       cycle_next = "<Tab>",
       cycle_prev = "<S-Tab>",
       -- Opens / closes the inline diff preview for the head entry
-      -- when it's an edit-shaped tool. `<C-o>` is normally the
-      -- jumplist-back key, but the row buffer is read-only and the
-      -- jumplist is meaningless inside it — the captain's
-      -- expectation is "open this diff," which the keymap matches.
-      show_diff = "<C-o>",
+      -- when it's an edit-shaped tool.
+      show_diff = "<localleader>g",
     },
   },
   diff_preview = {
@@ -188,8 +199,10 @@ local defaults = {
     -- this on prematurely makes every reject return `-32602`).
     send_reject_feedback = false,
     keymaps = {
-      accept = "<C-g>",
-      reject = "<C-r>",
+      -- Match the row's `<localleader>a/d/g` so the captain doesn't
+      -- have to learn a second alphabet inside the diff preview.
+      accept = "<localleader>a",
+      reject = "<localleader>d",
       close = "<Esc>",
       next_hunk = "]h",
       prev_hunk = "[h",
@@ -221,6 +234,31 @@ local defaults = {
       goto_file = "gf",
     },
   },
+  -- Nerd-font glyphs by default (Material Design icons set, present
+  -- in every nerd-font release). Captains without a nerd font
+  -- override with ASCII via `setup({ icons = { tool_status = { ... },
+  -- tool_kind = { ... } } })`.
+  icons = {
+    tool_status = {
+      completed = "",
+      failed = "",
+      pending = "",
+      running = "",
+    },
+    tool_kind = {
+      execute = "",
+      terminal = "",
+      edit = "",
+      write = "",
+      read = "",
+      fetch = "",
+      search = "",
+      glob = "",
+      delete = "",
+      think = "",
+      default = "",
+    },
+  },
   composer = {
     min_height = 12,
     max_height = function(lines)
@@ -228,7 +266,12 @@ local defaults = {
     end,
     keymaps = {
       submit = { normal = "<CR>", insert = "<C-s>" },
-      cancel = { normal = "<C-c>", insert = "<C-c>" },
+      -- `<C-c>` stays the insert-mode cancel because that's the
+      -- muscle-memory key in every TUI prompt. Normal mode swaps to
+      -- `<localleader>c` so a captain who escapes-then-aborts isn't
+      -- racing vim's normal-mode `<C-c>` (which interrupts pending
+      -- operators and visual selections).
+      cancel = { normal = "<localleader>c", insert = "<C-c>" },
       close = { normal = "q" },
     },
   },

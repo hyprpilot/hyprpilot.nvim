@@ -17,6 +17,7 @@
 --- the head + tail extmarks and gets exposed via `foldexpr`.
 
 local chat_buffer = require("hyprpilot.chat.buffer")
+local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local stats = require("hyprpilot.chat.stats")
 
@@ -793,7 +794,20 @@ local function append_agent_text(state, text)
       -- `response_header_emitted` is per-layout so a re-streamed
       -- turn (continuation after cancel, etc.) doesn't double up.
       if layout ~= nil and not layout.response_header_emitted then
-        insert_at_prose_anchor(state, turn_id, { "### response", "" })
+        -- For agent turns whose only content is prose (no preceding
+        -- `### tasks` / `### thoughts` / `### tools` section), the
+        -- agent header lays down `## pilot` immediately followed by
+        -- the prose anchor — there's no blank between `## pilot`
+        -- and the lazy `### response` subhead. Pre-pad with a blank
+        -- when the row above the anchor isn't already empty so the
+        -- two headings don't collide.
+        local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
+        local line_above = ""
+        if anchor_row > 0 then
+          line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
+        end
+        local subhead_lines = line_above == "" and { "### response", "" } or { "", "### response", "" }
+        insert_at_prose_anchor(state, turn_id, subhead_lines)
         layout.response_header_emitted = true
       end
       insert_at_prose_anchor(state, turn_id, chunks)
@@ -886,41 +900,30 @@ local function append_placeholder(state, label, detail)
   state.active_text_block = nil
 end
 
----Render the tool-call kind icon prefix.
+---Render the tool-call kind icon prefix. Reads from
+---`config.options.icons.tool_kind` so the captain can swap the
+---defaults (nerd-font glyphs) for ASCII or alternate glyph sets.
 ---@param tool_kind? string
 ---@return string
 local function tool_icon(tool_kind)
-  if tool_kind == "execute" or tool_kind == "terminal" then
-    return "$"
-  elseif tool_kind == "edit" or tool_kind == "write" then
-    return "~"
-  elseif tool_kind == "read" or tool_kind == "fetch" then
-    return "?"
-  elseif tool_kind == "search" or tool_kind == "glob" then
-    return "/"
-  elseif tool_kind == "delete" then
-    return "x"
-  elseif tool_kind == "think" then
-    return "*"
+  local map = (config.options.icons or {}).tool_kind or {}
+  if tool_kind ~= nil and map[tool_kind] ~= nil then
+    return map[tool_kind]
   end
-
-  return "->"
+  return map.default or "->"
 end
 
 ---Status badge for tool-call state (`pending` / `running` /
----`completed` / `failed`).
+---`completed` / `failed`). Reads from
+---`config.options.icons.tool_status`.
 ---@param state_str? string
 ---@return string
 local function tool_status_badge(state_str)
-  if state_str == "completed" then
-    return "[ok]"
-  elseif state_str == "failed" then
-    return "[fail]"
-  elseif state_str == "pending" then
-    return "[wait]"
+  local map = (config.options.icons or {}).tool_status or {}
+  if state_str ~= nil and map[state_str] ~= nil then
+    return map[state_str]
   end
-
-  return "[run]"
+  return map.running or "[run]"
 end
 
 ---Heuristic: pick a fenced-code language hint for a tool's output

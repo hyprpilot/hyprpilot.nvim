@@ -6,6 +6,15 @@
 
 local helpers = require("tests.helpers")
 
+-- Pin the badge glyphs to ASCII so the row-lookup assertions below
+-- match (defaults are nerd-font glyphs). See `test_chat_render.lua`
+-- for the same overlay.
+require("hyprpilot.config").setup({
+  icons = {
+    tool_status = { completed = "[ok]", failed = "[fail]", pending = "[wait]", running = "[run]" },
+  },
+})
+
 local T = MiniTest.new_set()
 
 local HL_NS = vim.api.nvim_create_namespace("hyprpilot.render.hl")

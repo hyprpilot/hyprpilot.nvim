@@ -168,6 +168,10 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].signcolumn = "no"
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
+  -- `winfixwidth` keeps `<C-W>=` and edgy.nvim's equalise pass from
+  -- redistributing column space onto the chat sidebar. The captain
+  -- chose `ui.width` for a reason; honour it across layout churn.
+  vim.wo[M._winid].winfixwidth = true
   -- Manual folds: render.lua programmatically calls `:N,Mfold` when
   -- a turn ends or a block reaches a terminal state. Foldexpr would
   -- recompute on every motion and clobber fold open/closed state we
@@ -235,6 +239,13 @@ function M.show(instance_id)
   -- empty.
   require("hyprpilot.chat.queue_strip").ensure_listeners()
   require("hyprpilot.chat.queue_strip").refresh()
+  -- Permission row mirrors the same pattern — when the chat
+  -- re-appears (after a `:q`-driven WinClosed cascade or a
+  -- captain-driven `hp.hide()` + `hp.show()`), surface any still-
+  -- pending permissions that are sitting in the local queue. The
+  -- daemon-side resolution slot lives until something resolves it,
+  -- so this never replays a stale prompt.
+  require("hyprpilot.chat.permission_row").refresh_if_queued()
 
   if resolved_id ~= nil then
     require("hyprpilot.ui.composer").open()

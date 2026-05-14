@@ -8,6 +8,15 @@
 
 local helpers = require("tests.helpers")
 
+-- Pin the badge / icon glyphs to ASCII so the assertions below stay
+-- legible (the defaults are nerd-font glyphs, but the test rendering
+-- uses literal `[ok]` / `[run]` lookups).
+require("hyprpilot.config").setup({
+  icons = {
+    tool_status = { completed = "[ok]", failed = "[fail]", pending = "[wait]", running = "[run]" },
+  },
+})
+
 local T = MiniTest.new_set()
 
 T["hydrate renders user prompt under `## captain` + `### request`"] = function()

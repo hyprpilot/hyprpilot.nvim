@@ -1,8 +1,8 @@
 --- Behavioural tests for `chat.permission_row::install_keymaps`.
 --- Covers F8 — the keymaps are configurable via
---- `config.permission_row.keymaps` and the defaults are `<C-g>`
---- (accept), `<C-r>` (reject), `<CR>` (submit), `<Tab>` /
---- `<S-Tab>` (cycle).
+--- `config.permission_row.keymaps` and the defaults are
+--- `<localleader>a` (accept), `<localleader>d` (reject), `<CR>`
+--- (submit), `<Tab>` / `<S-Tab>` (cycle).
 
 local T = MiniTest.new_set()
 
@@ -71,15 +71,18 @@ local function install_keymaps(bufnr)
   end
 end
 
-T["permission_row default keymaps: <C-g> / <C-r> / <CR> / <Tab> / <S-Tab>"] = function()
+T["permission_row default keymaps: <localleader>a / <localleader>d / <CR> / <Tab> / <S-Tab>"] = function()
   -- Reset config to defaults before the test.
   require("hyprpilot.config").setup({})
 
   local bufnr = enqueue_and_get_buffer()
   install_keymaps(bufnr)
 
-  local accept = bufmap_for(bufnr, "<C-G>") -- nvim normalises to upper-case
-  local reject = bufmap_for(bufnr, "<C-R>")
+  -- Localleader is interpolated by Neovim into the configured key
+  -- string at map-install time. Tests run without a custom
+  -- localleader, so it expands to the default `\\` (backslash).
+  local accept = bufmap_for(bufnr, "\\a")
+  local reject = bufmap_for(bufnr, "\\d")
   local submit = bufmap_for(bufnr, "<CR>")
   local cycle_next = bufmap_for(bufnr, "<Tab>")
   local cycle_prev = bufmap_for(bufnr, "<S-Tab>")

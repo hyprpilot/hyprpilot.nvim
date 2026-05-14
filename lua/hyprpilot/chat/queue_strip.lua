@@ -213,15 +213,19 @@ local function edit_head()
   if entry == nil then
     return
   end
-  -- Drop the popped entry's text into the composer buffer so the
-  -- captain can edit. Resubmit re-enqueues at the head if the
-  -- agent is still busy.
-  local composer = require("hyprpilot.ui.composer")
-  composer.open({ focus = true })
-  -- We don't have a public setter on the composer buffer for an
-  -- arbitrary string; the captain can edit-then-submit and the
-  -- queue tail flow will handle it. For v1 we just dispatch.
-  composer.submit(entry.text, { instance_id = instance_id, attachments = entry.attachments })
+  -- Drop the popped entry's text into the composer buffer for
+  -- editing — matches the desktop overlay's `onQueueEdit` behaviour
+  -- (load + edit, no auto-dispatch). Captain hits submit (or the
+  -- composer's <CR>) when they're ready; if the agent is still busy
+  -- the prompt will naturally re-enqueue at the tail.
+  -- TODO: preserve attachments — `composer.set_text` only carries
+  -- text today; the staged attachment list on `entry.attachments` is
+  -- dropped on edit. Once we expose a public attach-from-list API
+  -- on the composer, restore them here.
+  if entry.attachments ~= nil and #entry.attachments > 0 then
+    log.warn("queue_strip.edit_head: dropping %d attachment(s) on edit (not yet supported)", #entry.attachments)
+  end
+  require("hyprpilot.ui.composer").set_text(instance_id, entry.text)
 end
 
 ---Bind one action's configured keys. Mirrors permission_row's
@@ -304,6 +308,7 @@ local function open_window()
   vim.wo[M._winid].foldcolumn = "0"
   vim.wo[M._winid].wrap = false
   vim.wo[M._winid].winfixheight = true
+  vim.wo[M._winid].winfixwidth = true
   vim.wo[M._winid].cursorline = false
 
   if vim.api.nvim_win_is_valid(previous_win) then

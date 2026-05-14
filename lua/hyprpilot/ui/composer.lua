@@ -697,6 +697,7 @@ function M.open(opts)
   -- redistributing space onto the composer, so our auto-resize stays
   -- the source of truth.
   vim.wo[M._winid].winfixheight = true
+  vim.wo[M._winid].winfixwidth = true
 
   paint_indicator(instance_id)
   M.resize()
@@ -898,7 +899,15 @@ function M.cancel(instance_id)
     return
   end
 
-  client.notify("prompts/cancel", { instanceId = id })
+  -- `prompts/cancel` is request-shaped on the daemon
+  -- (`HandlerOutcome::Reply` in `rpc/handlers/prompts.rs`) — sending
+  -- it as a notification gets back `id: null` + `-32600
+  -- "missing or invalid id"` and the captain's <C-c> silently no-ops.
+  client.request("prompts/cancel", { instanceId = id }, nil, function(err)
+    if err ~= nil then
+      log.warn("composer.cancel: prompts/cancel failed: %s", err.message)
+    end
+  end)
 end
 
 ---Wipe the composer buffer for a given instance. Used when the
@@ -913,6 +922,40 @@ function M.wipe(instance_id)
 
   buffers[instance_id] = nil
   attachments_by_instance[instance_id] = nil
+end
+
+---Replace the composer buffer's content for `instance_id` with
+---`text`. Used by the queue strip's `edit_head` so a captain who
+---wants to tweak a queued prompt before resubmit gets the prompt
+---loaded into the composer (matching the desktop overlay's
+---`onQueueEdit` behaviour) instead of an immediate dispatch.
+---Opens the composer + drops the cursor at end-of-buffer in
+---insert mode so the captain can keep typing immediately.
+---@param instance_id string
+---@param text string
+function M.set_text(instance_id, text)
+  if type(text) ~= "string" then
+    log.warn("composer.set_text: text must be a string")
+    return
+  end
+
+  local bufnr = ensure_buffer(instance_id)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(text, "\n", { plain = true }))
+  paint_indicator(instance_id)
+
+  -- Surface the composer for editing. `focus = true` is the default,
+  -- which also enters insert mode below.
+  M.open({ focus = true })
+
+  -- Land the cursor at the end of the loaded text so typing extends
+  -- rather than overwrites. Guard against the composer window not
+  -- being visible in headless / test contexts where `M.open` is a
+  -- no-op without a chat split.
+  if M._winid ~= nil and vim.api.nvim_win_is_valid(M._winid) then
+    local last_row = vim.api.nvim_buf_line_count(bufnr)
+    local last_line = vim.api.nvim_buf_get_lines(bufnr, last_row - 1, last_row, false)[1] or ""
+    pcall(vim.api.nvim_win_set_cursor, M._winid, { last_row, #last_line })
+  end
 end
 
 ---Test-only seam: register a bufnr under the composer's internal

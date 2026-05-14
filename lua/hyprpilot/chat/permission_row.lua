@@ -464,6 +464,7 @@ local function open_window()
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   vim.wo[M._winid].winfixheight = true
+  vim.wo[M._winid].winfixwidth = true
   vim.wo[M._winid].cursorline = false
 
   -- Sized properly inside refresh() based on content + max_height.
@@ -532,6 +533,23 @@ function M.resolve(request_id, resolved_label)
   elseif M.is_visible() then
     M.refresh()
   end
+end
+
+---Re-open the row when there's at least one queued entry but no
+---visible window. Called by `chat.window.show()` so a captain who
+---closed the chat (manually with `:q` or via `hp.hide()`) and
+---re-opens it gets the still-pending permission prompts back on
+---screen automatically — without it, the row stays hidden until
+---the daemon emits a fresh `permission_request` event.
+function M.refresh_if_queued()
+  if #M._queue == 0 then
+    return
+  end
+  if M.is_visible() then
+    M.refresh()
+    return
+  end
+  open_window()
 end
 
 ---Wipe state (used on full hide / hydrate).

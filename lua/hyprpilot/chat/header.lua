@@ -350,6 +350,7 @@ function M.open()
   vim.wo[M._winid].foldcolumn = "0"
   vim.wo[M._winid].wrap = false
   vim.wo[M._winid].winfixheight = true
+  vim.wo[M._winid].winfixwidth = true
   vim.wo[M._winid].cursorline = false
   vim.wo[M._winid].winhighlight = "Normal:HyprpilotHeader"
 
