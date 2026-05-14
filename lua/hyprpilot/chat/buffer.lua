@@ -47,6 +47,7 @@ local function apply_options(bufnr, name)
   vim.bo[bufnr].buflisted = false
   vim.bo[bufnr].modifiable = false
   vim.bo[bufnr].readonly = true
+  M.suppress_external_ui(bufnr)
 end
 
 ---Look up the first valid buffer whose name matches `name` exactly.
@@ -135,6 +136,69 @@ function M.placeholder()
   _placeholder_bufnr = bufnr
 
   return bufnr
+end
+
+---Buffer-level opt-out markers for third-party UI plugins that hook
+---`BufEnter` / `BufRead` and decorate every buffer they see (sign
+---column scribbles, blame virt_text, diagnostic icons, edge
+---adoption). Our chat / permission row / queue strip / header /
+---composer surfaces are pure UI — they don't want gitsigns hunks,
+---LSP diagnostics, or edgy adoption fighting them. Each marker
+---lookup follows the upstream plugin's documented opt-out shape.
+---Idempotent; safe to call from `apply_options` and from the
+---per-window paths each module owns.
+---@param bufnr integer
+function M.suppress_external_ui(bufnr)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  -- gitsigns: disables every gitsigns decoration on the buffer.
+  vim.b[bufnr].gitsigns_disable = true
+  -- edgy.nvim: keeps it from adopting the buffer into a managed
+  -- edge slot. The captain who explicitly registers our filetypes
+  -- with edgy can override per-buffer with `vim.b[bufnr].edgy_disable
+  -- = false`.
+  vim.b[bufnr].edgy_disable = true
+  -- nvim-lint / null-ls / linters: don't lint our render buffers.
+  vim.b[bufnr].lint_disabled = true
+  -- mini.indentscope draws guide lines on every indent depth — busy
+  -- noise on our markdown-shaped UI.
+  vim.b[bufnr].miniindentscope_disable = true
+end
+
+---Strip Neovim's stock chrome off a plugin window: hide the
+---statusline (set to a single space — Neovim renders nothing
+---visible), suppress numbers / fold column / sign column, and
+---remap the `EndOfBuffer` `~` glyphs to invisible so a short
+---surface doesn't show fill rows. Does NOT touch `winhighlight` —
+---callers that need a custom Normal: group set it themselves.
+---@param winid integer
+function M.clean_window_chrome(winid)
+  if not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+  vim.wo[winid].number = false
+  vim.wo[winid].relativenumber = false
+  vim.wo[winid].signcolumn = "no"
+  vim.wo[winid].foldcolumn = "0"
+  vim.wo[winid].cursorline = false
+  vim.wo[winid].cursorcolumn = false
+  vim.wo[winid].colorcolumn = ""
+  vim.wo[winid].spell = false
+  vim.wo[winid].list = false
+  -- Empty statusline + winbar → the global status / external
+  -- statuslines (lualine etc.) skip us. A single space is
+  -- universally rendered as blank without breaking the global
+  -- `laststatus` setting.
+  vim.wo[winid].statusline = " "
+  vim.wo[winid].winbar = ""
+  -- Suppress the `~` end-of-buffer glyphs by remapping them to a
+  -- space via fillchars; cheap visual cleanup for the small
+  -- auxiliary surfaces.
+  local existing = vim.wo[winid].fillchars or ""
+  if not existing:match("eob:") then
+    vim.wo[winid].fillchars = (existing == "" and "" or existing .. ",") .. "eob: "
+  end
 end
 
 ---Returns true when `bufnr` is one of ours.

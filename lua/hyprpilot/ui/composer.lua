@@ -204,6 +204,7 @@ local function ensure_buffer(instance_id)
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
+  require("hyprpilot.chat.buffer").suppress_external_ui(bufnr)
 
   local keymaps = (config.options.composer or {}).keymaps or {}
 
@@ -688,9 +689,7 @@ function M.open(opts)
   M._winid = vim.api.nvim_get_current_win()
 
   vim.api.nvim_win_set_buf(M._winid, bufnr)
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
+  require("hyprpilot.chat.buffer").clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   -- `winfixheight` keeps `<C-W>=` and other equalisation passes from

@@ -163,9 +163,7 @@ local function open_split(ui, bufnr)
   M._winid = vim.api.nvim_get_current_win()
 
   vim.api.nvim_win_set_buf(M._winid, bufnr)
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
+  buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   -- `winfixwidth` keeps `<C-W>=` and edgy.nvim's equalise pass from

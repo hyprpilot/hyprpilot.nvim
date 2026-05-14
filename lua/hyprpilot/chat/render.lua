@@ -1303,6 +1303,12 @@ local function render_permission_request(state, record)
     tool_kind = record.toolKind,
     options = type(record.options) == "table" and record.options or {},
     formatted = record.formatted,
+    -- Daemon-computed pre-select. Honoured by `permission_row`'s
+    -- `default_focused_idx` when it points at a real option id; the
+    -- local kind-based heuristic still runs as the fallback so older
+    -- daemons (or events the daemon couldn't classify) still get a
+    -- sane Allow focus.
+    default_option_id = record.defaultOptionId,
     -- The diff-preview module reads `raw_input.path` /
     -- `.file_path` / `.old_string` / `.new_string` / `.content` /
     -- `.edits[]` off the entry — keep the wire shape verbatim so
@@ -2152,14 +2158,77 @@ end
 ---`+-- N lines: <line>` chrome which clobbers the head row's own
 ---icon / status / title we want visible at a glance.
 ---@return string
+---Map a section `kind` to a captain-readable noun. Singular when
+---there's only one entry, plural otherwise.
+local SECTION_NOUNS = {
+  thoughts = { one = "thought", many = "thoughts" },
+  tools = { one = "tool call", many = "tool calls" },
+  tasks = { one = "task", many = "tasks" },
+  attachments = { one = "attachment", many = "attachments" },
+  adapter = { one = "adapter note", many = "adapter notes" },
+}
+
+---Resolve the per-buffer render state for the buffer the foldtext
+---is being asked about. Cheap linear scan; the live `_states` table
+---is keyed by instance, not bufnr, so we walk it once. Returns nil
+---when the buffer isn't a per-instance chat (placeholder, scratch).
+---@param bufnr integer
+---@return hyprpilot.render.State?
+local function state_for_bufnr(bufnr)
+  for _, st in pairs(M._states) do
+    if st.bufnr == bufnr then
+      return st
+    end
+  end
+  return nil
+end
+
+---Find the section whose header extmark sits at `header_row` in
+---`state.bufnr`. Returns the section table + its kind, or nil when
+---no section starts there (e.g. the fold is over an arbitrary
+---block, not a section header).
+---@param state hyprpilot.render.State
+---@param header_row integer  -- 0-indexed
+---@return table?, string?
+local function find_section_at_row(state, header_row)
+  for _, layout in pairs(state.turn_layouts) do
+    if type(layout.sections) == "table" then
+      for kind, section in pairs(layout.sections) do
+        local pos = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})
+        if pos[1] == header_row then
+          return section, kind
+        end
+      end
+    end
+  end
+  return nil, nil
+end
+
+---Custom foldtext: when a fold opens on a section header row
+---(`### thoughts` / `### tools` / etc.), surface the captain-
+---facing item count (`### thoughts  3 thoughts`) instead of the
+---raw line count Vim would otherwise tack on. Falls back to the
+---bare header line + line count for non-section folds (turn
+---headers, ad-hoc folds the captain creates).
 function M.foldtext()
   local fs = vim.v.foldstart or 1
   local fe = vim.v.foldend or fs
   local line = vim.fn.getline(fs) or ""
-  local count = fe - fs + 1
 
-  -- Strip any leading tab that vim's default would have replaced with
-  -- "+" to make room for the chrome — we own the line, render it as-is.
+  local bufnr = vim.api.nvim_get_current_buf()
+  local state = state_for_bufnr(bufnr)
+  if state ~= nil then
+    local section, kind = find_section_at_row(state, fs - 1)
+    if section ~= nil and kind ~= nil then
+      local count = section.item_count or #(section.block_ids or {})
+      local nouns = SECTION_NOUNS[kind] or { one = kind, many = kind }
+      local noun = count == 1 and nouns.one or nouns.many
+      return string.format("%s  [%d %s]", line, count, noun)
+    end
+  end
+
+  -- Fallback: line count (the previous behaviour).
+  local count = fe - fs + 1
   return string.format("%s  ▸ %d", line, count)
 end
 

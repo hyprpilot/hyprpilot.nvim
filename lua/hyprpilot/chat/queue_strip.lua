@@ -79,6 +79,7 @@ local function ensure_buffer()
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
   vim.bo[bufnr].modifiable = false
+  buffer.suppress_external_ui(bufnr)
 
   M._bufnr = bufnr
   return bufnr
@@ -302,14 +303,10 @@ local function open_window()
   vim.api.nvim_win_set_buf(M._winid, bufnr)
   install_keymaps(bufnr)
 
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
-  vim.wo[M._winid].foldcolumn = "0"
+  buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = false
   vim.wo[M._winid].winfixheight = true
   vim.wo[M._winid].winfixwidth = true
-  vim.wo[M._winid].cursorline = false
 
   if vim.api.nvim_win_is_valid(previous_win) then
     vim.api.nvim_set_current_win(previous_win)

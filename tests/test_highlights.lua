@@ -165,7 +165,10 @@ T["permission_row enqueue paints the header/button highlights on its own buffer"
     return nil
   end
 
-  MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "permission ·")), "HyprpilotPermissionHeader")
+  -- Header is now a markdown `#` line containing the tool name; the
+  -- old `permission ·` prefix was retired in favour of the icon-led
+  -- format. Locate it by the tool name "Bash".
+  MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "Bash")), "HyprpilotPermissionHeader")
   MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "[> Allow <]")), "HyprpilotPermissionButton")
 
   permission_row.reset()

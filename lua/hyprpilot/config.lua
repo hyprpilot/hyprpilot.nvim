@@ -22,7 +22,7 @@ local M = {}
 --- live a few lines below in case the captain prefers a no-font
 --- look or copies their setup to a non-nerd-font terminal.
 ---@class hyprpilot.ConfigIcons
----@field tool_status? table<string, string>  -- keys: completed | failed | pending | running
+---@field tool_status? table<string, string>  -- keys: completed | failed | pending | running | awaiting_permission
 ---@field tool_kind? table<string, string>    -- keys: execute | terminal | edit | write | read | fetch | search | glob | delete | think | default
 
 ---@class hyprpilot.ConfigDiffPreview
@@ -234,29 +234,33 @@ local defaults = {
       goto_file = "gf",
     },
   },
-  -- Nerd-font glyphs by default (Material Design icons set, present
-  -- in every nerd-font release). Captains without a nerd font
-  -- override with ASCII via `setup({ icons = { tool_status = { ... },
-  -- tool_kind = { ... } } })`.
+  -- Nerd-font glyphs by default (Font Awesome set, mirrors the
+  -- desktop overlay's `@fortawesome/free-solid-svg-icons` choices in
+  -- `ui/src/lib/tools/presentation.ts`). Captains without a nerd
+  -- font override with ASCII via `setup({ icons = { tool_status =
+  -- { completed = "[ok]", ... } } })`. Glyphs are pasted as literal
+  -- UTF-8 — they look blank in editors that don't ship a nerd font
+  -- but render correctly in Neovim under one.
   icons = {
     tool_status = {
-      completed = "",
-      failed = "",
-      pending = "",
-      running = "",
+      completed = "", -- nf-fa-check (U+F00C)
+      failed = "", -- nf-fa-times (U+F00D)
+      pending = "", -- nf-fa-clock_o (U+F017)
+      running = "", -- nf-fa-refresh (U+F021)
+      awaiting_permission = "", -- nf-fa-exclamation_triangle (U+F071)
     },
     tool_kind = {
-      execute = "",
-      terminal = "",
-      edit = "",
-      write = "",
-      read = "",
-      fetch = "",
-      search = "",
-      glob = "",
-      delete = "",
-      think = "",
-      default = "",
+      execute = "", -- nf-fa-terminal (U+F120)
+      terminal = "", -- nf-fa-terminal (U+F120)
+      edit = "", -- nf-fa-pencil (faPen) (U+F040)
+      write = "", -- nf-fa-edit (faPenToSquare) (U+F044)
+      read = "", -- nf-fa-file_text_o (faFileLines) (U+F15C)
+      fetch = "", -- nf-fa-globe (U+F0AC)
+      search = "", -- nf-fa-search (faMagnifyingGlass) (U+F002)
+      glob = "", -- nf-fa-star (faStarOfLife approximation) (U+F005)
+      delete = "", -- nf-fa-trash (U+F1F8)
+      think = "", -- nf-fa-lightbulb_o (faBrain approximation) (U+F0EB)
+      default = "", -- nf-fa-cog (U+F013)
     },
   },
   composer = {

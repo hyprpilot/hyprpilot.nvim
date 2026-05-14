@@ -168,6 +168,12 @@ local function dispatch(raw)
       tool = event.tool,
       tool_kind = event.toolKind,
       options = event.options,
+      -- Daemon-computed allow-shaped pre-selected option (see
+      -- `PermissionRequestSnapshot::default_option_id` in
+      -- `src-tauri/src/adapters/permission.rs`). Plugin uses it as
+      -- the row's initial focused index; captain autocmd handlers
+      -- can read it for their own approve-default workflows.
+      default_option_id = event.defaultOptionId,
       -- `raw_input` is the agent's structured tool input (path /
       -- old_string / new_string / content / edits[] for the edit
       -- family). Carries through to the row + diff-preview surfaces

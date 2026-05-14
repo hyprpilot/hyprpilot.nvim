@@ -85,28 +85,43 @@ local function ensure_buffer()
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
   vim.bo[bufnr].modifiable = false
+  buffer.suppress_external_ui(bufnr)
 
   M._bufnr = bufnr
   return bufnr
 end
 
----Pick the "default" option index for a fresh permission prompt:
----first option whose id or name matches `^allow|^accept|^proceed`.
----Falls back to 1 when nothing matches (the daemon should never ship
----a permission prompt without an allow-shaped option, but defending
----against it keeps the captain from being keymap-stuck).
+---Pick the "default" option index for a fresh permission prompt.
 ---
----Primary signal is `option.kind` — the daemon wire-normalises every
----vendor's option shape to `allow_*` / `reject_*` (see
----`PermissionOptionView` in the daemon's `permission.rs`). Matching
----on `kind:find("^allow")` is the same contract `is_allow_kind`
----enforces server-side, so we stay in lockstep with new vendor
----variants (`allow_session` / `allow_workspace` / …) without code
----changes. The id / name suffix match is a defensive fallback for
----adapters that don't (yet) populate `kind`.
+---Resolution order:
+---  1. **Daemon-supplied `default_option_id`** — `PermissionRequestSnapshot::default_option_id`
+---     (`src-tauri/src/adapters/permission.rs`). The daemon has the
+---     agent's full intent, so when it ships a hint we honour it
+---     verbatim. Lets future variants (workspace-allow defaults,
+---     deny-by-policy, etc.) ship server-side without a plugin
+---     update.
+---  2. **`option.kind` prefix match (`^allow`)** — daemon
+---     wire-normalises every vendor's option shape to `allow_*` /
+---     `reject_*` (`PermissionOptionView`); matching on `kind` keeps
+---     us in lockstep without code changes for new vendor variants
+---     (`allow_session` / `allow_workspace` / …).
+---  3. **`option.id` / `option.name` prefix match** — last-ditch
+---     fallback for adapters that don't (yet) populate `kind`.
+---  4. **First option** — defends against a degenerate prompt with
+---     no allow-shaped option so the captain isn't keymap-stuck.
 ---@param options table[]
+---@param default_option_id? string
 ---@return integer
-local function default_focused_idx(options)
+local function default_focused_idx(options, default_option_id)
+  if type(default_option_id) == "string" and default_option_id ~= "" then
+    for i, opt in ipairs(options) do
+      if tostring(opt.optionId or "") == default_option_id then
+        return i
+      end
+    end
+    log.debug("permission_row: daemon default_option_id=%q not in option list; falling back to kind match", default_option_id)
+  end
+
   for i, opt in ipairs(options) do
     local kind = string.lower(tostring(opt.kind or ""))
     if kind:match("^allow") then
@@ -148,8 +163,29 @@ local function head()
   return M._queue[1]
 end
 
+---True when the head entry is edit-shaped and a diff preview can
+---be opened against its `raw_input.path` / `raw_input.file_path`.
+---Mirrors `diff_preview.is_previewable` without the require cycle —
+---compose() needs the answer before keymaps fire, and we don't
+---want the heavier module loaded just to build a button label.
+---@param entry hyprpilot.chat.permission_row.Entry
+---@return boolean
+local function diff_previewable(entry)
+  if entry.tool_kind ~= "edit" or type(entry.raw_input) ~= "table" then
+    return false
+  end
+  local raw = entry.raw_input
+  if raw.notebook_path ~= nil then
+    return false
+  end
+  return type(raw.path) == "string" or type(raw.file_path) == "string"
+end
+
 ---Compose the button line for the head entry, marking the focused
----option with `[> Label <]` and others with `[ Label ]`.
+---option with `[> Label <]` and others with `[ Label ]`. Appends a
+---`[ Diff ]` button at the tail when the entry is edit-previewable
+---so the captain sees the affordance instead of having to remember
+---the `show_diff` keymap.
 ---@param entry hyprpilot.chat.permission_row.Entry
 ---@return string
 local function button_line(entry)
@@ -162,15 +198,30 @@ local function button_line(entry)
       table.insert(parts, "[ " .. label .. " ]")
     end
   end
+  if diff_previewable(entry) then
+    table.insert(parts, "[ Diff ]")
+  end
   return "  " .. table.concat(parts, "  ")
+end
+
+---Resolve the status icon for the row header. The row only ever
+---exists for `awaiting_permission`, so we surface that single
+---glyph; captains who want a different color / shape override
+---`config.icons.tool_status.awaiting_permission`.
+---@return string
+local function status_icon()
+  local map = (config.options.icons or {}).tool_status or {}
+  return map.awaiting_permission or map.pending or "?"
 end
 
 ---Build the full content for the row's buffer from the head entry.
 ---The button line lives at the TOP so it's the first thing the
 ---captain sees the moment the row pops in — header + tool details
----follow below for context. Returns the lines + the row index
----(0-indexed) of the button line + the row index of the header
----line so the caller can apply the corresponding highlights.
+---follow below for context. Header is markdown `#` so the chat
+---buffer's markdown highlighter colours it without a custom
+---highlight group; status icon comes first so the captain reads
+---"waiting on me" before parsing the tool name. Returns the lines
+---plus the row indexes the caller uses to anchor highlights.
 ---@return string[] lines
 ---@return integer? button_row
 ---@return integer? header_row
@@ -188,20 +239,10 @@ local function compose()
   table.insert(lines, "")
 
   local extra = #M._queue > 1 and string.format(" (+%d more)", #M._queue - 1) or ""
-  -- `[diff]` affordance hint for edit-shaped tools so the captain
-  -- knows the inline diff preview is available before pressing the
-  -- keymap. Tool kind discriminator + raw_input path-presence check
-  -- matches what `diff_preview.is_previewable` does.
-  local diff_hint = ""
-  if entry.tool_kind == "edit" and type(entry.raw_input) == "table" then
-    local raw = entry.raw_input
-    if raw.notebook_path == nil and (type(raw.path) == "string" or type(raw.file_path) == "string") then
-      local show_diff = ((config.options.permission_row or {}).keymaps or {}).show_diff
-      local key_label = type(show_diff) == "string" and show_diff or "<C-o>"
-      diff_hint = string.format(" [diff %s]", key_label)
-    end
-  end
-  table.insert(lines, string.format(" permission · %s%s%s", entry.tool or "tool", extra, diff_hint))
+  local kind_icons = (config.options.icons or {}).tool_kind or {}
+  local kind_glyph = kind_icons[entry.tool_kind or ""] or kind_icons.default or ""
+  local prefix_glyph = kind_glyph ~= "" and (kind_glyph .. " ") or ""
+  table.insert(lines, string.format("# %s %s%s%s", status_icon(), prefix_glyph, entry.tool or "tool", extra))
   local header_row = #lines - 1
 
   -- Body lines from the daemon's `formatted` payload (diff /
@@ -457,22 +498,29 @@ local function open_window()
   vim.api.nvim_win_set_buf(M._winid, bufnr)
   install_keymaps(bufnr)
 
-  vim.wo[M._winid].number = false
-  vim.wo[M._winid].relativenumber = false
-  vim.wo[M._winid].signcolumn = "no"
-  vim.wo[M._winid].foldcolumn = "0"
+  buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   vim.wo[M._winid].winfixheight = true
   vim.wo[M._winid].winfixwidth = true
-  vim.wo[M._winid].cursorline = false
 
   -- Sized properly inside refresh() based on content + max_height.
   if vim.api.nvim_win_is_valid(previous_win) then
-    vim.api.nvim_set_current_win(previous_win)
+    pcall(vim.api.nvim_set_current_win, previous_win)
   end
 
   M.refresh()
+
+  -- The split + buffer attach + extmark paint above all happen in
+  -- the same event-loop tick. Without an explicit redraw the
+  -- captain has to give the row a moment of focus before the
+  -- buttons composite — `vim.schedule` lets Neovim's UI thread
+  -- process the new layout before the next user keystroke.
+  vim.schedule(function()
+    if M.is_visible() then
+      pcall(vim.cmd, "redraw")
+    end
+  end)
 end
 
 ---Close the row window (queue stays — re-opens on next request).
@@ -486,9 +534,10 @@ function M.close()
 end
 
 ---Enqueue a permission request. Auto-opens the row if not already
----visible and pre-focuses the Allow-shaped option.
+---visible and pre-focuses the daemon-supplied (or Allow-shaped)
+---option.
 ---@param instance_id string
----@param record { request_id: string, tool: string, tool_kind?: string, options: table[], formatted?: table }
+---@param record { request_id: string, tool: string, tool_kind?: string, options: table[], formatted?: table, default_option_id?: string, raw_input?: table }
 function M.enqueue(instance_id, record)
   for _, entry in ipairs(M._queue) do
     if entry.request_id == record.request_id then
@@ -504,7 +553,7 @@ function M.enqueue(instance_id, record)
     tool_kind = record.tool_kind,
     options = options,
     formatted = record.formatted,
-    focused_idx = default_focused_idx(options),
+    focused_idx = default_focused_idx(options, record.default_option_id),
     raw_input = record.raw_input,
   })
 
