@@ -5,8 +5,25 @@
 --- This module is independent of the chat surface — captains who only
 --- want the MCP-bridge half can `register({...})` without ever calling
 --- `require("hyprpilot").setup({})`.
+---
+--- Built-in tool categories live as sibling modules under `mcp/`
+--- (`mcp/lsp.lua`, `mcp/editor.lua`, `mcp/open.lua`). They do NOT
+--- auto-register — the captain wires what they want from their own
+--- config so they retain control over which tools the daemon-side
+--- profile allow / deny lists negotiate against. To enable
+--- everything in one shot:
+---
+---     require("hyprpilot.mcp.lsp").register_all()
+---     require("hyprpilot.mcp.editor").register_all()
+---     require("hyprpilot.mcp.open").register_all()
+---
+--- Or selective:
+---
+---     local mcp = require("hyprpilot.mcp")
+---     local lsp = require("hyprpilot.mcp.lsp").tools
+---     mcp.register(lsp.definition)
+---     mcp.register(lsp.hover)
 
-local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 
 local M = {}
@@ -148,13 +165,11 @@ function M.unregister(...)
 end
 
 ---Discovery shape — the Python MCP server consumes this verbatim.
----Returns an empty table when MCP is disabled via config.
+---Returns an empty table when nothing's registered (the captain
+---hasn't called any of the `register_all()` helpers, or has
+---`unregister`'d everything).
 ---@return hyprpilot.mcp.ToolSummary[]
 function M.list()
-  if config.options.mcp == nil or config.options.mcp.enabled == false then
-    return {}
-  end
-
   ---@type hyprpilot.mcp.ToolSummary[]
   local out = {}
 

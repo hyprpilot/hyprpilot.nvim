@@ -83,19 +83,6 @@ T["check reports MCP info when no tools registered"] = function()
   MiniTest.expect.equality(mcp_record ~= nil, true)
 end
 
-T["check reports MCP disabled when config flag is false"] = function()
-  local config = require("hyprpilot.config")
-  local original = config.options.mcp
-  config.options.mcp = { enabled = false }
-
-  local health_mod = require("hyprpilot.health")
-  local records = capture_health(health_mod.check)
-
-  config.options.mcp = original
-
-  MiniTest.expect.equality(find_message(records, "info", "MCP bridge disabled") ~= nil, true)
-end
-
 T["render does not insert an empty pilot header before a captain prompt"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")

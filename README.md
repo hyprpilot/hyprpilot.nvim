@@ -115,10 +115,6 @@ require("hyprpilot").setup({
     },
   },
 
-  mcp = {
-    enabled = true,                           -- false → MCP bridge skipped
-  },
-
   palettes = {
     -- Backend for the palette pickers under `lua/hyprpilot/palettes/`.
     -- "auto" uses snacks.nvim's picker when installed (with previews)
@@ -296,6 +292,36 @@ vim.api.nvim_create_autocmd("User", {
 
 ### Lua-side MCP tools
 
+The plugin ships three built-in tool categories; the captain wires
+what they want from their config (no auto-registration — daemon-side
+profile allow / deny lists own the policy, plugin doesn't paper over
+it):
+
+```lua
+-- Everything in one shot:
+require("hyprpilot.mcp.lsp").register_all()
+require("hyprpilot.mcp.editor").register_all()
+require("hyprpilot.mcp.open").register_all()
+
+-- Or selective:
+local mcp = require("hyprpilot.mcp")
+local lsp = require("hyprpilot.mcp.lsp").tools
+mcp.register(lsp.definition)
+mcp.register(lsp.hover)
+mcp.register(lsp.diagnostics_get)
+```
+
+Tool naming follows `<category>_<verb>` so the agent reads the
+prefix and knows the surface:
+
+| Category | Tools |
+|---|---|
+| `lsp_*` | `ensure_loaded`, `definition`, `references`, `hover`, `document_symbols`, `workspace_symbols`, `code_actions`, `rename` (+ `diagnostics_get`) |
+| `editor_*` | `cursor`, `buffers`, `read`, `grep`, `files` |
+| `open_*` | `url` (generic system dispatcher via `vim.ui.open`) |
+
+Custom tools register via the same surface:
+
 ```lua
 local mcp = require("hyprpilot.mcp")
 
@@ -311,7 +337,7 @@ mcp.register({
     required = { "bufnr", "lnum" },
   },
   handler = function(args)
-    -- ... return a string or { content = {...} } table.
+    -- ... return a string or { json = {...}, text = ..., is_error = ... } table.
   end,
 })
 
