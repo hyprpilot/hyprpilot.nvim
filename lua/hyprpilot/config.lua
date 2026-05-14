@@ -6,6 +6,7 @@ local M = {}
 ---@field ui? hyprpilot.ConfigUi
 ---@field mcp? hyprpilot.ConfigMcp
 ---@field client? hyprpilot.ConfigClient
+---@field chat? hyprpilot.ConfigChat
 ---@field composer? hyprpilot.ConfigComposer
 ---@field permission_row? hyprpilot.ConfigPermissionRow
 ---@field queue_strip? hyprpilot.ConfigQueueStrip
@@ -62,6 +63,15 @@ local M = {}
 ---@field submit? string | string[] | false      -- commit currently-focused option
 ---@field cycle_next? string | string[] | false  -- focus next option
 ---@field cycle_prev? string | string[] | false  -- focus previous option
+
+---@class hyprpilot.ConfigChat
+---@field keymaps? hyprpilot.ConfigChatKeymaps
+
+--- Chat-buffer keymaps. Buffer-local, normal mode only. Each value
+--- is `string | string[] | false` — `false` disables, lists bind
+--- multiple keys to the same action.
+---@class hyprpilot.ConfigChatKeymaps
+---@field goto_file? string | string[] | false  -- open the file ref under cursor (default `gf`)
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -156,6 +166,11 @@ local defaults = {
   notification = {
     bell = {
       enabled = false,
+    },
+  },
+  chat = {
+    keymaps = {
+      goto_file = "gf",
     },
   },
   composer = {

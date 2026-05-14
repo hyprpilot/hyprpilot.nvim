@@ -39,11 +39,32 @@ local function format_item(item, active_id)
   return prefix .. headline .. " · " .. table.concat(meta_parts, " · ")
 end
 
+---Tail of `bufnr`'s contents (last `count` non-empty lines) for the
+---preview pane. Returns an empty list when no buffer exists or it's
+---empty.
+---@param bufnr integer?
+---@param count integer
+---@return string[]
+local function buffer_tail(bufnr, count)
+  if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
+    return {}
+  end
+  local total = vim.api.nvim_buf_line_count(bufnr)
+  if total == 0 then
+    return {}
+  end
+  local start = math.max(0, total - count)
+  return vim.api.nvim_buf_get_lines(bufnr, start, total, false)
+end
+
 ---Compose preview lines for an instance. Shows headline + the
 ---structured fields (agent / profile / mode / cwd / session) as a
----markdown definition list so snacks renders it cleanly. We don't
----round-trip `instance/snapshot/chat` per highlight — that would
----hammer the daemon on every cursor move in the picker.
+---markdown definition list, followed by a tail of the live chat
+---buffer so the captain can recognise the instance from its
+---most-recent transcript content (more useful than the wire-side
+---metadata alone). We don't round-trip `instance/snapshot/chat` per
+---highlight — that would hammer the daemon on every cursor move in
+---the picker.
 ---@param item hyprpilot.Instance
 ---@param active_id? string
 ---@return { lines: string[], ft: string }
@@ -64,6 +85,18 @@ local function format_preview(item, active_id)
   field("mode", item.mode)
   field("cwd", item.cwd)
   field("session", item.session_id)
+
+  local bufnr = require("hyprpilot.chat.window").get_bufnr(item.id)
+  local tail = buffer_tail(bufnr, 40)
+  if #tail > 0 then
+    table.insert(lines, "")
+    table.insert(lines, "---")
+    table.insert(lines, "")
+    for _, l in ipairs(tail) do
+      table.insert(lines, l)
+    end
+  end
+
   return { lines = lines, ft = "markdown" }
 end
 
@@ -106,6 +139,18 @@ function M.open(opts)
         end
         commit(choice.id)
       end,
+      actions = {
+        -- `<C-d>` shuts down the highlighted instance (daemon-side
+        -- `instances/shutdown` + local close cascade via `hp.close`).
+        -- Closes the picker; captain re-opens to delete another.
+        delete = {
+          key = "<C-d>",
+          handler = function(item)
+            require("hyprpilot.instances").shutdown(item.id)
+            require("hyprpilot.chat.window").close(item.id)
+          end,
+        },
+      },
     })
   end)
 end

@@ -23,6 +23,10 @@ local log = require("hyprpilot.log")
 
 local M = {}
 
+---@class hyprpilot.palettes.PickerAction
+---@field key string | string[]                             -- one or more key sequences mapped to the action (snacks `<C-d>` etc.)
+---@field handler fun(item: any): nil                       -- runs against the highlighted row; picker auto-closes after
+
 ---@class hyprpilot.palettes.PickerOpts
 ---@field items any[]                                       -- picker rows
 ---@field title string                                      -- picker prompt
@@ -30,6 +34,7 @@ local M = {}
 ---@field format_item fun(item: any): string                -- row → display label
 ---@field preview? fun(item: any): string[] | { lines: string[], ft?: string }  -- snacks-only; ignored by vim.ui.select
 ---@field on_pick fun(item: any): nil                       -- called with the chosen row; nil on cancel → no-op
+---@field actions? table<string, hyprpilot.palettes.PickerAction>  -- snacks-only side actions (e.g. `delete = { key = "<C-d>", handler = ... }`)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"       -- per-call override of config.palettes.picker
 
 ---Decide which backend to actually use given the requested setting.
@@ -103,6 +108,32 @@ local function open_snacks(opts)
     })
   end
 
+  -- Translate the unified `opts.actions` shape into snacks' two
+  -- separate `actions` (named handlers) + `win.input.keys` (key →
+  -- action name) tables. Each action runs in normal & insert modes
+  -- since snacks pickers default to insert-mode focus.
+  local snacks_actions = {}
+  local snacks_keys = {}
+  if type(opts.actions) == "table" then
+    for name, action in pairs(opts.actions) do
+      snacks_actions[name] = function(picker, item)
+        picker:close()
+        if item ~= nil and type(action.handler) == "function" then
+          action.handler(item.raw)
+        end
+      end
+      local keys = action.key
+      if type(keys) == "string" then
+        keys = { keys }
+      end
+      if type(keys) == "table" then
+        for _, key in ipairs(keys) do
+          snacks_keys[key] = { name, mode = { "n", "i" } }
+        end
+      end
+    end
+  end
+
   snacks_picker.pick({
     source = opts.kind,
     items = items,
@@ -127,6 +158,8 @@ local function open_snacks(opts)
         opts.on_pick(item.raw)
       end
     end,
+    actions = snacks_actions,
+    win = { input = { keys = snacks_keys } },
   })
 end
 

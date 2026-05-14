@@ -22,6 +22,12 @@ local stats = require("hyprpilot.chat.stats")
 
 local M = {}
 
+---Forward-declared so `M.hydrate` / `M.handle_turn_ended` /
+---`M.apply_pending_folds` can call it before its body lands further
+---down the file (Lua locals aren't visible above their declaration).
+---@type fun(state: hyprpilot.render.State)
+local rescan_code_block_folds
+
 ---@alias hyprpilot.render.BlockKind
 ---| "turn_header"
 ---| "agent_text"
@@ -1443,6 +1449,12 @@ function M.hydrate(state, snapshot)
   for _, entry in ipairs(items) do
     M.render_item(state, entry.turnId, entry.item)
   end
+
+  -- Snapshot is bulk-loaded; sweep the entire buffer once so every
+  -- fenced code block in the historical transcript becomes
+  -- foldable. Live appends pick up their folds via
+  -- `handle_turn_ended` instead.
+  rescan_code_block_folds(state)
 end
 
 ---Live `transcript` event handler.
@@ -1785,6 +1797,12 @@ function M.handle_turn_ended(event)
       end
     end
   end
+
+  -- Mark every fenced code block in the buffer as foldable (open by
+  -- default). Streaming chunks may have completed multiple code
+  -- blocks across the turn; sweep once on turn-end to catch them
+  -- all. Captain folds via native `zc` / `zM`; no auto-collapse.
+  rescan_code_block_folds(state)
 end
 
 ---Format the header for a terminal block.
@@ -1952,6 +1970,83 @@ function close_fold_at(state, target_row)
   fold_range(state, target_row, target_row)
 end
 
+---Create a manual fold over `[start_row, end_row]` and immediately
+---open it — captain ends up with a foldable range they can `zc` on
+---demand, but content stays visible by default. Used for fenced
+---code blocks in prose where we DON'T want auto-collapse, just the
+---ability to fold.
+---@param bufnr integer
+---@param start_row integer
+---@param end_row integer
+local function mark_foldable_range(bufnr, start_row, end_row)
+  if end_row <= start_row then
+    return
+  end
+
+  local fold_cmd = string.format("silent! %d,%dfold", start_row + 1, end_row + 1)
+  local open_cmd = string.format("silent! %d,%dfoldopen", start_row + 1, end_row + 1)
+
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
+      vim.api.nvim_win_call(winid, function()
+        pcall(vim.cmd, fold_cmd)
+        pcall(vim.cmd, open_cmd)
+      end)
+    end
+  end
+end
+
+---Scan `bufnr`'s lines between `start_row` (inclusive) and `end_row`
+---(exclusive — or `-1` for end-of-buffer) for fenced markdown code
+---blocks and create open-by-default folds for each pair. Captain
+---uses native `zc` / `zM` etc. to collapse. Dedup is naive: we run
+---`:fold` blindly, vim discards no-op folds when the range is
+---already covered.
+---@param bufnr integer
+---@param start_row integer
+---@param end_row? integer
+local function scan_code_block_folds(bufnr, start_row, end_row)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  end_row = end_row or vim.api.nvim_buf_line_count(bufnr)
+  if end_row <= start_row then
+    return
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_row, end_row, false)
+  local opening = nil
+  for i, line in ipairs(lines) do
+    -- A line is a fence open / close when it's exactly three (or more)
+    -- backticks optionally followed by a language tag. We don't try
+    -- to be fancy about indented fences — chat content uses
+    -- column-zero fences from the renderer's `paste_buffer` and the
+    -- agent's own prose.
+    if line:match("^```") ~= nil then
+      if opening == nil then
+        opening = i
+      else
+        local fence_start = start_row + opening - 1
+        local fence_end = start_row + i - 1
+        mark_foldable_range(bufnr, fence_start, fence_end)
+        opening = nil
+      end
+    end
+  end
+end
+
+---Walk every prose region we own (turn layouts' anchor rows + their
+---ended ranges) and re-mark fenced code blocks as foldable. Called
+---from `apply_pending_folds` and `handle_turn_ended` so folds appear
+---when the window first shows the buffer + on every turn-end tick.
+---Assigned to the forward-declared local at the top of the file.
+rescan_code_block_folds = function(state)
+  if state == nil then
+    return
+  end
+  scan_code_block_folds(state.bufnr, 0, nil)
+end
+
 ---Fold a tool / plan / thought / permission block by its registered
 ---head + tail extmarks (block-level inner fold).
 ---@param state hyprpilot.render.State
@@ -1966,7 +2061,17 @@ end
 ---@param bufnr integer
 function M.apply_pending_folds(bufnr)
   local state = M.state_for_bufnr(bufnr)
-  if state == nil or #state.pending_fold_rows == 0 then
+  if state == nil then
+    return
+  end
+
+  -- Code-block folds get re-scanned on every window-show so a
+  -- newly-opened window picks up folds that landed before the
+  -- window existed (`mark_foldable_range` is a no-op when no
+  -- window shows the buffer, same constraint as `fold_range`).
+  rescan_code_block_folds(state)
+
+  if #state.pending_fold_rows == 0 then
     return
   end
 
