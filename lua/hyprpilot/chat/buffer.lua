@@ -81,6 +81,11 @@ function M.create(instance_id)
   local bufnr = vim.api.nvim_create_buf(false, true)
   apply_options(bufnr, name)
 
+  -- Buffer-local chat keymaps (gf, future ones). Wired here so every
+  -- per-instance chat buffer gets them at mint time — the placeholder
+  -- path mints via `M.placeholder` and doesn't need them.
+  require("hyprpilot.chat.keymaps").attach(bufnr)
+
   log.debug("buffer.create: instance=%s bufnr=%s", instance_id, bufnr)
 
   return bufnr
