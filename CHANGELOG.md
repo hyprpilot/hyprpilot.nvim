@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.1.2...hyprpilot.nvim-v1.2.0) (2026-05-14)
+
+
+### Features
+
+* **rpc:** global with_config baseline + collapse hand-rolled loops to vim.* helpers ([#71](https://github.com/hyprpilot/hyprpilot.nvim/issues/71)) ([49bd4f6](https://github.com/hyprpilot/hyprpilot.nvim/commit/49bd4f6907717362434c2db95ecfa7338a8e412c))
+
+
+### Refactor
+
+* **plugin:** drive treesitter filetype registration from a list ([#73](https://github.com/hyprpilot/hyprpilot.nvim/issues/73)) ([55ae8c1](https://github.com/hyprpilot/hyprpilot.nvim/commit/55ae8c1f490e73c78272630637f837c5bbcbdbec))
+
 ## [1.1.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.1.1...hyprpilot.nvim-v1.1.2) (2026-05-14)
 
 
