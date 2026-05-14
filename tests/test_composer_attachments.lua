@@ -119,6 +119,43 @@ T["submit includes attachments in the wire payload + clears on success"] = funct
   helpers.cleanup_instance(id)
 end
 
+T["submit forwards with_config as withConfig on prompts/send"] = function()
+  local restore, calls = helpers.stub_client_request()
+  local composer = require("hyprpilot.ui.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+
+  composer.submit("ship it", {
+    instance_id = id,
+    with_config = { { mcps = { { id = "fs", enabled = true } } } },
+  })
+
+  MiniTest.expect.equality(calls[1].method, "prompts/send")
+  MiniTest.expect.equality(#calls[1].params.withConfig, 1)
+  MiniTest.expect.equality(calls[1].params.withConfig[1].mcps[1].id, "fs")
+
+  restore()
+  helpers.cleanup_instance(id)
+end
+
+T["submit omits withConfig from prompts/send when with_config is a map (warn + skip)"] = function()
+  local restore, calls = helpers.stub_client_request()
+  local composer = require("hyprpilot.ui.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+
+  composer.submit("ship it", {
+    instance_id = id,
+    -- map-shaped (single patch object) instead of list-of-patches.
+    with_config = { agents = { { id = "code" } } },
+  })
+
+  MiniTest.expect.equality(calls[1].params.withConfig, nil)
+
+  restore()
+  helpers.cleanup_instance(id)
+end
+
 T["submit without attachments omits the wire field"] = function()
   local restore, calls = helpers.stub_client_request()
   local composer = require("hyprpilot.ui.composer")

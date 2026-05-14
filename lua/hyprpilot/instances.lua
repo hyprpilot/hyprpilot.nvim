@@ -33,6 +33,15 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@field mode? string
 ---@field cwd? string
 
+---One Kustomize-style overlay patch — a JSON-shaped table merged
+---onto the daemon's resolved `Config` before a spawn-bearing RPC
+---proceeds. Each patch supports object merge, keyed-array merge by
+---`id`, primitive-array append, plus `$patch: replace`,
+---`$patch: delete`, and `$deleteFromPrimitiveList/<field>`
+---directives (see daemon's `merge::strategic_merge`). Bad shapes
+---are rejected daemon-side with `-32602`.
+---@alias hyprpilot.ConfigPatch table<string, any>
+
 ---@class hyprpilot.SpawnOpts
 ---@field profile_id? string
 ---@field agent_id? string
@@ -42,6 +51,11 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@field restore? boolean    -- default false; true → resume the latest matching session if any
 ---@field name? string        -- captain-assigned slug (uses `focus` with ensure=true under the hood)
 ---@field show? boolean       -- default true; switch the chat split to the spawned instance
+---@field with_config? hyprpilot.ConfigPatch[]
+--- Overlay patches applied in declaration order. Sticks to the
+--- spawned instance for restart replay. Omitted from the wire when
+--- nil / empty / malformed (a `log.warn` fires on bad shapes so
+--- captain misuse doesn't drop silently).
 
 ---@class hyprpilot.FocusOpts
 ---@field ensure? boolean     -- default false; true → spawn-and-rename if the slug doesn't resolve
@@ -52,6 +66,10 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@field model? string
 ---@field restore? boolean
 ---@field show? boolean       -- default true
+---@field with_config? hyprpilot.ConfigPatch[]
+--- Same shape as `SpawnOpts.with_config`; only honoured on the
+--- ensure-spawn path (a focus that resolves to a live instance
+--- ignores it).
 
 ---@class hyprpilot.InstanceMeta
 ---@field profile_id? string
@@ -111,6 +129,37 @@ local function from_meta_wire(wire)
     latest_seq = wire.latestSeq,
     pending_permissions = wire.pendingPermissions,
   }
+end
+
+---Validate + stamp `withConfig` onto an outgoing spawn-bearing
+---params table. Skips silently on nil, logs at warn on a
+---non-table / sparse / map-shaped value (so captain misuse surfaces
+---instead of vanishing under a wire-side serde-default).
+---@param params table
+---@param raw any
+---@param caller string
+local function apply_with_config(params, raw, caller)
+  if raw == nil then
+    return
+  end
+
+  if type(raw) ~= "table" then
+    log.warn("instances.%s: with_config must be a list of patch tables, got %s — omitting", caller, type(raw))
+    return
+  end
+
+  -- `#tbl` on a map-shaped table or a sparse array returns 0; either
+  -- way the captain meant something other than "list of patches" and
+  -- we'd send a JSON object instead of an array. Bail with a warn
+  -- so the misuse isn't silent.
+  if #raw == 0 then
+    if next(raw) ~= nil then
+      log.warn("instances.%s: with_config must be a list (array-shaped table), got map / sparse — omitting", caller)
+    end
+    return
+  end
+
+  params.withConfig = raw
 end
 
 ---Bring a freshly-spawned instance into the local registry + window.
@@ -207,14 +256,17 @@ function M.spawn(opts, callback)
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
 
-  client.request("instances/spawn", {
+  local params = {
     profileId = opts.profile_id,
     agentId = opts.agent_id,
     cwd = cwd,
     mode = opts.mode,
     model = opts.model,
     restore = opts.restore == true,
-  }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
+  }
+  apply_with_config(params, opts.with_config, "spawn")
+
+  client.request("instances/spawn", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then
       log.warn("instances.spawn: %s", err.message)
 
@@ -246,7 +298,7 @@ function M.focus(instance_id, opts, callback)
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
 
-  client.request("instances/focus", {
+  local params = {
     instanceId = instance_id,
     ensure = opts.ensure == true,
     profileId = opts.profile_id,
@@ -255,7 +307,10 @@ function M.focus(instance_id, opts, callback)
     mode = opts.mode,
     model = opts.model,
     restore = opts.restore == true,
-  }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
+  }
+  apply_with_config(params, opts.with_config, "focus")
+
+  client.request("instances/focus", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then
       log.warn("instances.focus: %s", err.message)
 
