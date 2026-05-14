@@ -325,42 +325,25 @@ function M.open()
     return
   end
 
-  local previous_win = vim.api.nvim_get_current_win()
-
-  -- See `permission_row.open_window` — `window.focus()` absorbs third-
-  -- party BufEnter throws so a missing markdown parser can't kill our
-  -- event loop.
-  if not window.focus() then
+  local winid, err = require("hyprpilot.chat.buffer").open_aux_split({
+    direction = "aboveleft 1split",
+    bufnr = bufnr,
+    after = function(w)
+      vim.wo[w].wrap = false
+      vim.wo[w].winfixheight = true
+      vim.wo[w].winfixwidth = true
+      vim.wo[w].winhighlight = "Normal:HyprpilotHeader"
+      -- Lock to one row; `winfixheight` keeps `<C-W>=` from
+      -- redistributing space onto it.
+      vim.api.nvim_win_set_height(w, 1)
+    end,
+  })
+  if winid == nil then
+    log.warn("header.open: %s", err)
     return
   end
-  local ok_split = pcall(vim.cmd, "aboveleft 1split")
-  if not ok_split then
-    log.warn("header.open: aboveleft 1split failed")
-    if vim.api.nvim_win_is_valid(previous_win) then
-      pcall(vim.api.nvim_set_current_win, previous_win)
-    end
-    return
-  end
 
-  M._winid = vim.api.nvim_get_current_win()
-
-  vim.api.nvim_win_set_buf(M._winid, bufnr)
-  require("hyprpilot.chat.buffer").clean_window_chrome(M._winid)
-  vim.wo[M._winid].wrap = false
-  vim.wo[M._winid].winfixheight = true
-  vim.wo[M._winid].winfixwidth = true
-  vim.wo[M._winid].winhighlight = "Normal:HyprpilotHeader"
-
-  -- Lock the height to one row; `winfixheight` keeps `<C-W>=` from
-  -- redistributing space onto it.
-  vim.api.nvim_win_set_height(M._winid, 1)
-
-  -- Drop back to wherever the captain was — the header is a pinned
-  -- display, never a focus target.
-  if vim.api.nvim_win_is_valid(previous_win) then
-    vim.api.nvim_set_current_win(previous_win)
-  end
-
+  M._winid = winid
   M.refresh()
 end
 

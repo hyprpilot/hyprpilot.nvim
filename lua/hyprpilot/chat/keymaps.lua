@@ -133,38 +133,7 @@ local function goto_file()
   end
 end
 
----Apply one binding: spec is `string | string[] | false`. `false`
----disables the action; the rest become buffer-local normal-mode
----keymaps pointing at `handler`.
----@param bufnr integer
----@param spec string | string[] | false | nil
----@param handler fun(): nil
----@param desc string
-local function apply(bufnr, spec, handler, desc)
-  if spec == false or spec == nil then
-    return
-  end
-  if type(spec) == "string" then
-    spec = { spec }
-  end
-  for _, key in ipairs(spec) do
-    vim.keymap.set("n", key, handler, { buffer = bufnr, desc = "hyprpilot: " .. desc, silent = true })
-  end
-end
-
----Resolve the per-buffer render state. Returns nil for the
----placeholder + scratch buffers (they have no tracked turns).
----@param bufnr integer
----@return hyprpilot.render.State?
-local function state_for(bufnr)
-  local render = require("hyprpilot.chat.render")
-  for _, st in pairs(render._states) do
-    if st.bufnr == bufnr then
-      return st
-    end
-  end
-  return nil
-end
+local apply = require("hyprpilot.keymap-util").apply_action
 
 ---Collect every tracked extmark row of a given category for the
 ---current buffer's render state. `category` is `"turn"` (uses the
@@ -175,11 +144,11 @@ end
 ---@param category "turn" | "section"
 ---@return integer[]
 local function anchor_rows(bufnr, category)
-  local state = state_for(bufnr)
+  local render = require("hyprpilot.chat.render")
+  local state = render.state_for_bufnr(bufnr)
   if state == nil then
     return {}
   end
-  local render = require("hyprpilot.chat.render")
   local rows = {}
   for _, layout in pairs(state.turn_layouts) do
     if category == "turn" then
@@ -247,7 +216,7 @@ end
 ---when the in-flight hydrate replies (or errors).
 ---@param bufnr integer
 local function maybe_load_older(bufnr)
-  local state = state_for(bufnr)
+  local state = require("hyprpilot.chat.render").state_for_bufnr(bufnr)
   if state == nil or state.has_more ~= true then
     return
   end
