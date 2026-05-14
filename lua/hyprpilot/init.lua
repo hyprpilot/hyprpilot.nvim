@@ -7,6 +7,12 @@ function M.setup(config)
 
   require("hyprpilot.log").setup({ level = c.log_level })
 
+  -- Wire daemon→plugin notification handlers (window focus / toggle
+  -- / show / hide today, more as the surface grows). Listeners
+  -- accumulate in `client.on_notification`, so this is a one-shot
+  -- registration per setup() call.
+  require("hyprpilot.rpc").register()
+
   -- Graceful teardown on Neovim exit. `clear = true` on the group
   -- so a captain who re-calls `setup()` (hot reload, config swap)
   -- doesn't accumulate duplicate `VimLeavePre` listeners.
