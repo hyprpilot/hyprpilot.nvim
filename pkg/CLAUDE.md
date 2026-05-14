@@ -187,6 +187,120 @@ need on the Lua side. Two management tools (`reload_dynamic_tools`,
   on `main` from conventional commits, tags + creates GitHub Release on
   merge).
 
+## Publishing to PyPI
+
+The `.github/workflows/publish-pypi.yml` workflow publishes
+`hyprpilot-nvim-mcp` to PyPI on every `v*` tag (release-please cuts
+these on `main` after merging the version-bump PR). Auth is **PyPI
+Trusted Publishing (OIDC)** — no API token is stored in GitHub. PyPI
+verifies the workflow's identity via OIDC and issues a short-lived
+publish token at runtime.
+
+### One-time setup (captain only)
+
+**1. Create the PyPI project** (skip if already published).
+   The first publish has to seed the project; PyPI doesn't accept a
+   trusted publisher for a project that doesn't exist yet. Two paths:
+
+   - **Recommended — pending publisher.** PyPI lets you register a
+     trusted publisher BEFORE the project exists, via
+     [pypi.org/manage/account/publishing](https://pypi.org/manage/account/publishing/)
+     → "Add a new pending publisher". Use the values in step 2 below.
+     The first tag-push then publishes via OIDC and the pending
+     publisher is auto-promoted.
+   - **Alternative — manual seed.** Build locally
+     (`cd pkg && uv build`) and `uv run twine upload dist/*` once with
+     an API token, then add the trusted publisher per step 2.
+
+**2. Add the trusted publisher.**
+   On [pypi.org/manage/project/hyprpilot-nvim-mcp/settings/publishing/](https://pypi.org/manage/project/hyprpilot-nvim-mcp/settings/publishing/):
+
+   | Field | Value |
+   |---|---|
+   | PyPI Project Name | `hyprpilot-nvim-mcp` |
+   | Owner | `hyprpilot` |
+   | Repository name | `hyprpilot.nvim` |
+   | Workflow name | `publish-pypi.yml` |
+   | Environment name | `pypi` |
+
+   The environment binding scopes the OIDC grant to a single
+   GitHub Environment, so a workflow running outside `pypi` (a
+   forked PR, a misconfigured workflow) can't grab the publish
+   token even if it can read the repo.
+
+**3. Create the GitHub Environment.**
+   On [github.com/hyprpilot/hyprpilot.nvim/settings/environments](https://github.com/hyprpilot/hyprpilot.nvim/settings/environments)
+   → "New environment" → name it `pypi`.
+
+   Optional but recommended:
+   - **Deployment branch rule** → "Selected branches" → add `main`.
+     Protects against publishes from feature branches.
+   - **Required reviewers** → list the captain. The publish job
+     will pause until approved on each tag.
+
+**4. Pin the publish action's SHA.**
+   The workflow ships with `pypa/gh-action-pypi-publish@release/v1`
+   (a moving tag) for the first checkin. Run:
+
+   ```bash
+   gh api repos/pypa/gh-action-pypi-publish/git/refs/tags/release/v1 \
+     --jq '.object.sha'
+   ```
+
+   …and replace the `release/v1` ref with the resolved SHA, with a
+   `# release/v1` trailing comment so Renovate / Dependabot can
+   track it (matches the `release-please-action@<sha> # v5.0.0`
+   pattern in the same file). Skip this step in dev; ship it
+   before the first tagged release.
+
+### How it runs
+
+1. Captain merges the release-please PR on `main`. release-please
+   cuts a `v0.X.Y` tag and a GitHub Release.
+2. The tag push triggers `publish-pypi.yml`. The `build` job
+   produces the wheel + sdist via `task build` (uv backend); the
+   `publish` job downloads the artifact and calls
+   `pypa/gh-action-pypi-publish` which OIDC-authenticates against
+   PyPI's trusted-publisher entry.
+3. PyPI verifies the OIDC claims (repo, workflow, environment) match
+   the registered publisher and accepts the upload. Captain sees
+   the new version on
+   [pypi.org/project/hyprpilot-nvim-mcp/](https://pypi.org/project/hyprpilot-nvim-mcp/)
+   within a minute.
+4. `skip-existing: true` makes a tag re-push (e.g. release-please
+   re-cutting the same version) idempotent — the publish step
+   no-ops instead of failing.
+
+### Why trusted publishing over an API token
+
+- **No long-lived secret in the repo.** API tokens get leaked,
+  rotated, forgotten. OIDC tokens are minted per-job, valid for
+  ~15 minutes.
+- **PyPI scopes the grant.** The trusted-publisher entry binds to
+  an exact (repo, workflow, environment) tuple. A different
+  workflow in the same repo cannot publish, even with admin
+  access.
+- **No setup on the captain's local machine.** `pip config` /
+  `.pypirc` aren't needed for CI publishing.
+
+### Local publishing (if you ever need to)
+
+For one-off pushes off the CI path (manual seed in step 1 above,
+hotfix when GitHub Actions is down):
+
+```bash
+cd pkg
+uv build                           # → dist/*.whl + *.tar.gz
+uv run twine upload dist/*         # prompts for an API token
+```
+
+Generate the token at
+[pypi.org/manage/account/token](https://pypi.org/manage/account/token/);
+scope it to the `hyprpilot-nvim-mcp` project. Stash it in your
+password manager — never commit it, never paste it into a CI
+secret (the workflow uses OIDC; an API token there would be
+strictly worse).
+
 ## Gotchas
 
 - **`NVIM_LISTEN_ADDRESS` must be a Unix socket path** that the running

@@ -1,0 +1,100 @@
+---
+# Publishes the `hyprpilot-nvim-mcp` Python package to PyPI on every
+# release tag.
+#
+# Trigger: any tag matching `v*` (release-please cuts these on
+# `main` after merging the version-bump PR; both packages share the
+# same `vX.Y.Z` tag per `release-please-config.json`'s
+# `include-component-in-tag: false`).
+#
+# Auth: PyPI Trusted Publishing (OIDC). NO API token is stored in
+# the repo. PyPI verifies the GitHub Actions identity by matching:
+#   - repository:    hyprpilot/hyprpilot.nvim
+#   - workflow:      .github/workflows/publish-pypi.yml
+#   - environment:   pypi
+# against the trusted-publisher entry the captain configured on
+# PyPI's project settings (one-time, see CONTRIBUTING.md).
+#
+# Why an environment: PyPI's trusted-publisher config can pin the
+# publish to one GitHub environment, which lets the captain layer
+# extra protections (required reviewers, deployment branch rules)
+# on the publish step without touching repo-wide settings.
+
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Cancel an in-flight publish if the same tag is force-pushed (rare,
+# but a torn release is worse than a cancelled one).
+concurrency:
+  group: pypi-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required for OIDC trusted publishing — pypa/gh-action-pypi-publish
+  # exchanges this token for PyPI's short-lived API credential.
+  id-token: write
+
+jobs:
+  build:
+    name: Build wheel + sdist
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkg
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Bootstrap toolchain via mise
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+
+      - name: Install workspace deps
+        run: task install
+
+      - name: Build
+        run: task build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: pkg/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Bind to the `pypi` environment so PyPI's trusted-publisher
+    # config can scope its grant to this exact deploy slot. The
+    # captain sets up the environment under repo Settings →
+    # Environments; protection rules (manual approval, branch
+    # restriction) are configured there.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/hyprpilot-nvim-mcp/
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist/
+
+      # The action exchanges the workflow's id-token for a
+      # short-lived PyPI API token via the Trusted Publishing
+      # protocol. Pin to a SHA before merge — `gh api repos/pypa/gh-action-pypi-publish/git/refs/tags/release/v1`
+      # gives the latest release tag's commit; Renovate / Dependabot
+      # will keep it current after that.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Skip publish when the version already exists on PyPI (a
+          # tag re-push that didn't actually bump the version
+          # shouldn't fail loudly).
+          skip-existing: true
+          verbose: true

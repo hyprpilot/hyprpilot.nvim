@@ -60,10 +60,21 @@ class NvimWrapper:
         self._nvim = None
 
     def exec_lua(self, code: str, args: list[Any] | None = None) -> Any:
-        """Run `code` with `args`, returning whatever it returns."""
+        """Run `code` with `args` exposed as the Lua vararg `...`.
+
+        pynvim's `Nvim.exec_lua(code, *args)` signature expects each
+        Lua vararg as a separate Python positional. Passing the
+        whole list as a single arg (`exec_lua(code, args)`) packs
+        the list itself into the Lua vararg — `...` becomes one
+        table value, not N values, so a dispatcher like
+        `return require('mod').call(...)` ends up calling
+        `call({tool_name, args_dict})` instead of
+        `call(tool_name, args_dict)`. The splat below restores the
+        intended one-vararg-per-arg shape.
+        """
         with self._lock:
             try:
-                return self._attach().exec_lua(code, args or [])
+                return self._attach().exec_lua(code, *(args or []))
             except (BrokenPipeError, EOFError, OSError) as exc:
                 self._reset_on_disconnect(exc)
 
