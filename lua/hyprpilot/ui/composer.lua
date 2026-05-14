@@ -657,8 +657,15 @@ function M.open(opts)
     end
 
     if focus then
-      vim.api.nvim_set_current_win(M._winid)
-      vim.cmd("startinsert")
+      -- Same BufEnter risk as the open-fresh path below — pcall the
+      -- focus so a third-party autocmd that throws on the composer
+      -- buffer can't take out the open path.
+      local ok, err = pcall(vim.api.nvim_set_current_win, M._winid)
+      if ok then
+        vim.cmd("startinsert")
+      else
+        log.warn("composer.open: nvim_set_current_win failed: %s", err)
+      end
     end
 
     paint_indicator(instance_id)
@@ -666,8 +673,17 @@ function M.open(opts)
     return
   end
 
-  vim.api.nvim_set_current_win(window._winid)
-  vim.cmd(string.format("belowright %dsplit", resolve_min_height()))
+  -- See `permission_row.open_window` — `window.focus()` absorbs third-
+  -- party BufEnter throws so a missing markdown parser can't kill the
+  -- composer-open path.
+  if not window.focus() then
+    return
+  end
+  local ok_split = pcall(vim.cmd, string.format("belowright %dsplit", resolve_min_height()))
+  if not ok_split then
+    log.warn("composer.open: belowright %dsplit failed", resolve_min_height())
+    return
+  end
 
   M._winid = vim.api.nvim_get_current_win()
 

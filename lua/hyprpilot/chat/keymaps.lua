@@ -116,7 +116,16 @@ local function goto_file()
     target_win = vim.api.nvim_get_current_win()
   end
 
-  vim.api.nvim_set_current_win(target_win)
+  -- `gf` targets a captain file buffer; markview / render-markdown
+  -- hooks bound to `BufEnter *` can throw if their treesitter parser
+  -- isn't available for the resolved buffer's filetype. Absorb so the
+  -- keymap fails gracefully instead of bubbling through the chat
+  -- buffer's keymap layer.
+  local ok, err = pcall(vim.api.nvim_set_current_win, target_win)
+  if not ok then
+    log.warn("chat.keymaps.gf: nvim_set_current_win failed: %s", err)
+    return
+  end
   vim.cmd("edit " .. vim.fn.fnameescape(path))
   if line_no ~= nil then
     pcall(vim.api.nvim_win_set_cursor, target_win, { line_no, 0 })

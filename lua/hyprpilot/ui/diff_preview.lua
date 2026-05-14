@@ -578,7 +578,20 @@ function M.open(entry)
   end
 
   local host_win = resolve_host_window()
-  vim.api.nvim_set_current_win(host_win)
+  -- pcall around the BufEnter-firing focus call: a third-party plugin
+  -- that throws on its `BufEnter` (markview without a markdown parser,
+  -- etc.) should not abort the diff-preview flow. The window itself
+  -- can also be stale if `resolve_host_window` raced with an external
+  -- layout change.
+  if not vim.api.nvim_win_is_valid(host_win) then
+    log.warn("diff_preview.open: host window invalid; aborting preview")
+    return
+  end
+  local ok_focus, focus_err = pcall(vim.api.nvim_set_current_win, host_win)
+  if not ok_focus then
+    log.warn("diff_preview.open: nvim_set_current_win failed: %s", focus_err)
+    return
+  end
   vim.api.nvim_win_set_buf(host_win, target_bufnr)
 
   if reason ~= nil then

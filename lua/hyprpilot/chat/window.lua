@@ -55,6 +55,28 @@ function M.is_visible()
   return true
 end
 
+---Switch focus to the chat window. Returns true on success, false
+---when the window is invalid or a third-party `BufEnter` autocmd
+---throws (markview / render-markdown can fault when treesitter
+---can't resolve a parser for the registered alias). Callers that
+---follow `focus()` with `vim.cmd("split")` should bail on `false`
+---to keep one bad autocmd from cascading through our event
+---dispatch.
+---@return boolean
+function M.focus()
+  if not M.is_visible() then
+    return false
+  end
+
+  local ok, err = pcall(vim.api.nvim_set_current_win, M._winid)
+  if not ok then
+    log.warn("window.focus: nvim_set_current_win failed: %s", err)
+    return false
+  end
+
+  return true
+end
+
 ---Register an instance state entry. Used by future spawn() to declare a buffer.
 ---@param state hyprpilot.InstanceState
 function M.register(state)
@@ -176,7 +198,10 @@ function M.show(instance_id)
 
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, bufnr)
-    vim.api.nvim_set_current_win(M._winid)
+    -- Use the pcall-wrapped focus helper instead of a raw
+    -- `nvim_set_current_win` — same BufEnter / treesitter risk class
+    -- as the auxiliary windows have on their open paths.
+    M.focus()
   else
     open_split(config.options.ui or {}, bufnr)
   end
@@ -218,6 +243,30 @@ function M.show(instance_id)
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
 end
 
+---Tear down all child surfaces that live around the chat split.
+---Used both when the captain explicitly hides the chat and when
+---they close the chat window through stock Vim controls (`:q`,
+---`<C-w>q`) — without this cascade, the header / queue strip /
+---permission row / composer remain on screen with a stale
+---`window._winid` pointing at the closed chat, which makes their
+---next `open_window` reach for an invalid id.
+local function close_children()
+  -- Wrap each close in pcall: a child surface in a half-built
+  -- state should not block teardown of its siblings.
+  pcall(function()
+    require("hyprpilot.ui.composer").close()
+  end)
+  pcall(function()
+    require("hyprpilot.chat.queue_strip").close()
+  end)
+  pcall(function()
+    require("hyprpilot.chat.header").close()
+  end)
+  pcall(function()
+    require("hyprpilot.chat.permission_row").close()
+  end)
+end
+
 ---Hide the chat window. Buffers persist for resume. Closes the
 ---composer first since it lives in a sub-split below the chat.
 function M.hide()
@@ -225,16 +274,43 @@ function M.hide()
     return
   end
 
-  require("hyprpilot.ui.composer").close()
-  require("hyprpilot.chat.queue_strip").close()
-  require("hyprpilot.chat.header").close()
-  require("hyprpilot.chat.permission_row").close()
+  close_children()
 
   pcall(vim.api.nvim_win_close, M._winid, true)
   M._winid = nil
 
   log.debug("window.hide")
 end
+
+-- When the chat window goes away through stock Vim controls
+-- (`:q`, `<C-w>q`, layout collapse), our `M._winid` becomes a
+-- stale handle and the auxiliary surfaces (header / queue strip
+-- / permission row / composer) are orphaned with their own stale
+-- `window._winid` references — the next `permission_row.enqueue`
+-- (or any other open path) hits `nvim_set_current_win` on the
+-- dead handle and crashes through the BufEnter autocmd chain.
+-- Catching `WinClosed` here drains the children and resets state
+-- the same way `M.hide()` would.
+vim.api.nvim_create_autocmd("WinClosed", {
+  group = vim.api.nvim_create_augroup("HyprpilotChatWindow", { clear = true }),
+  callback = function(args)
+    if M._winid == nil then
+      return
+    end
+
+    if tonumber(args.match) ~= M._winid then
+      return
+    end
+
+    M._winid = nil
+    -- `WinClosed` fires *before* the window is actually gone, so
+    -- defer the child teardown one tick to keep `nvim_win_close`
+    -- from re-entering on a partially-collapsed layout.
+    vim.schedule(close_children)
+
+    log.debug("window: WinClosed cleanup for chat winid=%s", args.match)
+  end,
+})
 
 ---Toggle the chat window: hide if visible, otherwise show.
 function M.toggle()

@@ -214,7 +214,14 @@ local function on_data(_chan, data, _name)
     if line ~= "" then
       log.debug("client.on_data: line (first 200 chars): %s", line:sub(1, 200))
 
-      local ok, payload = pcall(vim.json.decode, line)
+      -- `luanil = { object = true, array = true }` maps JSON `null` to
+      -- Lua `nil` instead of `vim.NIL`. The userdata sentinel is a
+      -- consumer trap (`x ~= nil` returns true, `x or default` keeps
+      -- the sentinel, table indexing throws) and the daemon emits
+      -- nullable fields liberally (`replacement` on completion items,
+      -- `stopReason` on `turn_ended`, etc.). Convert once at the
+      -- boundary so every downstream module can treat absence as nil.
+      local ok, payload = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
 
       if ok then
         dispatch_payload(payload)
