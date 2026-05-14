@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.1.0...hyprpilot.nvim-v1.1.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **pkg:** build artifacts into pkg/dist (uv workspace default landed at repo root) ([#67](https://github.com/hyprpilot/hyprpilot.nvim/issues/67)) ([7a2c074](https://github.com/hyprpilot/hyprpilot.nvim/commit/7a2c07422cc109241a3f0cb945c7cc1a2e5c76bd))
+
 ## [1.1.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.0.0...hyprpilot.nvim-v1.1.0) (2026-05-14)
 
 
