@@ -989,9 +989,7 @@ local function wrap_in_rules(paragraphs)
     if i > 1 then
       table.insert(lines, "")
     end
-    for _, l in ipairs(paragraph) do
-      table.insert(lines, l)
-    end
+    vim.list_extend(lines, paragraph)
   end
   table.insert(lines, "")
   table.insert(lines, "---")
@@ -1061,9 +1059,7 @@ local function tool_body_lines(formatted, tool_kind)
   -- removes naturally.
   if type(formatted.diff) == "string" and formatted.diff ~= "" then
     local diff_para = { "````diff" }
-    for _, l in ipairs(vim.split(formatted.diff, "\n", { plain = true })) do
-      table.insert(diff_para, l)
-    end
+    vim.list_extend(diff_para, vim.split(formatted.diff, "\n", { plain = true }))
     table.insert(diff_para, "````")
     table.insert(paragraphs, diff_para)
   elseif type(formatted.description) == "string" and formatted.description ~= "" then
@@ -1073,9 +1069,7 @@ local function tool_body_lines(formatted, tool_kind)
   if type(formatted.output) == "string" and formatted.output ~= "" then
     local output_lang = tool_output_lang(tool_kind)
     local output_para = { "````" .. output_lang }
-    for _, l in ipairs(vim.split(formatted.output, "\n", { plain = true })) do
-      table.insert(output_para, l)
-    end
+    vim.list_extend(output_para, vim.split(formatted.output, "\n", { plain = true }))
     table.insert(output_para, "````")
     table.insert(paragraphs, output_para)
   end
@@ -1947,9 +1941,7 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
     body = wrap_in_rules({ { "(no output yet)" } })
   else
     local out_para = { "````console" }
-    for _, l in ipairs(vim.split(term.output, "\n", { plain = true })) do
-      table.insert(out_para, l)
-    end
+    vim.list_extend(out_para, vim.split(term.output, "\n", { plain = true }))
     table.insert(out_para, "````")
     body = wrap_in_rules({ out_para })
   end

@@ -263,14 +263,20 @@ local function compose()
     end
     if type(formatted.diff) == "string" and formatted.diff ~= "" then
       table.insert(lines, "  ````diff")
-      for _, l in ipairs(vim.split(formatted.diff, "\n", { plain = true })) do
-        table.insert(lines, "  " .. l)
-      end
+      vim.list_extend(
+        lines,
+        vim.tbl_map(function(l)
+          return "  " .. l
+        end, vim.split(formatted.diff, "\n", { plain = true }))
+      )
       table.insert(lines, "  ````")
     elseif type(formatted.description) == "string" and formatted.description ~= "" then
-      for _, l in ipairs(vim.split(formatted.description, "\n", { plain = true })) do
-        table.insert(lines, "  " .. l)
-      end
+      vim.list_extend(
+        lines,
+        vim.tbl_map(function(l)
+          return "  " .. l
+        end, vim.split(formatted.description, "\n", { plain = true }))
+      )
     end
   end
 
@@ -581,13 +587,9 @@ end
 ---if they need the prompt back.
 ---@param instance_id string
 function M.drop_for_instance(instance_id)
-  local kept = {}
-  for _, entry in ipairs(M._queue) do
-    if entry.instance_id ~= instance_id then
-      table.insert(kept, entry)
-    end
-  end
-  M._queue = kept
+  M._queue = vim.tbl_filter(function(entry)
+    return entry.instance_id ~= instance_id
+  end, M._queue)
 
   if #M._queue == 0 then
     M.close()

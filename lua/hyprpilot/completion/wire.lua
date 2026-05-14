@@ -50,17 +50,11 @@ end
 ---@param wire table
 ---@return hyprpilot.completion.Response
 local function response_from_wire(wire)
-  local items = {}
-  if type(wire.items) == "table" then
-    for _, w in ipairs(wire.items) do
-      table.insert(items, item_from_wire(w))
-    end
-  end
   return {
     request_id = wire.requestId,
     source_id = wire.sourceId,
     replacement_range = wire.replacementRange,
-    items = items,
+    items = type(wire.items) == "table" and vim.tbl_map(item_from_wire, wire.items) or {},
   }
 end
 

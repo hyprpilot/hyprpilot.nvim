@@ -111,13 +111,8 @@ function M.open(opts)
       return
     end
 
-    local items = {}
-    for _, w in ipairs(raw) do
-      table.insert(items, from_wire(w))
-    end
-
     pickers.open({
-      items = items,
+      items = vim.tbl_map(from_wire, raw),
       title = "sessions",
       kind = "hyprpilot.sessions",
       picker = opts.picker,

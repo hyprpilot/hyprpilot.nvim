@@ -89,12 +89,8 @@ local function format_preview(item, active_id)
   local bufnr = require("hyprpilot.chat.window").get_bufnr(item.id)
   local tail = buffer_tail(bufnr, 40)
   if #tail > 0 then
-    table.insert(lines, "")
-    table.insert(lines, "---")
-    table.insert(lines, "")
-    for _, l in ipairs(tail) do
-      table.insert(lines, l)
-    end
+    vim.list_extend(lines, { "", "---", "" })
+    vim.list_extend(lines, tail)
   end
 
   return { lines = lines, ft = "markdown" }
