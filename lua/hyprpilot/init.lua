@@ -13,6 +13,15 @@ function M.setup(config)
   -- registration per setup() call.
   require("hyprpilot.rpc").register()
 
+  -- Attention list — subscribes to permission / turn-ended User
+  -- autocmds and exposes `is_attention_needed()` plus an `on_change`
+  -- subscription for the bell + palette + future status pills.
+  require("hyprpilot.notification.attention").ensure_listeners()
+
+  -- Terminal bell — opt-in via `notification.bell.enabled`; rings
+  -- on every attention-list growth event.
+  require("hyprpilot.notification.bell").ensure_listeners()
+
   -- Graceful teardown on Neovim exit. `clear = true` on the group
   -- so a captain who re-calls `setup()` (hot reload, config swap)
   -- doesn't accumulate duplicate `VimLeavePre` listeners.

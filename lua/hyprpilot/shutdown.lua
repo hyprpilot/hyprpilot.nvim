@@ -60,6 +60,16 @@ function M.shutdown()
     require("hyprpilot.chat.queue_strip")._reset()
   end)
 
+  -- Attention list + bell teardown. Drops every entry and the
+  -- bell's `on_change` subscription so a hot-reload doesn't re-bell
+  -- on entries from the prior session or fan out to stale handlers.
+  step("attention._reset", function()
+    require("hyprpilot.notification.attention")._reset()
+  end)
+  step("bell._reset", function()
+    require("hyprpilot.notification.bell")._reset()
+  end)
+
   -- 2. Drop the daemon event subscription before the channel goes
   --    away. Otherwise the `events/changed` callback can fire
   --    against a half-torn-down state.

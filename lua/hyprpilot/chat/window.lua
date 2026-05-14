@@ -100,6 +100,7 @@ function M.close(instance_id)
   require("hyprpilot.ui.composer").wipe(id)
   require("hyprpilot.chat.permission_row").drop_for_instance(id)
   require("hyprpilot.composer_queue").reset(id)
+  require("hyprpilot.notification.attention")._clear_instance(id)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)
@@ -294,6 +295,24 @@ end
 ---@return string?
 function M.active_instance()
   return M._last_active_id
+end
+
+---Look up the chat buffer for `instance_id`. Returns nil when the
+---instance hasn't been registered or its buffer is no longer valid.
+---External code (status pickers, captain keymaps) uses this when
+---they need a buffer outside the autocmd path, where the
+---`data.bufnr` field on the event payload isn't available.
+---@param instance_id string
+---@return integer?
+function M.get_bufnr(instance_id)
+  local state = M._instances[instance_id]
+  if state == nil then
+    return nil
+  end
+  if not vim.api.nvim_buf_is_valid(state.bufnr) then
+    return nil
+  end
+  return state.bufnr
 end
 
 ---Bump the snapshot page size for the active (or named) instance and

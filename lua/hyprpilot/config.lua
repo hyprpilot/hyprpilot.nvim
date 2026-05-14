@@ -11,6 +11,13 @@ local M = {}
 ---@field queue_strip? hyprpilot.ConfigQueueStrip
 ---@field palettes? hyprpilot.ConfigPalettes
 ---@field completion? hyprpilot.ConfigCompletion
+---@field notification? hyprpilot.ConfigNotification
+
+---@class hyprpilot.ConfigNotification
+---@field bell? hyprpilot.ConfigNotificationBell
+
+---@class hyprpilot.ConfigNotificationBell
+---@field enabled? boolean  -- ring the terminal bell every time the attention list grows (default `false` — opt-in)
 
 ---@class hyprpilot.ConfigPalettes
 ---@field picker? "auto" | "snacks" | "vim.ui.select"  -- picker backend; "auto" = snacks if available, else vim.ui.select
@@ -145,6 +152,11 @@ local defaults = {
     -- round-trip through the daemon. Captain can extend this list
     -- when the daemon adds more sources.
     sources = { "skills" },
+  },
+  notification = {
+    bell = {
+      enabled = false,
+    },
   },
   composer = {
     min_height = 12,

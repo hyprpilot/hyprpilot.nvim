@@ -793,6 +793,15 @@ function M.submit(text, opts)
     payload.attachments = attachments_snapshot
   end
 
+  -- Fire BEFORE the daemon round-trip so handlers (markview detach,
+  -- statusline "sending…" pill) can run while the request is still
+  -- in flight. Captains who hook this won't double-fire when a
+  -- submit is queue-parked — that path returns above.
+  pcall(vim.api.nvim_exec_autocmds, "User", {
+    pattern = "HyprpilotComposerSubmitted",
+    data = { instance_id = instance_id, bufnr = bufnr, text = text },
+  })
+
   client.request("prompts/send", payload, nil, function(err, _result)
     if err ~= nil then
       log.error("composer.submit: %s", err.message)
