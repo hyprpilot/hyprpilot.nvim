@@ -326,7 +326,7 @@ end
 local function install_keymaps(bufnr, state)
   local keymaps = (config.options.diff_preview or {}).keymaps or {}
 
-  local function apply(spec, handler)
+  local function apply(spec, handler, desc)
     if spec == false or spec == nil then
       return
     end
@@ -334,7 +334,12 @@ local function install_keymaps(bufnr, state)
       spec = { spec }
     end
     for _, key in ipairs(spec) do
-      vim.keymap.set("n", key, handler, { buffer = bufnr, silent = true, nowait = true })
+      vim.keymap.set("n", key, handler, {
+        buffer = bufnr,
+        silent = true,
+        nowait = true,
+        desc = "hyprpilot: " .. desc,
+      })
     end
   end
 
@@ -369,7 +374,7 @@ local function install_keymaps(bufnr, state)
     end
     permissions.respond(state.request_id, opt.optionId)
     M.close()
-  end)
+  end, "diff preview: allow + close")
 
   apply(keymaps.reject or "<C-r>", function()
     local row = require("hyprpilot.chat.permission_row")
@@ -420,11 +425,11 @@ local function install_keymaps(bufnr, state)
     else
       respond(nil)
     end
-  end)
+  end, "diff preview: reject (with optional feedback prompt)")
 
   apply(keymaps.close or "<Esc>", function()
     M.close()
-  end)
+  end, "diff preview: close without resolving")
 
   apply(keymaps.next_hunk or "]h", function()
     if M._state == nil then
@@ -438,7 +443,7 @@ local function install_keymaps(bufnr, state)
         return
       end
     end
-  end)
+  end, "diff preview: jump to next hunk")
 
   apply(keymaps.prev_hunk or "[h", function()
     if M._state == nil then
@@ -457,7 +462,7 @@ local function install_keymaps(bufnr, state)
       pcall(vim.api.nvim_win_set_cursor, 0, { last_before.old_start, 0 })
       vim.cmd("normal! zz")
     end
-  end)
+  end, "diff preview: jump to previous hunk")
 
   local keys = {}
   for _, name in ipairs({ "accept", "reject", "close", "next_hunk", "prev_hunk" }) do

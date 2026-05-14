@@ -418,11 +418,11 @@ local function install_keymaps(bufnr)
 
   apply_action(bufnr, keymaps.cycle_next, function()
     cycle_focus(1)
-  end, "cycle permission options")
+  end, "focus next permission option")
 
   apply_action(bufnr, keymaps.cycle_prev, function()
     cycle_focus(-1)
-  end, "cycle permission options (back)")
+  end, "focus previous permission option")
 
   apply_action(bufnr, keymaps.show_diff, function()
     local entry = head()

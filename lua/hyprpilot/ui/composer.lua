@@ -210,15 +210,15 @@ local function ensure_buffer(instance_id)
 
   apply_action(bufnr, keymaps.submit, function()
     M.submit()
-  end, "submit prompt")
+  end, "submit composer prompt")
 
   apply_action(bufnr, keymaps.cancel, function()
     M.cancel()
-  end, "cancel in-flight")
+  end, "cancel in-flight turn")
 
   apply_action(bufnr, keymaps.close, function()
     M.close()
-  end, "close composer")
+  end, "close composer split")
 
   -- Repaint the attachment indicator (whose virt_lines are anchored
   -- to the current last buffer line) and re-resize the window on
