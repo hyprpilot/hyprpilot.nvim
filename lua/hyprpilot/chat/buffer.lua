@@ -126,10 +126,15 @@ function M.placeholder()
   apply_options(bufnr, name)
 
   M.with_buffer(bufnr, function()
+    -- Passive placeholder: no captain-facing instructions because
+    -- `chat.window.M.show()` auto-spawns a default instance when
+    -- none exists. The captain only ever sees this buffer for the
+    -- single tick between the spawn RPC firing and the daemon
+    -- replying with the new instance id.
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
       "# hyprpilot",
       "",
-      "No instances. Spawn one via `require('hyprpilot.instances').spawn({})`.",
+      "starting…",
     })
   end)
 
@@ -140,13 +145,18 @@ end
 
 ---Buffer-level opt-out markers for third-party UI plugins that hook
 ---`BufEnter` / `BufRead` and decorate every buffer they see (sign
----column scribbles, blame virt_text, diagnostic icons, edge
----adoption). Our chat / permission row / queue strip / header /
----composer surfaces are pure UI — they don't want gitsigns hunks,
----LSP diagnostics, or edgy adoption fighting them. Each marker
----lookup follows the upstream plugin's documented opt-out shape.
----Idempotent; safe to call from `apply_options` and from the
----per-window paths each module owns.
+---column scribbles, blame virt_text, diagnostic icons). Each
+---marker lookup follows the upstream plugin's documented opt-out
+---shape. Idempotent; safe to call from `apply_options` and from
+---the per-window paths each module owns.
+---
+---NOT included on purpose: `vim.b[bufnr].edgy_disable`. We respect
+---edgy.nvim — captains who add our filetypes (`hyprpilot`,
+---`hyprpilot_input`, `hyprpilot_header`, `hyprpilot_queue_strip`,
+---`hyprpilot_permission_row`) to their `edgy.opts.left/right/
+---bottom/top` should get adoption for free. Captains who DON'T
+---want edgy to manage us can set the marker themselves in their
+---`FileType hyprpilot*` autocmd.
 ---@param bufnr integer
 function M.suppress_external_ui(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -154,11 +164,6 @@ function M.suppress_external_ui(bufnr)
   end
   -- gitsigns: disables every gitsigns decoration on the buffer.
   vim.b[bufnr].gitsigns_disable = true
-  -- edgy.nvim: keeps it from adopting the buffer into a managed
-  -- edge slot. The captain who explicitly registers our filetypes
-  -- with edgy can override per-buffer with `vim.b[bufnr].edgy_disable
-  -- = false`.
-  vim.b[bufnr].edgy_disable = true
   -- nvim-lint / null-ls / linters: don't lint our render buffers.
   vim.b[bufnr].lint_disabled = true
   -- mini.indentscope draws guide lines on every indent depth — busy

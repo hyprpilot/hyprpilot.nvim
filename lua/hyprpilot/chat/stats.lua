@@ -10,6 +10,8 @@
 --- visual tweak (e.g. switching `[]` to `()` or adding a separator)
 --- happens in exactly one place.
 
+local config = require("hyprpilot.config")
+
 local M = {}
 
 ---Format an integer token count using k/M suffixes for compactness.
@@ -147,18 +149,33 @@ end
 ---@param stop_reason? string
 ---@param stop_error? string
 ---@return string?
+---Prefix a stop-chip body with a glyph + single space, or just
+---the body when the glyph is empty / unset. Empty strings are
+---treated as "no glyph configured" so a captain who clears the
+---defaults gets the bare label without a stray leading space.
+---@param glyph? string
+---@param body string
+---@return string
+local function with_glyph(glyph, body)
+  if glyph == nil or glyph == "" then
+    return body
+  end
+  return glyph .. " " .. body
+end
+
 function M.format_stop_chip(stop_reason, stop_error)
+  local glyphs = (config.options.icons or {}).turn_status or {}
   if stop_error ~= nil and stop_error ~= "" then
-    return "error: " .. tostring(stop_error)
+    return with_glyph(glyphs.error, "error: " .. tostring(stop_error))
   end
   if stop_reason == nil or stop_reason == "" then
     return nil
   end
   local reason = tostring(stop_reason)
   if reason:lower():find("cancel", 1, true) ~= nil then
-    return "cancelled " .. reason
+    return with_glyph(glyphs.cancelled, "cancelled " .. reason)
   end
-  return "ok " .. reason
+  return with_glyph(glyphs.ok, "ok " .. reason)
 end
 
 ---Build the pill list for a pilot-turn header from the turn's

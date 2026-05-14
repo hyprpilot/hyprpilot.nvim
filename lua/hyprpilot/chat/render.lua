@@ -98,6 +98,10 @@ local rescan_code_block_folds
 M._states = {}
 
 local NS = vim.api.nvim_create_namespace("hyprpilot.render")
+-- Re-export the tracking namespace so consumers (chat/keymaps for
+-- turn / section jump anchors) can read extmarks without duplicating
+-- the namespace string.
+M.NS = NS
 -- Highlights live in a sibling namespace so a `clear_namespace` for a
 -- block's range can wipe `line_hl_group` extmarks without disturbing
 -- the block's head/tail tracking marks (which live in `NS`).
@@ -900,30 +904,44 @@ local function append_placeholder(state, label, detail)
   state.active_text_block = nil
 end
 
+---Resolve the first non-empty string from a list. Treats both
+---`nil` and `""` as "unset" — Lua's truthy-by-default `or` chain
+---would happily return `""` and produce double-space artifacts in
+---the header line. Mirrors the CLAUDE.md convention codified
+---alongside `format_stop_chip`'s `with_glyph` helper.
+---@param ... string?
+---@return string
+local function first_nonempty(...)
+  for i = 1, select("#", ...) do
+    local v = select(i, ...)
+    if type(v) == "string" and v ~= "" then
+      return v
+    end
+  end
+  return ""
+end
+
 ---Render the tool-call kind icon prefix. Reads from
 ---`config.options.icons.tool_kind` so the captain can swap the
 ---defaults (nerd-font glyphs) for ASCII or alternate glyph sets.
+---Returns `""` when nothing resolves; `tool_header_line` strips
+---empty components so we never emit a doubled space.
 ---@param tool_kind? string
 ---@return string
 local function tool_icon(tool_kind)
   local map = (config.options.icons or {}).tool_kind or {}
-  if tool_kind ~= nil and map[tool_kind] ~= nil then
-    return map[tool_kind]
-  end
-  return map.default or "->"
+  return first_nonempty(tool_kind ~= nil and map[tool_kind] or nil, map.default, "->")
 end
 
 ---Status badge for tool-call state (`pending` / `running` /
 ---`completed` / `failed`). Reads from
----`config.options.icons.tool_status`.
+---`config.options.icons.tool_status`. Returns `""` when nothing
+---resolves so the caller's join can drop the slot.
 ---@param state_str? string
 ---@return string
 local function tool_status_badge(state_str)
   local map = (config.options.icons or {}).tool_status or {}
-  if state_str ~= nil and map[state_str] ~= nil then
-    return map[state_str]
-  end
-  return map.running or "[run]"
+  return first_nonempty(state_str ~= nil and map[state_str] or nil, map.running, "[run]")
 end
 
 ---Heuristic: pick a fenced-code language hint for a tool's output
@@ -1065,20 +1083,27 @@ local function tool_body_lines(formatted, tool_kind)
   return wrap_in_rules(paragraphs)
 end
 
----Compose the header line for a tool-call block.
+---Compose the header line for a tool-call block. Drops empty
+---glyph slots before joining so a captain who clears
+---`icons.tool_kind.default` (or any specific kind) doesn't end up
+---with a doubled space at the start of the header.
 ---@param record table
 ---@return string
 local function tool_header_line(record)
   local title = (record.formatted and record.formatted.title) or record.title or record.toolKind or "tool"
-  local badge = tool_status_badge(record.state)
-  local icon = tool_icon(record.toolKind)
   local pill_labels = {}
 
   if record.formatted and type(record.formatted.stats) == "table" then
     pill_labels = stats.from_wire_stats(record.formatted.stats)
   end
 
-  return string.format("%s %s %s", icon, badge, title) .. stats.format_pills(pill_labels)
+  local parts = {}
+  for _, piece in ipairs({ tool_icon(record.toolKind), tool_status_badge(record.state), title }) do
+    if type(piece) == "string" and piece ~= "" then
+      table.insert(parts, piece)
+    end
+  end
+  return table.concat(parts, " ") .. stats.format_pills(pill_labels)
 end
 
 ---Render a tool-call block (initial). Body holds description + fields
@@ -1236,15 +1261,13 @@ local function render_plan(state, record)
   if #steps == 0 then
     table.insert(body, "  (no steps)")
   else
+    local task_glyphs = (config.options.icons or {}).task_status or {}
+    -- Fall back to the legacy ASCII so a captain who pre-emptively
+    -- nukes `icons.task_status` still gets a readable mark.
+    local fallback = { pending = "[ ]", in_progress = "[~]", completed = "[x]" }
     for _, step in ipairs(steps) do
-      local mark
-      if step.status == "completed" then
-        mark = "[x]"
-      elseif step.status == "in_progress" then
-        mark = "[~]"
-      else
-        mark = "[ ]"
-      end
+      local key = step.status or "pending"
+      local mark = task_glyphs[key] or fallback[key] or fallback.pending
       local priority = step.priority and (" (" .. step.priority .. ")") or ""
       local content = type(step.content) == "string" and step.content or ""
       table.insert(body, string.format("  %s %s%s", mark, content:gsub("\n", " "), priority))

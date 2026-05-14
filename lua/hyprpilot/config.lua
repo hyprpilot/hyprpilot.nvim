@@ -24,6 +24,8 @@ local M = {}
 ---@class hyprpilot.ConfigIcons
 ---@field tool_status? table<string, string>  -- keys: completed | failed | pending | running | awaiting_permission
 ---@field tool_kind? table<string, string>    -- keys: execute | terminal | edit | write | read | fetch | search | glob | delete | think | default
+---@field task_status? table<string, string>  -- keys: pending | in_progress | completed (mirror of daemon's PlanStepStatus)
+---@field turn_status? table<string, string>  -- keys: ok | cancelled | error (rendered into the turn-end stop chip)
 
 ---@class hyprpilot.ConfigDiffPreview
 ---@field keymaps? hyprpilot.ConfigDiffPreviewKeymaps
@@ -104,7 +106,11 @@ local M = {}
 --- is `string | string[] | false` — `false` disables, lists bind
 --- multiple keys to the same action.
 ---@class hyprpilot.ConfigChatKeymaps
----@field goto_file? string | string[] | false  -- open the file ref under cursor (default `gf`)
+---@field goto_file? string | string[] | false      -- open the file ref under cursor (default `gf`)
+---@field next_turn? string | string[] | false      -- jump to next `## pilot` / `## captain` header (default `]h`)
+---@field prev_turn? string | string[] | false      -- jump to previous turn header (default `[h`)
+---@field next_section? string | string[] | false   -- jump to next `### tools` / `### thoughts` / etc (default `]s`)
+---@field prev_section? string | string[] | false   -- jump to previous section header (default `[s`)
 
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
@@ -226,12 +232,21 @@ local defaults = {
   },
   notification = {
     bell = {
-      enabled = false,
+      enabled = true,
     },
   },
   chat = {
     keymaps = {
       goto_file = "gf",
+      -- `[`/`]` family follows vim's stock next-of-kind motions
+      -- (`]m`, `]s`, etc.). `h` for "header" stays clear of `]s`
+      -- which spell-checking would normally claim — but the chat
+      -- buffer is read-only with `spell = false`, so reusing it
+      -- for "section" doesn't fight anything.
+      next_turn = "]h",
+      prev_turn = "[h",
+      next_section = "]s",
+      prev_section = "[s",
     },
   },
   -- Nerd-font glyphs by default (Font Awesome set, mirrors the
@@ -261,6 +276,16 @@ local defaults = {
       delete = "", -- nf-fa-trash (U+F1F8)
       think = "", -- nf-fa-lightbulb_o (faBrain approximation) (U+F0EB)
       default = "", -- nf-fa-cog (U+F013)
+    },
+    task_status = {
+      pending = "", -- nf-fa-square_o (U+F0C8)
+      in_progress = "", -- nf-fa-dot_circle_o (U+F192)
+      completed = "", -- nf-fa-check_square (U+F14A)
+    },
+    turn_status = {
+      ok = "", -- nf-fa-check (U+F00C)
+      cancelled = "", -- nf-fa-times (captain aborted)
+      error = "", -- nf-fa-exclamation_triangle
     },
   },
   composer = {

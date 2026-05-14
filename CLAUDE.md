@@ -138,6 +138,30 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   re-creates `M.options` via `vim.tbl_deep_extend("force", {},
   defaults, user)`. Reads before setup resolve to the deep-copied
   defaults, not a separate stub.
+- **Glyph defaults are nerd-font, configurable, ASCII fallback in
+  tests** — `config.options.icons.{tool_status, tool_kind,
+  task_status, turn_status}` ship as Font Awesome glyphs (literal
+  UTF-8 PUA bytes — `\u{XXXX}` escapes break selene's parser).
+  Renderers (`tool_status_badge`, `tool_icon`, `render_plan`,
+  `format_stop_chip`) read from these maps with a hard-coded
+  ASCII fallback for the case where the captain pre-emptively
+  clears the table. Behavioural tests pin the maps to ASCII
+  (`[ok]` / `[x]` / etc.) so visible-output assertions stay
+  source-readable. Empty-string is treated as "unset" by
+  glyph-prefixing helpers — never use Lua truthiness as a
+  presence check on user-supplied strings.
+- **Don't fight peer plugins** — buffer-level opt-out markers we
+  set (gitsigns / lint / mini.indentscope) cover plugins whose
+  decoration would corrupt our render. Layout managers like
+  `edgy.nvim` get NO opt-out marker — captains who want adoption
+  register our filetypes in their edgy config; captains who don't
+  set the opt-out themselves. Default stance is "let peers see us".
+- **Auto-spawn on first show** — `chat.window.show()` with no
+  `instance_id` argument and an empty `_instances` registry kicks
+  off `instances.spawn({})` and re-enters from the callback. Never
+  show captain-facing instructions like "spawn one first" — the
+  plugin owns the bootstrap. Placeholder buffer text stays passive
+  ("starting…").
 - **Behaviour tests, not idiomatic ones** — every Lua test in
   `tests/test_*.lua` drives a real public entry point (the same call
   shape a live wire event or captain keypress would produce) and
@@ -257,6 +281,61 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   - Chose: `CLAUDE.md` at the repo root.
   - Why: captain's explicit instruction at bootstrap.
 
+- **Window chrome / icon / keymap conventions (shipped in #60)**
+  - **`buffer.suppress_external_ui(bufnr)` + `buffer.clean_window_chrome(winid)`** —
+    paired helpers in `chat/buffer.lua` applied to every plugin-
+    owned buffer / window (chat, header, queue strip, permission
+    row, composer). Suppresses `gitsigns_disable`, `lint_disabled`,
+    `miniindentscope_disable`; sets blank `statusline` / `winbar`,
+    no numbers / signcolumn / cursorline / fold column, hides EOB
+    `~` glyphs via `fillchars eob: `. Chat re-asserts its own
+    `foldcolumn = "1"` afterward since folds are interactive there.
+  - Why a single helper pair: every plugin window had been
+    re-spelling the same six `vim.wo` lines. One helper means a
+    new opt-out marker (e.g. blink.cmp completion suppression) gets
+    added in exactly one place.
+  - **`config.icons.{tool_status, tool_kind, task_status, turn_status}`** —
+    nerd-font glyphs by default (Font Awesome subset, mirrors the
+    desktop overlay's `presentation.ts` choices). Pasted as literal
+    UTF-8 PUA bytes (NOT `\u{XXXX}` escapes — selene's parser
+    rejects them). Captains without a nerd font override with ASCII
+    via `setup({ icons = { ... } })`. Tests pin to ASCII fallback
+    so visual assertions (`[ok]`, `[run]`, `[x]`, etc.) stay
+    readable in source.
+  - Why nerd-font defaults: the captain's terminal already ships
+    one for every other plugin (LSP signs, tree-sitter folds, file
+    explorers). Defaulting to ASCII would make hyprpilot the
+    odd-one-out; ASCII is opt-in for the no-font case.
+  - **`<localleader>` defaults across permission row / diff preview /
+    composer cancel** — sidesteps every collision class (`<C-o>` =
+    jumplist back, `<C-g>` = file info, `<C-r>` = redo, `<C-c>` =
+    pending-operator interrupt) without claiming top-level keys.
+    Captains who prefer the older `<C-*>` binds add them as
+    `accept = { "<localleader>a", "<C-g>" }` (list form) — no API
+    break.
+  - **`[h`/`]h` (turn) + `[s`/`]s` (section) jump keymaps** in
+    `chat/keymaps.lua`. Anchor rows come from the live
+    `render._states[*].turn_layouts[*].pilot_header_mark` /
+    `sections[*].head_mark` extmarks (re-exported as `render.NS`
+    so `keymaps.lua` doesn't redeclare the namespace string). The
+    `[h`/`]h` pair follows vim's stock next-of-kind family
+    (`]m`, `]s`); `[s`/`]s` would normally claim spell-check, but
+    the chat buffer is read-only with `spell = false` so reusing
+    it for "section" doesn't fight anything.
+
+- **Auto load-older on cursor-near-top (shipped in #60)**
+  - Chose: `CursorMoved` autocmd on the chat buffer; when
+    `vim.fn.line('w0') <= 3` and `state.has_more`, fire
+    `events.load_older(instance_id)` once. In-flight lock
+    (`state._load_older_lock`) released in the hydrate callback
+    so a fast `<C-u>` doesn't queue N daemon round-trips.
+  - Why: a manual "load older" keybind is friction; the captain
+    expects scrollback to extend as they scroll up, the way every
+    chat client does it. The throttle keeps the daemon happy.
+  - Rejected: `WinScrolled` only — fires per scroll event without
+    a position guard; would over-trigger. `CursorMoved` plus a
+    `w0 <= 3` check is the cheap right thing.
+
 - **Lua test framework: `mini.test`**
   - Chose: `mini.test` (from `echasnovski/mini.nvim`), shallow-cloned
     into `vim.fn.tempname()` by `scripts/minimal_init.lua` on every
@@ -314,6 +393,44 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 - **Single-use method constants (`SUBSCRIBE_METHOD`,
   `NOTIFICATION_METHOD`, `SNAPSHOT_METHOD` in #16)** — caught by the
   inline-single-use rule. Inlined.
+- **`prompts/cancel` as `client.notify`** — daemon's handler returns
+  `HandlerOutcome::Reply` (request-shaped, requires id). Notification
+  shape got back `id: null` + `-32600 "missing or invalid id"` and
+  silently no-op'd `<C-c>`. Re-shipped as `client.request` with a
+  warn-on-error callback. Lesson: always cross-check the wire shape
+  in `src-tauri/src/rpc/handlers/*.rs` before picking
+  `request` vs `notify`.
+- **Default permission focus computed plugin-side only** — the daemon
+  now ships `defaultOptionId` on `PermissionRequestSnapshot`
+  (`src-tauri/src/adapters/permission.rs`). The local `kind` /
+  `^allow` heuristic stays as a fallback (older daemons), but the
+  daemon hint wins when present so policy decisions stay server-side.
+- **`<C-o>` for show_diff** — collided with vim's jumplist-back. Re-
+  bound to `<localleader>g`; same swap for accept (`<localleader>a`)
+  / reject (`<localleader>d`) on permission row + diff preview.
+  Composer cancel kept `<C-c>` for insert mode (TUI muscle memory)
+  but flipped normal-mode to `<localleader>c` so it doesn't race
+  vim's pending-operator interrupt.
+- **`vim.b[bufnr].edgy_disable = true` on plugin buffers** — captain
+  rejected: edgy.nvim should be free to adopt our windows when the
+  captain registers our filetypes in `edgy.opts.left/right/bottom/
+  top`. We keep gitsigns / lint / mini.indentscope opt-outs (those
+  are visual noise no captain wants on a UI buffer) but stay
+  hands-off on edgy. Lesson: respect peer plugins; opt out only
+  when the third-party decoration would make our surface unreadable.
+- **Empty-string glyph treated as truthy in `format_stop_chip`** —
+  Lua's `truthy` includes `""`, so a captain who clears
+  `icons.turn_status.ok = ""` would have gotten ` ok end_turn`
+  with a leading space. Switched to explicit `nil`/`""` check via
+  a `with_glyph(glyph, body)` helper. Lesson: never use Lua's
+  short-circuit truthiness as a "is this set?" check for strings.
+- **"Spawn a session first" placeholder text** — captain rejected:
+  "if a session does not exists please spawn it with empty
+  variables". `chat.window.M.show()` now auto-fires
+  `instances.spawn({})` and re-enters with the new id when the
+  registry is empty. Placeholder text reduced to "starting…" — the
+  captain shouldn't be told to do something the plugin can do for
+  them.
 
 ## Tools & MCP Usage
 

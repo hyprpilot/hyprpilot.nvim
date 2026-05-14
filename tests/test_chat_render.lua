@@ -14,6 +14,8 @@ local helpers = require("tests.helpers")
 require("hyprpilot.config").setup({
   icons = {
     tool_status = { completed = "[ok]", failed = "[fail]", pending = "[wait]", running = "[run]" },
+    task_status = { pending = "[ ]", in_progress = "[~]", completed = "[x]" },
+    turn_status = { ok = "", cancelled = "", error = "" },
   },
 })
 

@@ -190,11 +190,41 @@ local function open_split(ui, bufnr)
   -- activity exactly when the captain wanted them visible.
 end
 
+---True when no per-instance entry has been registered yet — the
+---captain has nothing live and we'd otherwise show the placeholder
+---buffer plus a "spawn one" instruction.
+---@return boolean
+local function has_no_instances()
+  return next(M._instances) == nil
+end
+
 ---Show the chat window, switching to `instance_id` (or the last active).
 ---Hydrates the buffer from the daemon's snapshot + ensures the live
----event stream is wired.
+---event stream is wired. When the captain has no instances at all
+---and no specific `instance_id` was requested, kicks off a default
+---`instances.spawn({})` and re-runs `show()` from the spawn callback
+---— the captain never has to manually spawn before opening the chat.
 ---@param instance_id string?
 function M.show(instance_id)
+  -- Auto-spawn path: no specific instance requested + no instances
+  -- registered yet → spin up a default one and reroute. The async
+  -- spawn callback re-enters `M.show(new_id)` once the daemon is
+  -- ready, so the captain's keybind lands them in a populated chat
+  -- on the first call.
+  if instance_id == nil and has_no_instances() then
+    log.debug("window.show: no instances registered, auto-spawning default")
+    require("hyprpilot.instances").spawn({}, function(err, info)
+      if err ~= nil then
+        log.warn("window.show: auto-spawn failed: %s", err.message)
+        return
+      end
+      if type(info) == "table" and type(info.id) == "string" then
+        M.show(info.id)
+      end
+    end)
+    return
+  end
+
   local previous = M._last_active_id
   local bufnr = resolve_target_buffer(instance_id)
 
