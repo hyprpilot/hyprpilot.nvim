@@ -41,6 +41,12 @@ M._winid = nil
 
 local INDICATOR_NS = vim.api.nvim_create_namespace("hyprpilot.composer.attachments")
 
+---Forward-declared so `ensure_buffer`'s TextChanged autocmd can call
+---it (the body anchors virt_lines to the current last line, so every
+---edit needs a reposition to keep attachments at the bottom).
+---@type fun(instance_id: string)
+local paint_indicator
+
 ---Resolve a config height field (`min_height` or `max_height`). The
 ---field can be `integer` (constant), a `fun(lines: number)` (passed
 ---`vim.o.lines`), or nil. Returns the floor-1 line count. `fallback`
@@ -77,9 +83,28 @@ local function resolve_max_height()
   return resolve_height_field("max_height", math.max(8, math.floor(vim.o.lines * 0.4)))
 end
 
----Compute the ideal composer window height for the buffer's current
----content: clamp(buf_line_count, min_height, max_height). Empty
----buffer collapses to min_height.
+---Reverse-lookup the instance id that owns a composer bufnr.
+---Called from `compute_target_height` so attachment virt_lines can
+---factor into the auto-resize budget. `buffers` is small (one entry
+---per live instance) so the linear scan stays cheap.
+---@param bufnr integer
+---@return string?
+local function instance_id_for_buffer(bufnr)
+  for id, b in pairs(buffers) do
+    if b == bufnr then
+      return id
+    end
+  end
+  return nil
+end
+
+---Compute the ideal composer window height: clamp(content_lines +
+---attachment_rows, min_height, max_height). Attachment rows render
+---as virt_lines below the last buffer line (see `paint_indicator`),
+---so the window has to grow to fit them — otherwise the captain
+---never sees the list. When `content_lines + attachments` exceeds
+---`max_height`, the window stays capped and the captain's writing
+---area shrinks to make room for the attachment rows.
 ---@param bufnr integer
 ---@return integer
 local function compute_target_height(bufnr)
@@ -95,13 +120,17 @@ local function compute_target_height(bufnr)
     content_lines = 0
   end
 
-  if content_lines < min_h then
+  local instance_id = instance_id_for_buffer(bufnr)
+  local attachment_rows = instance_id ~= nil and #(attachments_by_instance[instance_id] or {}) or 0
+  local total = content_lines + attachment_rows
+
+  if total < min_h then
     return min_h
   end
-  if content_lines > max_h then
+  if total > max_h then
     return max_h
   end
-  return content_lines
+  return total
 end
 
 ---Resize the composer window to fit its content, clamped to
@@ -190,14 +219,14 @@ local function ensure_buffer(instance_id)
     M.close()
   end, "close composer")
 
-  -- Auto-resize the composer window to match the buffer's content
-  -- length whenever the captain types / clears / pastes. Clamped to
-  -- [min_height, max_height] in `M.resize`. Buffer-local autocmds so
-  -- closing the composer doesn't leave dangling listeners.
+  -- Repaint the attachment indicator (whose virt_lines are anchored
+  -- to the current last buffer line) and re-resize the window on
+  -- every edit. `paint_indicator` calls `M.resize` itself, so this
+  -- one callback covers both reposition + auto-grow paths.
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
     buffer = bufnr,
     callback = function()
-      M.resize()
+      paint_indicator(instance_id)
     end,
   })
 
@@ -266,11 +295,13 @@ local function guess_mime(path)
   return map[ext]
 end
 
----Repaint the per-instance attachment indicator on the composer
----buffer's first line. No-op when the composer buffer doesn't exist
----yet (next `open` will paint).
+---Repaint the per-instance attachment list as a stack of virt_lines
+---below the composer's last real line. Each attachment takes one
+---row so more attachments → more rows eating into the writing area.
+---No-op when the composer buffer doesn't exist yet. Triggers
+---`M.resize` afterwards so the window grows / shrinks to fit.
 ---@param instance_id string
-local function paint_indicator(instance_id)
+paint_indicator = function(instance_id)
   local bufnr = buffers[instance_id]
   if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
     return
@@ -279,21 +310,20 @@ local function paint_indicator(instance_id)
   vim.api.nvim_buf_clear_namespace(bufnr, INDICATOR_NS, 0, -1)
 
   local list = attachments_by_instance[instance_id] or {}
-  if #list == 0 then
-    return
+  if #list ~= 0 then
+    local virt_lines = {}
+    for _, a in ipairs(list) do
+      local label = a.title ~= nil and a.title ~= "" and a.title or a.slug
+      table.insert(virt_lines, { { "  - " .. label, "HyprpilotComposerAttachments" } })
+    end
+
+    local last_line = math.max(0, vim.api.nvim_buf_line_count(bufnr) - 1)
+    pcall(vim.api.nvim_buf_set_extmark, bufnr, INDICATOR_NS, last_line, 0, {
+      virt_lines = virt_lines,
+    })
   end
 
-  local labels = {}
-  for _, a in ipairs(list) do
-    table.insert(labels, a.title ~= nil and a.title ~= "" and a.title or a.slug)
-  end
-
-  local label = string.format("[%d attached: %s]", #list, table.concat(labels, ", "))
-
-  pcall(vim.api.nvim_buf_set_extmark, bufnr, INDICATOR_NS, 0, 0, {
-    virt_text = { { label, "HyprpilotComposerAttachments" } },
-    virt_text_pos = "right_align",
-  })
+  M.resize()
 end
 
 ---Resolve which instance to operate on. Defaults to the active

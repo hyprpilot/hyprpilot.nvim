@@ -211,9 +211,12 @@ composer.attach_buffer(bufnr?, opts?)                  -- attach the buffer's fi
 composer.attach_clipboard_image(opts?)                 -- needs img-clip.nvim
 ```
 
-Staged attachments paint a `[N attached: ...]` indicator on the
-composer buffer's first line (highlight group `HyprpilotComposerAttachments`).
-The indicator clears once the prompt sends successfully.
+Staged attachments render as a stack of virt_lines pinned to the
+bottom of the composer buffer (one row per attachment, highlight
+group `HyprpilotComposerAttachments`). The composer auto-resizes to
+fit content + attachment rows, capped at `max_height` — so more
+attachments eat into the writing area rather than growing the split
+indefinitely. The stack clears once the prompt sends successfully.
 
 > [!NOTE]
 > The Unix-socket `prompts/send` daemon RPC currently **does not**
