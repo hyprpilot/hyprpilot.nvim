@@ -72,6 +72,22 @@ local function emit(event, data)
   })
 end
 
+---Same as `emit`, but stamps `instance_id` + `bufnr` into the data
+---table first. Matches the `data.bufnr` convention avante /
+---codecompanion use, so a captain's bell / markview / statusline
+---handler can read the chat buffer for the instance the event
+---belongs to without a side lookup.
+---@param event string
+---@param instance_id string?
+---@param data table
+local function emit_for_instance(event, instance_id, data)
+  data.instance_id = instance_id
+  if instance_id ~= nil then
+    data.bufnr = require("hyprpilot.chat.window").get_bufnr(instance_id)
+  end
+  emit(event, data)
+end
+
 ---Unwrap an `events/changed` notification's params to the daemon's
 ---underlying `InstanceEvent` payload. The wire shape is:
 ---
@@ -114,8 +130,7 @@ local function dispatch(raw)
   elseif event.event == "turn_started" then
     render.handle_turn_started(event)
     status.set_activity({ kind = "thinking", started_at_ms = vim.uv.now() })
-    emit("TurnStarted", {
-      instance_id = event.instanceId,
+    emit_for_instance("TurnStarted", event.instanceId, {
       turn_id = event.turnId,
       started_at = event.startedAt or event.started_at,
     })
@@ -131,8 +146,7 @@ local function dispatch(raw)
     if type(reason) == "string" and reason:lower():find("cancel", 1, true) ~= nil then
       require("hyprpilot.composer_queue").flush(event.instanceId)
     end
-    emit("TurnEnded", {
-      instance_id = event.instanceId,
+    emit_for_instance("TurnEnded", event.instanceId, {
       turn_id = event.turnId,
       ended_at = event.endedAt or event.ended_at,
       stop_reason = event.stopReason,
@@ -141,8 +155,7 @@ local function dispatch(raw)
   elseif event.event == "permission_request" then
     render.handle_permission_request(event)
     status.set_activity({ kind = "awaiting_permission", permission_request_id = event.requestId })
-    emit("PermissionRequested", {
-      instance_id = event.instanceId,
+    emit_for_instance("PermissionRequested", event.instanceId, {
       request_id = event.requestId,
       tool = event.tool,
       tool_kind = event.toolKind,
@@ -151,8 +164,7 @@ local function dispatch(raw)
   elseif event.event == "permission_resolved" then
     render.handle_permission_resolved(event)
     status.set_activity({ kind = "streaming" })
-    emit("PermissionResolved", {
-      instance_id = event.instanceId,
+    emit_for_instance("PermissionResolved", event.instanceId, {
       request_id = event.requestId,
       option_id = event.optionId,
     })
@@ -177,8 +189,7 @@ local function dispatch(raw)
     winbar.update_session(event.instanceId, event.title)
   elseif event.event == "state" then
     winbar.update_meta(event.instanceId, { instance_state = event.state })
-    emit("InstanceStateChanged", {
-      instance_id = event.instanceId,
+    emit_for_instance("InstanceStateChanged", event.instanceId, {
       state = event.state,
     })
   elseif event.event == "terminal" then

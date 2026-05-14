@@ -1449,6 +1449,15 @@ function M.handle_transcript(event)
   with_autoscroll(state, function()
     M.render_item(state, event.turnId, event.item)
   end)
+
+  -- Per-tick render notification. Captains hook this for markview
+  -- reattach / treesitter refresh / statusline animations that need
+  -- to follow the stream. Fires on every transcript item — keep
+  -- handlers cheap.
+  pcall(vim.api.nvim_exec_autocmds, "User", {
+    pattern = "HyprpilotChatRendered",
+    data = { instance_id = event.instanceId, bufnr = state.bufnr },
+  })
 end
 
 ---Live `permission_request` event — renders inline + registers the
