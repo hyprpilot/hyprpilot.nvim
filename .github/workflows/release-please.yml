@@ -38,13 +38,44 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # Surface release-please's outputs so the downstream PyPI publish
+    # job can gate on `release_created` and read `paths_released` to
+    # know whether the `pkg/` Python package was part of this release.
+    # Chaining via `needs:` here is the standard workaround for the
+    # GitHub anti-loop rule that swallows workflows triggered by
+    # `secrets.GITHUB_TOKEN` (the tag push from release-please runs as
+    # `github-actions[bot]` and won't fire `push: tags` triggers).
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      paths_released: ${{ steps.release.outputs.paths_released }}
     steps:
       - uses: actions/checkout@v6
 
       # Pinned to the v5.0.0 SHA for supply-chain safety; Renovate /
       # Dependabot can track this with the trailing `# v5.0.0` comment.
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
+
+  publish-pypi:
+    name: Publish hyprpilot-nvim-mcp to PyPI
+    needs: release-please
+    # `paths_released` is a JSON array of the package paths
+    # release-please cut for this run (e.g. `["pkg"]` when the Python
+    # package was part of the release, `["."]` when only the Lua
+    # plugin was). Skip when `pkg` isn't in the list — bumping the
+    # Lua plugin alone shouldn't republish the Python package.
+    if: |
+      needs.release-please.outputs.release_created == 'true'
+      && contains(fromJSON(needs.release-please.outputs.paths_released || '[]'), 'pkg')
+    permissions:
+      contents: read
+      # Required for OIDC trusted publishing — `id-token: write` must
+      # be granted explicitly here because reusable workflows don't
+      # inherit `id-token` from the caller's top-level permissions.
+      id-token: write
+    uses: ./.github/workflows/publish-pypi.yml
