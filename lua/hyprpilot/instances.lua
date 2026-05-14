@@ -42,6 +42,7 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@field restore? boolean    -- default false; true → resume the latest matching session if any
 ---@field name? string        -- captain-assigned slug (uses `focus` with ensure=true under the hood)
 ---@field show? boolean       -- default true; switch the chat split to the spawned instance
+---@field with_config? table[] -- Kustomize-style overlay patches merged onto the daemon's resolved config before spawn proceeds. Each entry is a JSON-shaped table (e.g. `{ agents = { { id = "code", capabilities = { "web" } } } }`); patches apply in declaration order and stick to the instance for restart replay. Daemon validates the merged config; bad shapes return `-32602`.
 
 ---@class hyprpilot.FocusOpts
 ---@field ensure? boolean     -- default false; true → spawn-and-rename if the slug doesn't resolve
@@ -52,6 +53,7 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@field model? string
 ---@field restore? boolean
 ---@field show? boolean       -- default true
+---@field with_config? table[] -- same shape as `SpawnOpts.with_config`; only honoured on the ensure-spawn path (a focus that resolves to a live instance ignores it).
 
 ---@class hyprpilot.InstanceMeta
 ---@field profile_id? string
@@ -207,14 +209,22 @@ function M.spawn(opts, callback)
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
 
-  client.request("instances/spawn", {
+  local params = {
     profileId = opts.profile_id,
     agentId = opts.agent_id,
     cwd = cwd,
     mode = opts.mode,
     model = opts.model,
     restore = opts.restore == true,
-  }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
+  }
+  -- Omit `withConfig` when empty so the wire field doesn't show up
+  -- as `[]` (vim.json renders empty Lua tables as objects); the
+  -- daemon's `serde(default)` handles its absence.
+  if type(opts.with_config) == "table" and #opts.with_config > 0 then
+    params.withConfig = opts.with_config
+  end
+
+  client.request("instances/spawn", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then
       log.warn("instances.spawn: %s", err.message)
 
@@ -246,7 +256,7 @@ function M.focus(instance_id, opts, callback)
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
 
-  client.request("instances/focus", {
+  local params = {
     instanceId = instance_id,
     ensure = opts.ensure == true,
     profileId = opts.profile_id,
@@ -255,7 +265,12 @@ function M.focus(instance_id, opts, callback)
     mode = opts.mode,
     model = opts.model,
     restore = opts.restore == true,
-  }, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
+  }
+  if type(opts.with_config) == "table" and #opts.with_config > 0 then
+    params.withConfig = opts.with_config
+  end
+
+  client.request("instances/focus", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then
       log.warn("instances.focus: %s", err.message)
 
