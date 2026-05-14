@@ -584,8 +584,9 @@ function M.open(entry)
 
   local host_win = resolve_host_window()
   -- pcall around the BufEnter-firing focus call: a third-party plugin
-  -- that throws on its `BufEnter` (markview without a markdown parser,
-  -- etc.) should not abort the diff-preview flow. The window itself
+  -- that throws on its `BufEnter` (third-party markdown decorator
+  -- without a markdown parser, etc.) should not abort the
+  -- diff-preview flow. The window itself
   -- can also be stale if `resolve_host_window` raced with an external
   -- layout change.
   if not vim.api.nvim_win_is_valid(host_win) then

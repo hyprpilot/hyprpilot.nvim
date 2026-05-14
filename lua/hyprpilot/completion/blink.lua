@@ -20,8 +20,8 @@
 --- path / buffer providers as the source of truth. Captain can
 --- widen the activation predicate via `opts.enabled`.
 ---
---- Wire RPCs flow through `completion.wire` so future cmp / coq
---- providers can share the same contract.
+--- Wire RPCs flow through `completion.wire` so future per-engine
+--- adapters can share the same contract.
 
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")

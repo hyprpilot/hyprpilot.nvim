@@ -143,31 +143,35 @@ function M.placeholder()
   return bufnr
 end
 
----Buffer-level opt-out markers for third-party UI plugins that hook
+---Buffer-level opt-out markers for the well-known buffer-local
+---keys third-party UI plugins look for when they hook
 ---`BufEnter` / `BufRead` and decorate every buffer they see (sign
----column scribbles, blame virt_text, diagnostic icons). Each
----marker lookup follows the upstream plugin's documented opt-out
----shape. Idempotent; safe to call from `apply_options` and from
----the per-window paths each module owns.
+---column scribbles, blame virt_text, diagnostic icons,
+---indent-guide lines, diff hunks). Each key follows the upstream
+---convention — set the marker, the plugin skips us. Idempotent;
+---safe to call from `apply_options` and from the per-window paths
+---each module owns.
 ---
----NOT included on purpose: `vim.b[bufnr].edgy_disable`. We respect
----edgy.nvim — captains who add our filetypes (`hyprpilot`,
----`hyprpilot_input`, `hyprpilot_header`, `hyprpilot_queue_strip`,
----`hyprpilot_permission_row`) to their `edgy.opts.left/right/
----bottom/top` should get adoption for free. Captains who DON'T
----want edgy to manage us can set the marker themselves in their
----`FileType hyprpilot*` autocmd.
+---NOT included on purpose: layout-manager opt-out keys. Captains
+---who want a layout manager (any plugin that adopts windows by
+---filetype into a managed sidebar) to handle hyprpilot register
+---our filetypes (`hyprpilot`, `hyprpilot_input`,
+---`hyprpilot_header`, `hyprpilot_queue_strip`,
+---`hyprpilot_permission_row`) in that plugin's config and we get
+---adoption for free. Captains who DON'T want adoption set the
+---layout manager's opt-out marker themselves in a `FileType
+---hyprpilot*` autocmd.
 ---@param bufnr integer
 function M.suppress_external_ui(bufnr)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
-  -- gitsigns: disables every gitsigns decoration on the buffer.
+  -- Suppress git-sign / hunk decorations on the buffer.
   vim.b[bufnr].gitsigns_disable = true
-  -- nvim-lint / null-ls / linters: don't lint our render buffers.
+  -- Don't lint our render buffers.
   vim.b[bufnr].lint_disabled = true
-  -- mini.indentscope draws guide lines on every indent depth — busy
-  -- noise on our markdown-shaped UI.
+  -- Suppress indent-guide line drawing — busy noise on our
+  -- markdown-shaped UI.
   vim.b[bufnr].miniindentscope_disable = true
 end
 
@@ -191,8 +195,8 @@ function M.clean_window_chrome(winid)
   vim.wo[winid].colorcolumn = ""
   vim.wo[winid].spell = false
   vim.wo[winid].list = false
-  -- Empty statusline + winbar → the global status / external
-  -- statuslines (lualine etc.) skip us. A single space is
+  -- Empty statusline + winbar → the global status / any
+  -- external statusline plugin skips us. A single space is
   -- universally rendered as blank without breaking the global
   -- `laststatus` setting.
   vim.wo[winid].statusline = " "

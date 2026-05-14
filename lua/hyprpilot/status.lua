@@ -1,8 +1,8 @@
 --- Status aggregate — single source of truth for statusline components.
 ---
 --- Pull (`get()`) returns a snapshot. Push (`User Hyprpilot*` autocmds)
---- fires on state transitions so consumers (lualine extension,
---- heirline, plain `&statusline`) refresh without polling.
+--- fires on state transitions so any statusline backend the captain
+--- runs (or a plain `&statusline`) refreshes without polling.
 ---
 --- Sources:
 --- - Connection state via `client.on_state_change`.

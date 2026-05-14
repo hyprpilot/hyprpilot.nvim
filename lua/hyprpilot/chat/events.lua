@@ -73,10 +73,9 @@ local function emit(event, data)
 end
 
 ---Same as `emit`, but stamps `instance_id` + `bufnr` into the data
----table first. Matches the `data.bufnr` convention avante /
----codecompanion use, so a captain's bell / markview / statusline
----handler can read the chat buffer for the instance the event
----belongs to without a side lookup.
+---table first. The `data.bufnr` field is the conventional handle a
+---captain's autocmd handler reads to address the per-instance chat
+---buffer without a side lookup.
 ---@param event string
 ---@param instance_id string?
 ---@param data table

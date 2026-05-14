@@ -972,8 +972,8 @@ end
 ---above and below each rule, blank lines between paragraphs, and a
 ---trailing blank that doubles as the inter-block separator inside a
 ---section. The result reads like a well-formed markdown document and
----renders cleanly in markdown viewers (markview / render-markdown)
----instead of running rules into adjacent content (which CommonMark
+---renders cleanly in any markdown viewer instead of running rules
+---into adjacent content (which CommonMark
 ---requires a preceding blank for to recognise as a horizontal rule
 ---at all — without it many parsers treat `---` as a setext heading
 ---underline for the line above).
@@ -1508,9 +1508,9 @@ function M.handle_transcript(event)
     M.render_item(state, event.turnId, event.item)
   end)
 
-  -- Per-tick render notification. Captains hook this for markview
-  -- reattach / treesitter refresh / statusline animations that need
-  -- to follow the stream. Fires on every transcript item — keep
+  -- Per-tick render notification. Captains hook this for any
+  -- treesitter / decoration / statusline animation that needs to
+  -- follow the stream. Fires on every transcript item — keep
   -- handlers cheap.
   pcall(vim.api.nvim_exec_autocmds, "User", {
     pattern = "HyprpilotChatRendered",

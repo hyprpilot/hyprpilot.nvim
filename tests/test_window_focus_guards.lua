@@ -2,9 +2,10 @@
 ---
 --- 1. `window.focus()` returns `false` when `_winid` is invalid or
 ---    `nvim_set_current_win` throws, instead of letting the throw
----    bubble through our event dispatch (the symptom was a markview
----    `treesitter.start` failure cascading from
----    `permission_row.enqueue` and killing the client RPC loop).
+---    bubble through our event dispatch (the symptom was a
+---    third-party `BufEnter` `vim.treesitter.start()` failure
+---    cascading from `permission_row.enqueue` and killing the
+---    client RPC loop).
 ---
 --- 2. The `WinClosed` autocmd resets `_winid` and drains the child
 ---    surfaces (composer / header / queue_strip / permission_row)

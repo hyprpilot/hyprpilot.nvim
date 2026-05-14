@@ -476,11 +476,11 @@ local function open_window()
   local previous_win = vim.api.nvim_get_current_win()
 
   -- `window.focus()` wraps the BufEnter-firing `nvim_set_current_win`
-  -- in pcall. Third-party autocmds (markview, render-markdown) that
-  -- bind on BufEnter and call `vim.treesitter.start()` will throw when
-  -- the captain's environment lacks the markdown parser; absorbing
-  -- the throw here keeps that environment problem from killing our
-  -- event dispatch loop.
+  -- in pcall. Third-party `BufEnter` autocmds that call
+  -- `vim.treesitter.start()` will throw when the captain's
+  -- environment lacks the markdown parser; absorbing the throw
+  -- here keeps that environment problem from killing our event
+  -- dispatch loop.
   if not window.focus() then
     return
   end

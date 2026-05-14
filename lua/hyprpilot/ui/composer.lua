@@ -829,10 +829,11 @@ function M.submit(text, opts)
     end
   end
 
-  -- Fire BEFORE the daemon round-trip so handlers (markview detach,
-  -- statusline "sending…" pill) can run while the request is still
-  -- in flight. Captains who hook this won't double-fire when a
-  -- submit is queue-parked — that path returns above.
+  -- Fire BEFORE the daemon round-trip so captain autocmd handlers
+  -- (UI detach, statusline "sending…" pill, etc.) can run while
+  -- the request is still in flight. Captains who hook this won't
+  -- double-fire when a submit is queue-parked — that path returns
+  -- above.
   pcall(vim.api.nvim_exec_autocmds, "User", {
     pattern = "HyprpilotComposerSubmitted",
     data = { instance_id = instance_id, bufnr = bufnr, text = text },

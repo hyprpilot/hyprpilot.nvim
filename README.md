@@ -378,25 +378,20 @@ require("hyprpilot.palettes.modes").open({ picker = "snacks" })
 ## Statusline integration
 
 The status surface is the single source of truth — compose your own
-component however your statusline plugin prefers. Lualine example:
+component however your statusline backend prefers. The shape is:
 
 ```lua
-require("lualine").setup({
-  sections = {
-    lualine_x = {
-      {
-        function()
-          local s = require("hyprpilot.status").get()
-          local glyph = s.connection == "connected" and "●"
-            or s.connection == "connecting" and "…"
-            or "○"
-          return glyph .. " " .. (s.active_instance or "—")
-        end,
-      },
-    },
-  },
-})
+-- The component function your statusline backend calls every render.
+local function hyprpilot_component()
+  local s = require("hyprpilot.status").get()
+  local glyph = s.connection == "connected" and "●"
+    or s.connection == "connecting" and "…"
+    or "○"
+  return glyph .. " " .. (s.active_instance or "—")
+end
 
+-- Refresh hook — fire your statusline's redraw API from the
+-- per-event autocmds so the component updates without polling.
 vim.api.nvim_create_autocmd("User", {
   pattern = {
     "HyprpilotConnected",
@@ -405,7 +400,10 @@ vim.api.nvim_create_autocmd("User", {
     "HyprpilotActivityChanged",
   },
   callback = function()
-    require("lualine").refresh()
+    -- Replace with your statusline backend's refresh call,
+    -- e.g. `vim.cmd("redrawstatus!")` for the built-in
+    -- statusline.
+    vim.cmd("redrawstatus!")
   end,
 })
 ```

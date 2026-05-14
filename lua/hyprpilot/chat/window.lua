@@ -57,8 +57,9 @@ end
 
 ---Switch focus to the chat window. Returns true on success, false
 ---when the window is invalid or a third-party `BufEnter` autocmd
----throws (markview / render-markdown can fault when treesitter
----can't resolve a parser for the registered alias). Callers that
+---throws (third-party markdown / treesitter decorators can fault
+---when the parser can't be resolved for the registered alias).
+---Callers that
 ---follow `focus()` with `vim.cmd("split")` should bail on `false`
 ---to keep one bad autocmd from cascading through our event
 ---dispatch.
@@ -166,9 +167,10 @@ local function open_split(ui, bufnr)
   buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
-  -- `winfixwidth` keeps `<C-W>=` and edgy.nvim's equalise pass from
-  -- redistributing column space onto the chat sidebar. The captain
-  -- chose `ui.width` for a reason; honour it across layout churn.
+  -- `winfixwidth` keeps `<C-W>=` and any layout-manager equalise
+  -- pass from redistributing column space onto the chat sidebar.
+  -- The captain chose `ui.width` for a reason; honour it across
+  -- layout churn.
   vim.wo[M._winid].winfixwidth = true
   -- Manual folds: render.lua programmatically calls `:N,Mfold` when
   -- a turn ends or a block reaches a terminal state. Foldexpr would
