@@ -100,6 +100,21 @@ require("hyprpilot").setup({
     },
   },
 
+  queue_strip = {
+    -- Pinned bar between the permission row and the composer.
+    -- When the captain submits a prompt while the agent is non-
+    -- idle, the submit is parked in the queue instead of going
+    -- straight to the daemon; the strip auto-shows and the
+    -- captain drains explicitly via these keymaps. Cancel-turn
+    -- flushes the queue alongside the cancelled head.
+    keymaps = {
+      send_head = "<C-CR>",                   -- send the head entry now
+      drop_head = "dd",                       -- drop the head entry
+      drop_all  = "D",                        -- clear the queue
+      edit_head = "e",                        -- send head via composer for editing
+    },
+  },
+
   mcp = {
     enabled = true,                           -- false → MCP bridge skipped
   },

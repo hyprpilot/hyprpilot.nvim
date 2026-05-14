@@ -122,6 +122,15 @@ local function dispatch(raw)
   elseif event.event == "turn_ended" then
     render.handle_turn_ended(event)
     status.set_activity({ kind = "idle" })
+    -- Cancel-flush: when the captain aborts a turn the queued
+    -- follow-ups are abandoned alongside the cancelled head.
+    -- Matches the desktop overlay's pilot.py-derived semantics —
+    -- captain wanted to drop this line of thought, not also fire
+    -- the queued continuations.
+    local reason = event.stopReason
+    if type(reason) == "string" and reason:lower():find("cancel", 1, true) ~= nil then
+      require("hyprpilot.composer_queue").flush(event.instanceId)
+    end
     emit("TurnEnded", {
       instance_id = event.instanceId,
       turn_id = event.turnId,

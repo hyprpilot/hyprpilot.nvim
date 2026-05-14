@@ -99,6 +99,7 @@ function M.close(instance_id)
   require("hyprpilot.chat.winbar").forget(id)
   require("hyprpilot.ui.composer").wipe(id)
   require("hyprpilot.chat.permission_row").drop_for_instance(id)
+  require("hyprpilot.composer_queue").reset(id)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)
@@ -202,6 +203,12 @@ function M.show(instance_id)
   -- Both are skipped for the placeholder (no instance to drive them).
   require("hyprpilot.chat.header").ensure_listeners()
   require("hyprpilot.chat.header").open()
+  -- Queue strip auto-pops above the composer when the active
+  -- instance has parked prompts. Subscriber wiring lives in
+  -- `ensure_listeners`; the strip stays hidden when the queue is
+  -- empty.
+  require("hyprpilot.chat.queue_strip").ensure_listeners()
+  require("hyprpilot.chat.queue_strip").refresh()
 
   if resolved_id ~= nil then
     require("hyprpilot.ui.composer").open()
@@ -218,6 +225,7 @@ function M.hide()
   end
 
   require("hyprpilot.ui.composer").close()
+  require("hyprpilot.chat.queue_strip").close()
   require("hyprpilot.chat.header").close()
   require("hyprpilot.chat.permission_row").close()
 

@@ -8,6 +8,7 @@ local M = {}
 ---@field client? hyprpilot.ConfigClient
 ---@field composer? hyprpilot.ConfigComposer
 ---@field permission_row? hyprpilot.ConfigPermissionRow
+---@field queue_strip? hyprpilot.ConfigQueueStrip
 ---@field palettes? hyprpilot.ConfigPalettes
 ---@field completion? hyprpilot.ConfigCompletion
 
@@ -27,6 +28,20 @@ local M = {}
 ---@class hyprpilot.ConfigPermissionRow
 ---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 40% vh)
 ---@field keymaps? hyprpilot.ConfigPermissionRowKeymaps
+
+---@class hyprpilot.ConfigQueueStrip
+---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized strip (default 40% vh)
+---@field keymaps? hyprpilot.ConfigQueueStripKeymaps
+
+--- Composer-queue strip keybindings. Same shape semantics as
+--- `permission_row.keymaps`: each value is `string | string[] |
+--- false`, normal-mode only. Captain drains the queue explicitly;
+--- there's no auto-dispatch on turn end.
+---@class hyprpilot.ConfigQueueStripKeymaps
+---@field send_head? string | string[] | false  -- send the head entry now
+---@field drop_head? string | string[] | false  -- drop the head entry without sending
+---@field drop_all?  string | string[] | false  -- clear the entire queue
+---@field edit_head? string | string[] | false  -- pop the head into the composer for editing
 
 --- Permission-row keybindings. Each action accepts:
 ---   - a single key string (`"<C-g>"`)
@@ -88,6 +103,21 @@ local defaults = {
     timeout_ms = 5000,
     connect_attempts = 3,
     retry_delay_ms = 1000,
+  },
+  queue_strip = {
+    max_height = function(lines)
+      return math.max(3, math.floor(lines * 0.4))
+    end,
+    keymaps = {
+      -- `<C-CR>` matches the composer's submit binding — sending
+      -- the head feels like a chained submit. `dd` matches vim's
+      -- delete-line idiom for "drop this row". `D` (capital)
+      -- extends that to "drop everything".
+      send_head = "<C-CR>",
+      drop_head = "dd",
+      drop_all = "D",
+      edit_head = "e",
+    },
   },
   permission_row = {
     max_height = function(lines)
