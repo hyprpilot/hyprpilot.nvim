@@ -10,6 +10,10 @@
 ---   `attach_buffer(bufnr?, opts?)` — attach the buffer's file path
 ---   `attach_clipboard_image(opts?)` — wraps img-clip (when available)
 ---   `clear_attachments(instance_id?)` — drop every staged attachment
+---   `paste_buffer(bufnr?, opts?)` — append the buffer's contents as a
+---     fenced block (header = cwd-relative path)
+---   `paste_selection(opts?)` — append the last visual selection as a
+---     fenced block (header = `path:start-end`)
 
 local client = require("hyprpilot.client")
 local config = require("hyprpilot.config")
@@ -469,6 +473,110 @@ function M.attach_clipboard_image(opts)
     title = opts.title,
     mime = "image/png",
   })
+end
+
+---Build a fenced code block: optional header line above the fence,
+---fence opens with the buffer's filetype (markdown is lenient about
+---unknown tags), content verbatim, fence closes.
+---@param header string?
+---@param lang string?
+---@param lines string[]
+---@return string[]
+local function build_fenced_block(header, lang, lines)
+  local block = {}
+  if header ~= nil and header ~= "" then
+    table.insert(block, string.format("`%s`:", header))
+  end
+  table.insert(block, "```" .. (lang or ""))
+  for _, line in ipairs(lines) do
+    table.insert(block, line)
+  end
+  table.insert(block, "```")
+  return block
+end
+
+---Append `block` to the per-instance composer buffer, separating
+---from existing content with a blank line. Mints the buffer when
+---missing so a paste before the first `open()` still lands.
+---@param instance_id string
+---@param block string[]
+local function append_to_composer(instance_id, block)
+  local bufnr = ensure_buffer(instance_id)
+  local existing = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local empty = (#existing == 0) or (#existing == 1 and existing[1] == "")
+
+  if empty then
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, block)
+    return
+  end
+
+  local payload = { "" }
+  for _, line in ipairs(block) do
+    table.insert(payload, line)
+  end
+  vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, payload)
+end
+
+---Append the buffer's contents into the composer as a fenced code
+---block. Header is the path made relative to the cwd
+---(`vim.fn.fnamemodify(path, ":.")`); fence language is the buffer's
+---filetype. Unnamed buffers paste without a header.
+---@param bufnr? integer                                -- default: current buffer
+---@param opts? { instance_id?: string }
+function M.paste_buffer(bufnr, opts)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    log.warn("composer.paste_buffer: invalid bufnr=%s", bufnr)
+    return
+  end
+
+  local id = resolve_instance((opts or {}).instance_id, "paste_buffer")
+  if id == nil then
+    return
+  end
+
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  local header = path ~= "" and vim.fn.fnamemodify(path, ":.") or nil
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local lang = vim.bo[bufnr].filetype
+
+  append_to_composer(id, build_fenced_block(header, lang, lines))
+  M.resize()
+end
+
+---Append the last visual selection (line-wise) into the composer as
+---a fenced code block. Reads marks `'<` / `'>` on the current buffer,
+---so a captain wiring this for visual mode should `<Esc>` first (or
+---bind in normal mode after the selection). Header is
+---`<cwd-relative-path>:<start>-<end>`.
+---@param opts? { instance_id?: string }
+function M.paste_selection(opts)
+  local bufnr = vim.api.nvim_get_current_buf()
+  local start_line = vim.api.nvim_buf_get_mark(bufnr, "<")[1]
+  local end_line = vim.api.nvim_buf_get_mark(bufnr, ">")[1]
+
+  if start_line == 0 or end_line == 0 then
+    log.warn("composer.paste_selection: no visual selection on bufnr=%s", bufnr)
+    return
+  end
+
+  if start_line > end_line then
+    start_line, end_line = end_line, start_line
+  end
+
+  local id = resolve_instance((opts or {}).instance_id, "paste_selection")
+  if id == nil then
+    return
+  end
+
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  local relpath = path ~= "" and vim.fn.fnamemodify(path, ":.") or "(unnamed)"
+  local header = string.format("%s:%d-%d", relpath, start_line, end_line)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+  local lang = vim.bo[bufnr].filetype
+
+  append_to_composer(id, build_fenced_block(header, lang, lines))
+  M.resize()
 end
 
 ---True when the composer split is currently open.
