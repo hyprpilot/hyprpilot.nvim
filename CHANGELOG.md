@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.1.1...hyprpilot.nvim-v1.1.2) (2026-05-14)
+
+
+### Bug Fixes
+
+* **ci:** inline pypi publish into release-please.yml (OIDC identity mismatch) ([#69](https://github.com/hyprpilot/hyprpilot.nvim/issues/69)) ([48d0601](https://github.com/hyprpilot/hyprpilot.nvim/commit/48d06011d89fede6cd774fc1420611dc165a2472))
+
 ## [1.1.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.1.0...hyprpilot.nvim-v1.1.1) (2026-05-14)
 
 
