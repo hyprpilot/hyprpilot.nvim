@@ -21,13 +21,20 @@
 # release-please tracks a SINGLE package (the repo root) and uses
 # `extra-files` to bump `pkg/pyproject.toml`'s version field at
 # release time, so the Python package's version is mechanically
-# locked to the Lua plugin's. The previous multi-package +
-# linked-versions setup let the Python and Lua versions drift
-# (linked-versions only normalizes bump TYPES across components,
-# not absolute version numbers — see PR #64 for the diagnosis).
-# Lua plugin "version" lives only as the git tag (lazy.nvim /
-# packer install from tags directly); the Python package gets the
-# matching version pushed to PyPI via `publish-pypi.yml`.
+# locked to the Lua plugin's. Lua plugin "version" lives only as
+# the git tag (lazy.nvim / packer install from tags directly); the
+# Python package gets the matching version pushed to PyPI in the
+# downstream `build-pypi` + `publish-pypi` jobs below.
+#
+# Why the publish jobs are inlined here instead of a separate
+# `publish-pypi.yml` reusable workflow: PyPI's Trusted Publishing
+# matches the OIDC token's `job_workflow_ref` claim against the
+# trusted-publisher entry. With `workflow_call`, that claim points
+# at the CALLING workflow (this one) regardless of which file the
+# job's steps live in — so PyPI rejects an upload from a reusable
+# workflow whose trusted-publisher entry names a different file.
+# Inlining keeps the OIDC identity = workflow file in the trusted
+# publisher = `release-please.yml`. Diagnosed in PR #67.
 
 name: Release Please
 
@@ -44,9 +51,9 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     # Surface release-please's `release_created` output so the
-    # downstream PyPI publish job can gate on it. Chaining via
-    # `needs:` here is the standard workaround for the GitHub
-    # anti-loop rule that swallows workflows triggered by
+    # downstream build + publish jobs can gate on it. Chaining via
+    # `needs:` is the standard workaround for the GitHub anti-loop
+    # rule that swallows workflows triggered by
     # `secrets.GITHUB_TOKEN` (the tag push from release-please runs
     # as `github-actions[bot]` and won't fire `push: tags` triggers).
     outputs:
@@ -64,18 +71,68 @@ jobs:
           config-file: .github/release-please-config.json
           manifest-file: .github/.release-please-manifest.json
 
+  build-pypi:
+    name: Build wheel + sdist
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkg
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Bootstrap toolchain via mise
+        uses: jdx/mise-action@v4
+        with:
+          install: true
+          cache: true
+
+      - name: Install workspace deps
+        run: task install
+
+      - name: Build
+        run: task build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: pkg/dist/
+          if-no-files-found: error
+          retention-days: 7
+
   publish-pypi:
     name: Publish hyprpilot-nvim-mcp to PyPI
-    needs: release-please
-    # Single-package config means every release is also a Python
-    # release (the extra-files updater keeps `pkg/pyproject.toml`'s
-    # version locked to the tag). So `release_created` is the only
-    # gate we need.
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: build-pypi
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Required for OIDC trusted publishing — `id-token: write` must
-      # be granted explicitly here because reusable workflows don't
-      # inherit `id-token` from the caller's top-level permissions.
+      # Required for OIDC trusted publishing — pypa/gh-action-pypi-publish
+      # exchanges this token for PyPI's short-lived API credential.
       id-token: write
-    uses: ./.github/workflows/publish-pypi.yml
+    # Bind to the `pypi` environment so PyPI's trusted-publisher
+    # config can scope its grant to this exact deploy slot. The
+    # captain sets up the environment under repo Settings →
+    # Environments; protection rules (manual approval, branch
+    # restriction) are configured there.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/hyprpilot-nvim-mcp/
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist/
+
+      # The action exchanges the workflow's id-token for a
+      # short-lived PyPI API token via the Trusted Publishing
+      # protocol. Pin to a SHA before merge — `gh api repos/pypa/gh-action-pypi-publish/git/refs/tags/release/v1`
+      # gives the latest release tag's commit; Renovate / Dependabot
+      # will keep it current after that.
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Skip publish when the version already exists on PyPI (a
+          # tag re-push that didn't actually bump the version
+          # shouldn't fail loudly).
+          skip-existing: true
+          verbose: true
