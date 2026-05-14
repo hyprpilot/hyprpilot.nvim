@@ -285,10 +285,9 @@ local function paint_hunks(bufnr, hunks)
     -- highlighting in v1; single hl group per row keeps the path
     -- straightforward and survives every agent's content.
     if #hunk.new_lines > 0 then
-      local virt_lines = {}
-      for _, line in ipairs(hunk.new_lines) do
-        table.insert(virt_lines, { { line, hl_add } })
-      end
+      local virt_lines = vim.tbl_map(function(line)
+        return { { line, hl_add } }
+      end, hunk.new_lines)
       local anchor = anchor_row
       if hunk.old_count > 0 then
         anchor = math.min(anchor_row + hunk.old_count - 1, vim.api.nvim_buf_line_count(bufnr) - 1)

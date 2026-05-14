@@ -43,11 +43,7 @@ function M.list(callback)
       return
     end
 
-    local items = {}
-    for _, wire in ipairs(result.profiles or {}) do
-      table.insert(items, from_wire(wire))
-    end
-    callback(nil, items)
+    callback(nil, vim.tbl_map(from_wire, result.profiles or {}))
   end)
 end
 

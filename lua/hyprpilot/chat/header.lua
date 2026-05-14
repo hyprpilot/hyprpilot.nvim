@@ -257,12 +257,9 @@ local function render_line(segments)
   -- linear (no goto / continue). `compose_segments` already does
   -- this via `is_str`, but defence in depth — a future caller that
   -- appends a raw `vim.NIL` userdata shouldn't crash `#seg.text`.
-  local valid = {}
-  for _, seg in ipairs(segments) do
-    if type(seg.text) == "string" then
-      table.insert(valid, seg)
-    end
-  end
+  local valid = vim.tbl_filter(function(seg)
+    return type(seg.text) == "string"
+  end, segments)
 
   for i, seg in ipairs(valid) do
     if i > 1 then

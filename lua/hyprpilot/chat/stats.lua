@@ -136,9 +136,7 @@ function M.from_wire_stats(wire_stats)
 
   local labels = {}
   for _, stat in ipairs(wire_stats) do
-    for _, label in ipairs(M.format_wire_stat(stat)) do
-      table.insert(labels, label)
-    end
+    vim.list_extend(labels, M.format_wire_stat(stat))
   end
   return labels
 end
@@ -230,12 +228,12 @@ function M.format_pills(labels)
     return ""
   end
 
-  local parts = {}
-  for _, label in ipairs(labels) do
-    table.insert(parts, "[" .. label .. "]")
-  end
-
-  return " " .. table.concat(parts, " ")
+  return " " .. table.concat(
+    vim.tbl_map(function(label)
+      return "[" .. label .. "]"
+    end, labels),
+    " "
+  )
 end
 
 return M

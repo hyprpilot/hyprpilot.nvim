@@ -68,9 +68,7 @@ local function default_preview(item)
   local headline = item.name or item.id or item.value or "(unnamed)"
   local lines = { "# " .. headline, "" }
   if type(item.description) == "string" and item.description ~= "" then
-    for _, l in ipairs(vim.split(item.description, "\n", { plain = true })) do
-      table.insert(lines, l)
-    end
+    vim.list_extend(lines, vim.split(item.description, "\n", { plain = true }))
   else
     table.insert(lines, "_(no description advertised by the agent)_")
   end

@@ -130,6 +130,17 @@ require("hyprpilot").setup({
     -- than a daemon round-trip. Extend if the daemon advertises more.
     sources = { "skills" },
   },
+
+  -- Global baseline `withConfig` overlay applied to every spawn-
+  -- bearing RPC (`instances.spawn`, `instances.focus` with
+  -- `ensure=true`, `composer.submit`). Per-call `with_config`
+  -- lists stack on top: global goes first, per-call goes after,
+  -- daemon applies in declaration order with last-wins semantics.
+  -- Daemon validates patch shapes and returns -32602 on bad input.
+  with_config = {
+    -- e.g. force a project-wide MCP allowlist:
+    -- { mcps = { allow = { "hyprpilot-nvim", "git", "filesystem" } } },
+  },
 })
 ```
 

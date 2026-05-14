@@ -14,6 +14,12 @@ local M = {}
 ---@field notification? hyprpilot.ConfigNotification
 ---@field diff_preview? hyprpilot.ConfigDiffPreview
 ---@field icons? hyprpilot.ConfigIcons
+---@field with_config? hyprpilot.ConfigPatch[]
+--- Global baseline overlay patches the daemon applies to every
+--- spawn-bearing RPC (`instances.spawn`, `instances.focus` with
+--- `ensure=true`, `composer.submit`). Per-call `with_config` lists
+--- stack on top: global goes first, per-call goes after, daemon
+--- applies in declaration order with last-wins semantics.
 
 --- Glyph overrides for tool status badges and tool-kind prefixes
 --- rendered into the chat. Defaults are nerd-font glyphs (the

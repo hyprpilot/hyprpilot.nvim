@@ -312,11 +312,10 @@ paint_indicator = function(instance_id)
 
   local list = attachments_by_instance[instance_id] or {}
   if #list ~= 0 then
-    local virt_lines = {}
-    for _, a in ipairs(list) do
+    local virt_lines = vim.tbl_map(function(a)
       local label = a.title ~= nil and a.title ~= "" and a.title or a.slug
-      table.insert(virt_lines, { { "  - " .. label, "HyprpilotComposerAttachments" } })
-    end
+      return { { "  - " .. label, "HyprpilotComposerAttachments" } }
+    end, list)
 
     local last_line = math.max(0, vim.api.nvim_buf_line_count(bufnr) - 1)
     pcall(vim.api.nvim_buf_set_extmark, bufnr, INDICATOR_NS, last_line, 0, {
@@ -519,9 +518,7 @@ local function build_fenced_block(header, lang, lines)
     table.insert(block, string.format("`%s`:", header))
   end
   table.insert(block, "```" .. (lang or ""))
-  for _, line in ipairs(lines) do
-    table.insert(block, line)
-  end
+  vim.list_extend(block, lines)
   table.insert(block, "```")
   return block
 end
@@ -541,11 +538,7 @@ local function append_to_composer(instance_id, block)
     return
   end
 
-  local payload = { "" }
-  for _, line in ipairs(block) do
-    table.insert(payload, line)
-  end
-  vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, payload)
+  vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, vim.list_extend({ "" }, block))
 end
 
 ---Append the buffer's contents into the composer as a fenced code
@@ -814,20 +807,10 @@ function M.submit(text, opts)
   if attachments_snapshot ~= nil and #attachments_snapshot > 0 then
     payload.attachments = attachments_snapshot
   end
-  -- Match the validation / log shape used by `instances.spawn`'s
-  -- with_config branch — bad input (non-list / map-shaped) logs
-  -- and skips so captain misuse surfaces in `:messages`.
-  if opts.with_config ~= nil then
-    if type(opts.with_config) ~= "table" then
-      log.warn("composer.submit: with_config must be a list of patch tables, got %s — omitting", type(opts.with_config))
-    elseif #opts.with_config == 0 then
-      if next(opts.with_config) ~= nil then
-        log.warn("composer.submit: with_config must be a list (array-shaped table), got map / sparse — omitting")
-      end
-    else
-      payload.withConfig = opts.with_config
-    end
-  end
+  -- Stack per-call patches on top of `config.options.with_config`
+  -- (the captain's global baseline). Daemon validates the wire
+  -- shape — bad patches come back as `-32602`.
+  require("hyprpilot.rpc.with-config").apply(payload, opts.with_config)
 
   -- Fire BEFORE the daemon round-trip so captain autocmd handlers
   -- (UI detach, statusline "sending…" pill, etc.) can run while

@@ -131,36 +131,7 @@ local function from_meta_wire(wire)
   }
 end
 
----Validate + stamp `withConfig` onto an outgoing spawn-bearing
----params table. Skips silently on nil, logs at warn on a
----non-table / sparse / map-shaped value (so captain misuse surfaces
----instead of vanishing under a wire-side serde-default).
----@param params table
----@param raw any
----@param caller string
-local function apply_with_config(params, raw, caller)
-  if raw == nil then
-    return
-  end
-
-  if type(raw) ~= "table" then
-    log.warn("instances.%s: with_config must be a list of patch tables, got %s — omitting", caller, type(raw))
-    return
-  end
-
-  -- `#tbl` on a map-shaped table or a sparse array returns 0; either
-  -- way the captain meant something other than "list of patches" and
-  -- we'd send a JSON object instead of an array. Bail with a warn
-  -- so the misuse isn't silent.
-  if #raw == 0 then
-    if next(raw) ~= nil then
-      log.warn("instances.%s: with_config must be a list (array-shaped table), got map / sparse — omitting", caller)
-    end
-    return
-  end
-
-  params.withConfig = raw
-end
+local with_config = require("hyprpilot.rpc.with-config")
 
 ---Bring a freshly-spawned instance into the local registry + window.
 ---@param instance hyprpilot.Instance
@@ -185,13 +156,7 @@ function M.list(callback)
       return
     end
 
-    local items = {}
-
-    for _, wire in ipairs(result.instances or {}) do
-      table.insert(items, from_wire(wire))
-    end
-
-    callback(nil, items)
+    callback(nil, vim.tbl_map(from_wire, result.instances or {}))
   end)
 end
 
@@ -264,7 +229,7 @@ function M.spawn(opts, callback)
     model = opts.model,
     restore = opts.restore == true,
   }
-  apply_with_config(params, opts.with_config, "spawn")
+  with_config.apply(params, opts.with_config)
 
   client.request("instances/spawn", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then
@@ -308,7 +273,7 @@ function M.focus(instance_id, opts, callback)
     model = opts.model,
     restore = opts.restore == true,
   }
-  apply_with_config(params, opts.with_config, "focus")
+  with_config.apply(params, opts.with_config)
 
   client.request("instances/focus", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(err, result)
     if err ~= nil then

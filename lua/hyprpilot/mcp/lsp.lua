@@ -135,10 +135,7 @@ end
 local function locations_to_items(hits)
   local items = {}
   for _, hit in ipairs(hits) do
-    local converted = vim.lsp.util.locations_to_items(vim.islist(hit.result) and hit.result or { hit.result }, hit.client.offset_encoding)
-    for _, item in ipairs(converted) do
-      table.insert(items, item)
-    end
+    vim.list_extend(items, vim.lsp.util.locations_to_items(vim.islist(hit.result) and hit.result or { hit.result }, hit.client.offset_encoding))
   end
   return items
 end
@@ -274,13 +271,9 @@ M.tools.hover = {
         local lines = vim.lsp.util.convert_input_to_markdown_lines(hit.result.contents)
         if type(lines) == "table" and #lines > 0 then
           if #parts > 0 then
-            table.insert(parts, "")
-            table.insert(parts, "---")
-            table.insert(parts, "")
+            vim.list_extend(parts, { "", "---", "" })
           end
-          for _, line in ipairs(lines) do
-            table.insert(parts, line)
-          end
+          vim.list_extend(parts, lines)
         end
       end
     end
@@ -318,10 +311,7 @@ M.tools.document_symbols = {
     -- references a `location`). `symbols_to_items` handles both.
     local symbols = {}
     for _, hit in ipairs(hits) do
-      local converted = vim.lsp.util.symbols_to_items(hit.result or {}, bufnr, hit.client.offset_encoding)
-      for _, item in ipairs(converted) do
-        table.insert(symbols, item)
-      end
+      vim.list_extend(symbols, vim.lsp.util.symbols_to_items(hit.result or {}, bufnr, hit.client.offset_encoding))
     end
     return { json = { symbols = symbols } }
   end,
@@ -354,9 +344,7 @@ M.tools.workspace_symbols = {
     end
     local symbols = {}
     for _, hit in ipairs(hits) do
-      for _, item in ipairs(vim.lsp.util.symbols_to_items(hit.result or {}, nil, hit.client.offset_encoding)) do
-        table.insert(symbols, item)
-      end
+      vim.list_extend(symbols, vim.lsp.util.symbols_to_items(hit.result or {}, nil, hit.client.offset_encoding))
     end
     return { json = { symbols = symbols } }
   end,
@@ -458,13 +446,7 @@ M.tools.rename = {
     end
     vim.lsp.util.apply_workspace_edit(response.result, client.offset_encoding)
     -- Count touched files for the agent's report.
-    local touched = 0
-    for _ in pairs(response.result.changes or {}) do
-      touched = touched + 1
-    end
-    for _ in ipairs(response.result.documentChanges or {}) do
-      touched = touched + 1
-    end
+    local touched = vim.tbl_count(response.result.changes or {}) + #(response.result.documentChanges or {})
     return { json = { renamed = true, touched_files = touched, client = client.name } }
   end,
 }
@@ -519,10 +501,8 @@ M.tools.diagnostics_get = {
       bufnr = loaded
     end
 
-    local diagnostics = vim.diagnostic.get(bufnr, opts)
-    local out = {}
-    for _, d in ipairs(diagnostics) do
-      table.insert(out, {
+    local out = vim.tbl_map(function(d)
+      return {
         path = vim.api.nvim_buf_get_name(d.bufnr),
         line = d.lnum,
         character = d.col,
@@ -532,8 +512,8 @@ M.tools.diagnostics_get = {
         message = d.message,
         source = d.source,
         code = d.code,
-      })
-    end
+      }
+    end, vim.diagnostic.get(bufnr, opts))
     return { json = { diagnostics = out } }
   end,
 }
