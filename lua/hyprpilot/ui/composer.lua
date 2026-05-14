@@ -822,19 +822,52 @@ function M.submit(text, opts)
     data = { instance_id = instance_id, bufnr = bufnr, text = text },
   })
 
-  client.request("prompts/send", payload, nil, function(err, _result)
+  client.request("prompts/send", payload, nil, function(err, result)
     if err ~= nil then
       log.error("composer.submit: %s", err.message)
+      return
+    end
 
+    -- Daemon-side disposition (added in hyprpilot's post-`with_config`
+    -- branch): the daemon takes a `was_busy` snapshot at submit time
+    -- and returns one of `sent` (immediate dispatch) / `queued`
+    -- (parked behind the in-flight turn, auto-dispatches when it
+    -- drains) / `drafted` (draft path — composer doesn't use this).
+    --
+    -- Races: the plugin's pre-flight `status.activity.kind ~= "idle"`
+    -- check parks on the local queue strip when busy, but a turn
+    -- can start between that check and the daemon receiving the
+    -- request. In that case the daemon queues the prompt and we
+    -- learn about it here. The composer still clears (the captain
+    -- handed off the draft), but a `HyprpilotPromptQueued` event
+    -- fires so notification handlers (bell, toast) can surface that
+    -- the prompt isn't running yet.
+    local disposition = (type(result) == "table" and type(result.disposition) == "string") and result.disposition or "sent"
+    local accepted = type(result) ~= "table" or result.accepted ~= false
+
+    if not accepted then
+      log.warn("composer.submit: daemon rejected the prompt (disposition=%s) — leaving composer intact", disposition)
       return
     end
 
     if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
       vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
     end
-
     attachments_by_instance[instance_id] = nil
     paint_indicator(instance_id)
+
+    if disposition == "queued" then
+      log.info("composer.submit: daemon queued the prompt behind an in-flight turn")
+      pcall(vim.api.nvim_exec_autocmds, "User", {
+        pattern = "HyprpilotPromptQueued",
+        data = { instance_id = instance_id, bufnr = bufnr },
+      })
+    end
+
+    pcall(vim.api.nvim_exec_autocmds, "User", {
+      pattern = "HyprpilotPromptDispatched",
+      data = { instance_id = instance_id, bufnr = bufnr, disposition = disposition },
+    })
   end)
 end
 
