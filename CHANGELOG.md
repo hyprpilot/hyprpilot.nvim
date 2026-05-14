@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.2.0...hyprpilot.nvim-v1.3.0) (2026-05-14)
+
+
+### Features
+
+* **palettes:** pass with_config through sessions/load ([#74](https://github.com/hyprpilot/hyprpilot.nvim/issues/74)) ([f39ca56](https://github.com/hyprpilot/hyprpilot.nvim/commit/f39ca5605a6dba4e10a2311a530a6d59c955ed64))
+
 ## [1.2.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.1.2...hyprpilot.nvim-v1.2.0) (2026-05-14)
 
 
