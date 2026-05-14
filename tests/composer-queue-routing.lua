@@ -16,7 +16,7 @@ local T = MiniTest.new_set()
 ---@param instance_id string
 ---@return integer
 local function mint_composer_buffer(instance_id)
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local name = "hyprpilot://composer/" .. instance_id
   local existing = require("hyprpilot.chat.buffer").find_by_name(name)
   if existing ~= nil then
@@ -33,7 +33,7 @@ end
 T["composer.submit while activity != idle enqueues + no wire call"] = function()
   local restore_active = helpers.stub_active_instance("inst-1")
   local restore_client, calls = helpers.stub_client_with({})
-  local queue = require("hyprpilot.composer-queue")
+  local queue = require("hyprpilot.composer.queue")
   queue.reset("inst-1")
 
   local _ = mint_composer_buffer("inst-1")
@@ -42,7 +42,7 @@ T["composer.submit while activity != idle enqueues + no wire call"] = function()
   local status = require("hyprpilot.status")
   status.set_activity({ kind = "streaming" })
 
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   composer.submit("queued prompt", { instance_id = "inst-1" })
 
   -- No wire RPC fired.
@@ -63,7 +63,7 @@ T["composer.submit while idle fires prompts/send (no queue)"] = function()
   local restore_client, calls = helpers.stub_client_with({
     ["prompts/send"] = { result = { ok = true } },
   })
-  local queue = require("hyprpilot.composer-queue")
+  local queue = require("hyprpilot.composer.queue")
   queue.reset("inst-1")
 
   local _ = mint_composer_buffer("inst-1")
@@ -71,7 +71,7 @@ T["composer.submit while idle fires prompts/send (no queue)"] = function()
   local status = require("hyprpilot.status")
   status.set_activity({ kind = "idle" })
 
-  require("hyprpilot.ui.composer").submit("ship it", { instance_id = "inst-1" })
+  require("hyprpilot.composer").submit("ship it", { instance_id = "inst-1" })
 
   -- Wire fired with the prompt text.
   MiniTest.expect.equality(#calls, 1)
@@ -90,7 +90,7 @@ T["composer.submit with bypass_queue=true fires the wire even when busy"] = func
   local restore_client, calls = helpers.stub_client_with({
     ["prompts/send"] = { result = { ok = true } },
   })
-  local queue = require("hyprpilot.composer-queue")
+  local queue = require("hyprpilot.composer.queue")
   queue.reset("inst-1")
 
   local _ = mint_composer_buffer("inst-1")
@@ -98,7 +98,7 @@ T["composer.submit with bypass_queue=true fires the wire even when busy"] = func
   -- Activity is non-idle, but bypass_queue overrides.
   require("hyprpilot.status").set_activity({ kind = "streaming" })
 
-  require("hyprpilot.ui.composer").submit("force send", {
+  require("hyprpilot.composer").submit("force send", {
     instance_id = "inst-1",
     bypass_queue = true,
   })
@@ -116,7 +116,7 @@ end
 
 T["turn_ended with stopReason=cancelled flushes the queue"] = function()
   local events = require("hyprpilot.chat.events")
-  local queue = require("hyprpilot.composer-queue")
+  local queue = require("hyprpilot.composer.queue")
   queue.reset("inst-1")
 
   queue.enqueue("inst-1", { text = "a" })
@@ -167,7 +167,7 @@ end
 
 T["turn_ended with non-cancel stopReason leaves the queue alone"] = function()
   local events = require("hyprpilot.chat.events")
-  local queue = require("hyprpilot.composer-queue")
+  local queue = require("hyprpilot.composer.queue")
   queue.reset("inst-1")
 
   queue.enqueue("inst-1", { text = "stays" })

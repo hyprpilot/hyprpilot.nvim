@@ -2,7 +2,7 @@
 --- Pick a row, the daemon's `instances/setMode` RPC commits.
 --- Concrete config; orchestration lives in `_meta_palette`.
 
-local instances = require("hyprpilot.instances")
+local instances = require("hyprpilot.rpc.instances")
 local meta_palette = require("hyprpilot.palettes._meta-palette")
 
 local M = {}

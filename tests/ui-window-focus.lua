@@ -30,20 +30,20 @@ end
 
 local function setup_chrome(chat_winid, composer_winid)
   local chat_window = require("hyprpilot.chat.window")
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   chat_window._winid = chat_winid
   composer._winid = composer_winid
 end
 
 local function restore_chrome(prev_chat, prev_composer)
   require("hyprpilot.chat.window")._winid = prev_chat
-  require("hyprpilot.ui.composer")._winid = prev_composer
+  require("hyprpilot.composer")._winid = prev_composer
 end
 
 T["focus: from outside chrome → jumps to composer + stashes previous winid"] = function()
   local home, chat, composer = mint_window_triple()
   local prev_chat = require("hyprpilot.chat.window")._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
   setup_chrome(chat, composer)
   require("hyprpilot.ui.window")._prev_winid = nil
 
@@ -59,7 +59,7 @@ end
 T["focus: target=chat steers to the chat window instead of composer"] = function()
   local home, chat, composer = mint_window_triple()
   local prev_chat = require("hyprpilot.chat.window")._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
   setup_chrome(chat, composer)
   require("hyprpilot.ui.window")._prev_winid = nil
 
@@ -76,7 +76,7 @@ end
 T["focus: second call from inside chrome → jumps back to stashed previous"] = function()
   local home, chat, composer = mint_window_triple()
   local prev_chat = require("hyprpilot.chat.window")._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
   setup_chrome(chat, composer)
   require("hyprpilot.ui.window")._prev_winid = nil
 
@@ -102,7 +102,7 @@ end
 T["focus: composer winid invalid → falls back to chat as target"] = function()
   local home, chat, composer = mint_window_triple()
   local prev_chat = require("hyprpilot.chat.window")._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
   setup_chrome(chat, nil) -- composer not yet open
   require("hyprpilot.ui.window")._prev_winid = nil
 
@@ -120,11 +120,11 @@ T["focus: chat hidden → show() runs then cursor lands on composer (insert mode
   local home, chat, composer = mint_window_triple()
   local chat_window = require("hyprpilot.chat.window")
   local prev_chat = chat_window._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
 
   -- Start "hidden" — chat_window has no winid, so is_visible() is false.
   chat_window._winid = nil
-  require("hyprpilot.ui.composer")._winid = nil
+  require("hyprpilot.composer")._winid = nil
 
   -- Stub `chat_window.show` to populate the chrome winids the way
   -- the real show() would. No daemon hydration, no buffer churn.
@@ -133,7 +133,7 @@ T["focus: chat hidden → show() runs then cursor lands on composer (insert mode
   chat_window.show = function()
     show_calls = show_calls + 1
     chat_window._winid = chat
-    require("hyprpilot.ui.composer")._winid = composer
+    require("hyprpilot.composer")._winid = composer
     vim.api.nvim_set_current_win(composer)
   end
 
@@ -153,15 +153,15 @@ T["focus: chat hidden + target=chat → show() then steers to chat (not composer
   local home, chat, composer = mint_window_triple()
   local chat_window = require("hyprpilot.chat.window")
   local prev_chat = chat_window._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
 
   chat_window._winid = nil
-  require("hyprpilot.ui.composer")._winid = nil
+  require("hyprpilot.composer")._winid = nil
 
   local original_show = chat_window.show
   chat_window.show = function()
     chat_window._winid = chat
-    require("hyprpilot.ui.composer")._winid = composer
+    require("hyprpilot.composer")._winid = composer
     -- Real show() drops cursor on composer; the focus helper should
     -- override that for target = "chat".
     vim.api.nvim_set_current_win(composer)
@@ -181,7 +181,7 @@ end
 T["focus: previous window closed before jump-back → log + stay in chrome"] = function()
   local home, chat, composer = mint_window_triple()
   local prev_chat = require("hyprpilot.chat.window")._winid
-  local prev_composer = require("hyprpilot.ui.composer")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
   setup_chrome(chat, composer)
   require("hyprpilot.ui.window")._prev_winid = nil
 

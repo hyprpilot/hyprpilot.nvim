@@ -44,7 +44,7 @@ local function mint_source(ft, lines)
 end
 
 T["paste_buffer: appends a fenced block with cwd-relative path header + filetype"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -64,7 +64,7 @@ T["paste_buffer: appends a fenced block with cwd-relative path header + filetype
 end
 
 T["paste_buffer: existing composer content gets a blank-line separator"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -95,7 +95,7 @@ T["paste_buffer: existing composer content gets a blank-line separator"] = funct
 end
 
 T["paste_buffer: unnamed source buffer pastes without a header line"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -116,7 +116,7 @@ T["paste_buffer: unnamed source buffer pastes without a header line"] = function
 end
 
 T["paste_selection: reads `<,> marks and emits a path:start-end header"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 
@@ -148,7 +148,7 @@ T["paste_selection: reads `<,> marks and emits a path:start-end header"] = funct
 end
 
 T["paste_selection: no visual marks → warn + no-op"] = function()
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   active_instance(id)
 

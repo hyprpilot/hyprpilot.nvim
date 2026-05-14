@@ -23,7 +23,7 @@
 --- like modes/models use the default `(meta[meta_field],
 --- meta[current_field])` resolver.
 
-local instances = require("hyprpilot.instances")
+local instances = require("hyprpilot.rpc.instances")
 local log = require("hyprpilot.log")
 local pickers = require("hyprpilot.palettes.pickers")
 local window = require("hyprpilot.chat.window")

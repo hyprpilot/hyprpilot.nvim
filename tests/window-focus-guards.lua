@@ -40,7 +40,7 @@ end
 
 T["WinClosed on the chat winid drains children and resets _winid"] = function()
   local window = require("hyprpilot.chat.window")
-  local composer = require("hyprpilot.ui.composer")
+  local composer = require("hyprpilot.composer")
   local header = require("hyprpilot.chat.header")
   local queue_strip = require("hyprpilot.chat.queue-strip")
   local permission_row = require("hyprpilot.chat.permission-row")

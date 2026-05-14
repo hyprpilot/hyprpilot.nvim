@@ -5,7 +5,7 @@
 local T = MiniTest.new_set()
 
 T["enqueue + list + has_items"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
 
   MiniTest.expect.equality(q.has_items("inst-1"), false)
@@ -24,7 +24,7 @@ T["enqueue + list + has_items"] = function()
 end
 
 T["pop_head returns FIFO order, nil when empty"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
 
   q.enqueue("inst-1", { text = "a" })
@@ -42,7 +42,7 @@ T["pop_head returns FIFO order, nil when empty"] = function()
 end
 
 T["pop_by_id removes a specific entry + reports its original position"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
 
   q.enqueue("inst-1", { text = "x" })
@@ -59,7 +59,7 @@ T["pop_by_id removes a specific entry + reports its original position"] = functi
 end
 
 T["insert_at preserves order on edit roundtrip"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
 
   q.enqueue("inst-1", { text = "a" })
@@ -82,7 +82,7 @@ T["insert_at preserves order on edit roundtrip"] = function()
 end
 
 T["flush drops every entry for an instance but leaves others alone"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
   q.reset("inst-2")
 
@@ -101,7 +101,7 @@ T["flush drops every entry for an instance but leaves others alone"] = function(
 end
 
 T["on_change fires synchronously on enqueue / pop / flush / reset"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
 
   local hits = {}
@@ -124,7 +124,7 @@ T["on_change fires synchronously on enqueue / pop / flush / reset"] = function()
 end
 
 T["on_change unsubscribe stops fanout"] = function()
-  local q = require("hyprpilot.composer-queue")
+  local q = require("hyprpilot.composer.queue")
   q.reset("inst-1")
 
   local hits = 0

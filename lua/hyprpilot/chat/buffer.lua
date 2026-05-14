@@ -210,6 +210,81 @@ function M.clean_window_chrome(winid)
   end
 end
 
+---@class hyprpilot.chat.buffer.AuxSplitOpts
+---@field direction string                       -- ex-cmd suffix, e.g. `"belowright 1split"` / `"aboveleft 1split"`
+---@field bufnr integer                          -- buffer to attach to the new split
+---@field after? fun(winid: integer): nil        -- optional setup callback called with the new winid (after the buffer is attached)
+
+---Open an auxiliary split anchored relative to the chat window.
+---Used by every plugin surface that lives around the chat (header
+---above, queue strip + permission row + composer below) — collapses
+---the otherwise-byte-identical "stash previous winid → focus chat
+---→ pcall the split → grab new winid → attach buf → restore
+---previous winid" choreography that was duplicated across four
+---files.
+---
+---Returns the new window id on success or nil + a short error
+---string when the chat window can't be focused or the split fails
+---(callers log the err themselves so the message names the
+---surface). Caller is responsible for window-local options
+---(`winfixheight` / `winfixwidth` / etc.) — pass them inside the
+---`after` callback.
+---@param opts hyprpilot.chat.buffer.AuxSplitOpts
+---@return integer? winid, string? err
+function M.open_aux_split(opts)
+  local window = require("hyprpilot.chat.window")
+  local previous_win = vim.api.nvim_get_current_win()
+
+  if not window.focus() then
+    return nil, "chat window not focusable"
+  end
+
+  local ok_split, split_err = pcall(vim.cmd, opts.direction)
+  if not ok_split then
+    if vim.api.nvim_win_is_valid(previous_win) then
+      pcall(vim.api.nvim_set_current_win, previous_win)
+    end
+    return nil, tostring(split_err or opts.direction .. " failed")
+  end
+
+  -- Once the split lands, every subsequent step is in pcall. The
+  -- helper advertises a `(winid, err)` contract; an `nvim_win_set_buf`
+  -- race or an `after` callback throw must not leak a dangling
+  -- split, and must surface as a clean err string instead of
+  -- escaping the caller's `if winid == nil` guard.
+  local winid = vim.api.nvim_get_current_win()
+
+  local function unwind(err_msg)
+    if vim.api.nvim_win_is_valid(winid) then
+      pcall(vim.api.nvim_win_close, winid, true)
+    end
+    if vim.api.nvim_win_is_valid(previous_win) then
+      pcall(vim.api.nvim_set_current_win, previous_win)
+    end
+    return nil, err_msg
+  end
+
+  local ok_buf, buf_err = pcall(vim.api.nvim_win_set_buf, winid, opts.bufnr)
+  if not ok_buf then
+    return unwind("nvim_win_set_buf failed: " .. tostring(buf_err))
+  end
+
+  M.clean_window_chrome(winid)
+
+  if opts.after ~= nil then
+    local ok_after, after_err = pcall(opts.after, winid)
+    if not ok_after then
+      return unwind("after callback failed: " .. tostring(after_err))
+    end
+  end
+
+  if vim.api.nvim_win_is_valid(previous_win) then
+    pcall(vim.api.nvim_set_current_win, previous_win)
+  end
+
+  return winid, nil
+end
+
 ---Returns true when `bufnr` is one of ours.
 ---@param bufnr integer
 ---@return boolean

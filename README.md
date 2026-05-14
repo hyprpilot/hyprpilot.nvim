@@ -43,7 +43,7 @@ require("hyprpilot").setup({})
 
 vim.keymap.set("n", "<leader>at", require("hyprpilot").toggle, { desc = "hyprpilot: toggle chat" })
 vim.keymap.set("n", "<leader>as", function()
-  require("hyprpilot.instances").spawn({ name = "main" })
+  require("hyprpilot.rpc.instances").spawn({ name = "main" })
 end, { desc = "hyprpilot: spawn instance" })
 ```
 
@@ -164,7 +164,7 @@ require("hyprpilot.chat.window").load_older(instance_id?, opts?, callback?)
 ### Multi-instance
 
 ```lua
-local instances = require("hyprpilot.instances")
+local instances = require("hyprpilot.rpc.instances")
 
 instances.list(function(err, list) ... end)
 instances.info(instance_id, function(err, info) ... end)         -- → { id, name, agent_id, profile_id, session_id, mode, cwd }
@@ -189,7 +189,7 @@ session.
 ### Composer
 
 ```lua
-local composer = require("hyprpilot.ui.composer")
+local composer = require("hyprpilot.composer")
 
 composer.toggle()
 composer.open()
@@ -228,7 +228,7 @@ indefinitely. The stack clears once the prompt sends successfully.
 ### Permissions
 
 ```lua
-local permissions = require("hyprpilot.permissions")
+local permissions = require("hyprpilot.rpc.permissions")
 
 permissions.respond(request_id, option_id, callback?)
 permissions.pending({ instance_id = "..." }, function(err, pending) ... end)
@@ -489,7 +489,7 @@ to break the link.
 ```lua
 local set = vim.keymap.set
 local hp = require("hyprpilot")
-local instances = require("hyprpilot.instances")
+local instances = require("hyprpilot.rpc.instances")
 
 set("n", "<leader>at", hp.toggle,                                       { desc = "hyprpilot: toggle chat" })
 set("n", "<leader>as", function() instances.spawn({ name = "main" }) end, { desc = "hyprpilot: spawn instance" })
@@ -515,7 +515,7 @@ set("n", "<leader>aS", function() require("hyprpilot.palettes.sessions").open() 
   { desc = "hyprpilot: pick session" })
 
 -- Attach the current buffer to the active instance's next prompt.
-local composer = require("hyprpilot.ui.composer")
+local composer = require("hyprpilot.composer")
 set("n", "<leader>ab", function() composer.attach_buffer() end,
   { desc = "hyprpilot: attach current buffer" })
 

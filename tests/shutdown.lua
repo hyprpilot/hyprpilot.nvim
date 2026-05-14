@@ -35,7 +35,7 @@ T["shutdown.shutdown walks window.hide → events._reset → client.disconnect i
   local r2 = stub_fn(require("hyprpilot.chat.events"), "_reset", order, "events._reset")
   local r3 = stub_fn(require("hyprpilot.client"), "disconnect", order, "client.disconnect")
 
-  require("hyprpilot.shutdown").shutdown()
+  require("hyprpilot.rpc.shutdown").shutdown()
 
   MiniTest.expect.equality(order[1], "window.hide")
   MiniTest.expect.equality(order[2], "events._reset")
@@ -58,7 +58,7 @@ T["shutdown.shutdown is pcall'd — one step throwing doesn't stop the rest"] = 
 
   -- The shutdown call itself must NOT raise even though `hide()`
   -- threw — that's the whole point of the pcall wrapping.
-  local ok = pcall(require("hyprpilot.shutdown").shutdown)
+  local ok = pcall(require("hyprpilot.rpc.shutdown").shutdown)
   MiniTest.expect.equality(ok, true)
 
   -- All three labels landed; the failed one still got its turn at
@@ -79,7 +79,7 @@ T["shutdown.shutdown is idempotent — calling twice is safe"] = function()
   local r2 = stub_fn(require("hyprpilot.chat.events"), "_reset", order, "events._reset")
   local r3 = stub_fn(require("hyprpilot.client"), "disconnect", order, "client.disconnect")
 
-  local shutdown = require("hyprpilot.shutdown").shutdown
+  local shutdown = require("hyprpilot.rpc.shutdown").shutdown
   shutdown()
   shutdown()
 
@@ -139,7 +139,7 @@ T["shutdown.shutdown wipes every buffer with a `hyprpilot://` prefix"] = functio
   local plugin_c = mint("hyprpilot://my-instance-id-xyz")
   local off_brand = mint("/tmp/captain-was-editing-this.txt")
 
-  require("hyprpilot.shutdown").shutdown()
+  require("hyprpilot.rpc.shutdown").shutdown()
 
   -- All three plugin-prefixed buffers should be gone.
   MiniTest.expect.equality(vim.api.nvim_buf_is_valid(plugin_a), false)

@@ -352,7 +352,7 @@ local function submit(patterns)
     end
   end
 
-  require("hyprpilot.permissions").respond(entry.request_id, opt.optionId, function(err)
+  require("hyprpilot.rpc.permissions").respond(entry.request_id, opt.optionId, function(err)
     if err ~= nil then
       log.warn("permission_row.respond: %s (%s/%s)", err.message, entry.request_id, opt.optionId)
     else
@@ -375,24 +375,7 @@ local function cycle_focus(delta)
   M.refresh()
 end
 
----Bind one action's configured keys onto `bufnr`. `keys` is `false`
----(disabled), a single key string, or a list of strings. Each key
----gets a buffer-local normal-mode mapping firing `handler`.
----@param bufnr integer
----@param keys string | string[] | false | nil
----@param handler fun(): nil
----@param desc string
-local function apply_action(bufnr, keys, handler, desc)
-  if keys == false or keys == nil then
-    return
-  end
-  if type(keys) == "string" then
-    keys = { keys }
-  end
-  for _, key in ipairs(keys) do
-    vim.keymap.set("n", key, handler, { buffer = bufnr, silent = true, desc = "hyprpilot: " .. desc })
-  end
-end
+local apply_action = require("hyprpilot.ui.keymaps").apply_action
 
 ---Install the row keymaps once per buffer. Bindings are
 ---configurable via `config.permission_row.keymaps`; each action
@@ -473,42 +456,25 @@ local function open_window()
     return
   end
 
-  local previous_win = vim.api.nvim_get_current_win()
-
-  -- `window.focus()` wraps the BufEnter-firing `nvim_set_current_win`
-  -- in pcall. Third-party `BufEnter` autocmds that call
-  -- `vim.treesitter.start()` will throw when the captain's
-  -- environment lacks the markdown parser; absorbing the throw
-  -- here keeps that environment problem from killing our event
-  -- dispatch loop.
-  if not window.focus() then
-    return
-  end
-  local ok_split = pcall(vim.cmd, "belowright 1split")
-  if not ok_split then
-    log.warn("permission_row.open_window: belowright 1split failed")
-    if vim.api.nvim_win_is_valid(previous_win) then
-      pcall(vim.api.nvim_set_current_win, previous_win)
-    end
-    return
-  end
-
-  M._winid = vim.api.nvim_get_current_win()
   local bufnr = ensure_buffer()
-  vim.api.nvim_win_set_buf(M._winid, bufnr)
-  install_keymaps(bufnr)
-
-  buffer.clean_window_chrome(M._winid)
-  vim.wo[M._winid].wrap = true
-  vim.wo[M._winid].linebreak = true
-  vim.wo[M._winid].winfixheight = true
-  vim.wo[M._winid].winfixwidth = true
-
-  -- Sized properly inside refresh() based on content + max_height.
-  if vim.api.nvim_win_is_valid(previous_win) then
-    pcall(vim.api.nvim_set_current_win, previous_win)
+  local winid, err = buffer.open_aux_split({
+    direction = "belowright 1split",
+    bufnr = bufnr,
+    after = function(w)
+      install_keymaps(bufnr)
+      vim.wo[w].wrap = true
+      vim.wo[w].linebreak = true
+      vim.wo[w].winfixheight = true
+      vim.wo[w].winfixwidth = true
+    end,
+  })
+  if winid == nil then
+    log.warn("permission_row.open_window: %s", err)
+    return
   end
 
+  M._winid = winid
+  -- Sized properly inside refresh() based on content + max_height.
   M.refresh()
 
   -- The split + buffer attach + extmark paint above all happen in

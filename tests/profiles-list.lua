@@ -19,7 +19,7 @@ T["profiles.list: translates camelCase wire → snake_case Lua shape"] = functio
   })
 
   local captured_err, captured_items
-  require("hyprpilot.profiles").list(function(err, items)
+  require("hyprpilot.rpc.profiles").list(function(err, items)
     captured_err = err
     captured_items = items
   end)
@@ -42,7 +42,7 @@ T["profiles.list: empty profiles array → empty list, no error"] = function()
   })
 
   local items
-  require("hyprpilot.profiles").list(function(_, result)
+  require("hyprpilot.rpc.profiles").list(function(_, result)
     items = result
   end)
 
@@ -56,7 +56,7 @@ T["profiles.list: rpc error → callback(err, nil)"] = function()
   })
 
   local captured_err, captured_items
-  require("hyprpilot.profiles").list(function(err, items)
+  require("hyprpilot.rpc.profiles").list(function(err, items)
     captured_err = err
     captured_items = items
   end)

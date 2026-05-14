@@ -40,7 +40,7 @@ T["window.switch drains the permission_row queue (no cross-instance leak)"] = fu
     end
     -- Composer + header refresh fire from switch; stub them out
     -- since they need their own splits the test isn't providing.
-    local composer = require("hyprpilot.ui.composer")
+    local composer = require("hyprpilot.composer")
     original_open = composer.open
     composer.open = function() end
     local header = require("hyprpilot.chat.header")
@@ -68,7 +68,7 @@ T["window.switch drains the permission_row queue (no cross-instance leak)"] = fu
   -- Restore everything we stubbed.
   window.is_visible = original_is_visible
   window._winid = original_winid
-  require("hyprpilot.ui.composer").open = original_open
+  require("hyprpilot.composer").open = original_open
   require("hyprpilot.chat.header").refresh = T._original_refresh
   T._original_refresh = nil
   if scratch_win ~= nil and vim.api.nvim_win_is_valid(scratch_win) then

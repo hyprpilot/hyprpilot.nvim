@@ -42,14 +42,28 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   (`task format` / `task lint`), `mise.toml` pins versions.
 - **Layout:**
   - **Root modules:** `init`, `config`, `log`, `health`, `client`,
-    `status`, `instances`, `mcp`, `permissions`, `highlights` (each
-    one file).
-  - `chat/` — chat surface: `buffer`, `window`, `render`, `events`.
-    Future: `folds`, per-block-kind renderers.
-  - `ui/` — interactive widgets: `composer`. Future: `permissions`,
-    `button_group`.
-  - Subdirectories appear only when a concern grows past ~3 files;
-    everything else stays flat in `lua/hyprpilot/`.
+    `status`, `mcp`. The root is reserved for plugin-wide entry
+    points and the wire transport — every other concern lives in
+    a subdirectory.
+  - `rpc/` — daemon RPC wrappers: `instances`, `permissions`,
+    `profiles`, `shutdown`. One file per RPC namespace; each module
+    is a thin camelCase ↔ snake_case translation layer over
+    `client.request` / `client.notify`.
+  - `chat/` — chat surface (the per-instance markdown buffer):
+    `buffer`, `window`, `render`, `events`, `header`, `keymaps`,
+    `permission-row`, `queue-strip`, `winbar`, `stats`.
+  - `composer/` — captain's typing surface: `init` (the composer
+    module proper, reachable as `require("hyprpilot.composer")`)
+    and `queue` (per-instance prompt queue).
+  - `ui/` — UI widgets + shared UI utilities: `window` (captain-
+    facing focus/show/hide facade), `diff-preview` (inline edit
+    preview), `keymaps` (shared `apply_action` helper),
+    `highlights` (colour scheme).
+  - `palettes/` — picker-driven captain UIs over the RPC layer.
+  - `completion/` — daemon-backed completion source providers.
+  - `notification/` — captain-side attention / bell hooks.
+  - Subdirectories appear once a concern grows past ~3 files;
+    files stay flat inside their subdirectory until that threshold.
 - **Plugin entry:** `plugin/hyprpilot.lua` runs once at load
   (`vim.treesitter.language.register("markdown", "hyprpilot")`).
 - **Module shape:** `init` exposes `setup`; `config` holds `defaults`
@@ -125,8 +139,8 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
   The captain greps `:messages` (or sets `log_level = TRACE`) when
   something doesn't render and expects to see *why*.
 - **Don't re-export module APIs from `init.lua` by default** — captains
-  call `require("hyprpilot.instances").spawn(...)` /
-  `require("hyprpilot.ui.composer").submit()` etc. directly.
+  call `require("hyprpilot.rpc.instances").spawn(...)` /
+  `require("hyprpilot.composer").submit()` etc. directly.
   `init.lua` carries `setup()` plus narrowly-justified shortcuts only.
   We may revisit this when the v1 surface is settled.
 - **Group tightly-coupled changes into one PR** — five tiny stacked
@@ -280,7 +294,7 @@ are `hyprpilot.nvim-vX.Y.Z` and `hyprpilot-nvim-mcp-vX.Y.Z`.
 
 - **`init.lua` re-exports (shipped in #13/#15)**
   - Chose: don't re-export module APIs from `init.lua` by default.
-    Captains call `require("hyprpilot.instances").spawn(...)` etc.
+    Captains call `require("hyprpilot.rpc.instances").spawn(...)` etc.
     directly. `init.lua` keeps `setup()` plus the existing window
     shortcuts (already shipped, kept until proven extra).
   - Why: every re-export is a maintenance touchpoint that drifts

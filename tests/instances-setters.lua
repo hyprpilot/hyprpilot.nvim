@@ -25,7 +25,7 @@ T["info calls instances/info and translates the Instance shape"] = function()
   end
 
   local seen
-  require("hyprpilot.instances").info("inst-1", function(err, info)
+  require("hyprpilot.rpc.instances").info("inst-1", function(err, info)
     seen = { err = err, info = info }
   end)
 
@@ -62,7 +62,7 @@ T["meta calls instance/snapshot/meta and translates the MetaSnapshot shape"] = f
   end
 
   local seen
-  require("hyprpilot.instances").meta("inst-1", function(err, meta)
+  require("hyprpilot.rpc.instances").meta("inst-1", function(err, meta)
     seen = { err = err, meta = meta }
   end)
 
@@ -82,7 +82,7 @@ end
 
 T["set_mode fires instances/setMode with camelCase params"] = function()
   local restore, calls = helpers.stub_client_request()
-  require("hyprpilot.instances").set_mode("inst-1", "plan")
+  require("hyprpilot.rpc.instances").set_mode("inst-1", "plan")
 
   MiniTest.expect.equality(#calls, 1)
   MiniTest.expect.equality(calls[1].method, "instances/setMode")
@@ -94,7 +94,7 @@ end
 
 T["set_model fires instances/setModel"] = function()
   local restore, calls = helpers.stub_client_request()
-  require("hyprpilot.instances").set_model("inst-1", "sonnet")
+  require("hyprpilot.rpc.instances").set_model("inst-1", "sonnet")
 
   MiniTest.expect.equality(calls[1].method, "instances/setModel")
   MiniTest.expect.equality(calls[1].params.modelId, "sonnet")
@@ -104,7 +104,7 @@ end
 
 T["set_option fires instances/setOption with configId + value"] = function()
   local restore, calls = helpers.stub_client_request()
-  require("hyprpilot.instances").set_option("inst-1", "effort", "high")
+  require("hyprpilot.rpc.instances").set_option("inst-1", "effort", "high")
 
   MiniTest.expect.equality(calls[1].method, "instances/setOption")
   MiniTest.expect.equality(calls[1].params.configId, "effort")
@@ -115,7 +115,7 @@ end
 
 T["setters skip with a warn on empty input"] = function()
   local restore, calls = helpers.stub_client_request()
-  local instances = require("hyprpilot.instances")
+  local instances = require("hyprpilot.rpc.instances")
 
   instances.set_mode("", "plan")
   instances.set_mode("inst-1", "")
@@ -137,7 +137,7 @@ T["setters propagate the daemon's reply through the callback"] = function()
   end
 
   local seen
-  require("hyprpilot.instances").set_mode("inst-1", "plan", function(err, result)
+  require("hyprpilot.rpc.instances").set_mode("inst-1", "plan", function(err, result)
     seen = { err = err, result = result }
   end)
 

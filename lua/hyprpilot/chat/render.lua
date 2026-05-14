@@ -2191,21 +2191,6 @@ local SECTION_NOUNS = {
   adapter = { one = "adapter note", many = "adapter notes" },
 }
 
----Resolve the per-buffer render state for the buffer the foldtext
----is being asked about. Cheap linear scan; the live `_states` table
----is keyed by instance, not bufnr, so we walk it once. Returns nil
----when the buffer isn't a per-instance chat (placeholder, scratch).
----@param bufnr integer
----@return hyprpilot.render.State?
-local function state_for_bufnr(bufnr)
-  for _, st in pairs(M._states) do
-    if st.bufnr == bufnr then
-      return st
-    end
-  end
-  return nil
-end
-
 ---Find the section whose header extmark sits at `header_row` in
 ---`state.bufnr`. Returns the section table + its kind, or nil when
 ---no section starts there (e.g. the fold is over an arbitrary
@@ -2239,7 +2224,7 @@ function M.foldtext()
   local line = vim.fn.getline(fs) or ""
 
   local bufnr = vim.api.nvim_get_current_buf()
-  local state = state_for_bufnr(bufnr)
+  local state = M.state_for_bufnr(bufnr)
   if state ~= nil then
     local section, kind = find_section_at_row(state, fs - 1)
     if section ~= nil and kind ~= nil then

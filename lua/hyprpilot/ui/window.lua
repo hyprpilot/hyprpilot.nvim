@@ -31,7 +31,7 @@ local function is_hyprpilot_window(winid)
     package.loaded["hyprpilot.chat.header"],
     package.loaded["hyprpilot.chat.permission-row"],
     package.loaded["hyprpilot.chat.queue-strip"],
-    package.loaded["hyprpilot.ui.composer"],
+    package.loaded["hyprpilot.composer"],
   }
 
   for _, mod in pairs(probe) do
@@ -52,7 +52,7 @@ end
 ---@param target_name "composer" | "chat"
 ---@return integer? target_winid, integer? composer_winid
 local function resolve_target_winid(target_name)
-  local composer_winid = (package.loaded["hyprpilot.ui.composer"] or {})._winid
+  local composer_winid = (package.loaded["hyprpilot.composer"] or {})._winid
 
   if target_name == "chat" then
     return chat_window._winid, composer_winid

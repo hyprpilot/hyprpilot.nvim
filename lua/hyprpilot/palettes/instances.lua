@@ -2,7 +2,7 @@
 --- advertises via `instances/list`. Pick a row, the chat window
 --- switches to that instance's buffer.
 
-local hp_instances = require("hyprpilot.instances")
+local hp_instances = require("hyprpilot.rpc.instances")
 local log = require("hyprpilot.log")
 local pickers = require("hyprpilot.palettes.pickers")
 local window = require("hyprpilot.chat.window")
@@ -146,7 +146,7 @@ function M.open(opts)
         delete = {
           key = "<C-d>",
           handler = function(item)
-            require("hyprpilot.instances").shutdown(item.id)
+            require("hyprpilot.rpc.instances").shutdown(item.id)
             require("hyprpilot.chat.window").close(item.id)
           end,
         },

@@ -57,7 +57,7 @@ end
 ---option_id}` tuples.
 ---@return fun(), table[]
 function M.stub_permissions_respond()
-  local public = require("hyprpilot.permissions")
+  local public = require("hyprpilot.rpc.permissions")
   local original = public.respond
   local calls = {}
 

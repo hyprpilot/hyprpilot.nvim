@@ -8,7 +8,7 @@ local T = MiniTest.new_set()
 
 T["respond fires permissions/respond with camelCase params"] = function()
   local restore, calls = helpers.stub_client_request()
-  local permissions = require("hyprpilot.permissions")
+  local permissions = require("hyprpilot.rpc.permissions")
 
   permissions.respond("req-1", "allow-once")
 
@@ -22,7 +22,7 @@ end
 
 T["respond skips invalid input without dispatching"] = function()
   local restore, calls = helpers.stub_client_request()
-  local permissions = require("hyprpilot.permissions")
+  local permissions = require("hyprpilot.rpc.permissions")
 
   permissions.respond("", "allow")
   permissions.respond("req", "")
@@ -40,7 +40,7 @@ T["pending unwraps the daemon's { pending = [...] } envelope"] = function()
     callback(nil, { pending = { { requestId = "r1" }, { requestId = "r2" } } })
   end
 
-  local permissions = require("hyprpilot.permissions")
+  local permissions = require("hyprpilot.rpc.permissions")
   local got
   permissions.pending(nil, function(err, pending)
     got = { err = err, pending = pending }
@@ -55,7 +55,7 @@ end
 
 T["pending forwards the instance_id filter as instanceId"] = function()
   local restore, calls = helpers.stub_client_request()
-  local permissions = require("hyprpilot.permissions")
+  local permissions = require("hyprpilot.rpc.permissions")
 
   permissions.pending({ instance_id = "inst-1" }, function() end)
 

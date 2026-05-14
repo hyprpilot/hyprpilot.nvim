@@ -102,7 +102,14 @@ local function teardown(err_message)
 end
 
 ---Resolve the daemon socket path from config or `$XDG_RUNTIME_DIR`.
----@return string
+---Resolve the daemon socket path. Returns nil when neither
+---`config.socket` nor `$XDG_RUNTIME_DIR` is set so callers can
+---fail the connect attempt cleanly instead of throwing past
+---`try_connect`'s `pcall` (the previous `error()` here was raised
+---when computing the second arg to `vim.fn.sockconnect`, which
+---is BEFORE the pcall protects the call — so the throw escaped
+---and crashed the captain's notify path).
+---@return string?
 local function socket_path()
   local from_config = config.options.socket
 
@@ -113,7 +120,8 @@ local function socket_path()
   local runtime = vim.env.XDG_RUNTIME_DIR
 
   if runtime == nil or runtime == "" then
-    error("client: XDG_RUNTIME_DIR is unset; pass setup({ socket = ... })")
+    log.error("client: XDG_RUNTIME_DIR is unset; pass setup({ socket = ... })")
+    return nil
   end
 
   return runtime .. "/hyprpilot.sock"
@@ -243,7 +251,13 @@ local function try_connect(attempt)
   local max_attempts = cfg.connect_attempts or 3
   local retry_delay = cfg.retry_delay_ms or 1000
 
-  local ok, chan_or_err = pcall(vim.fn.sockconnect, "pipe", socket_path(), { on_data = on_data })
+  local path = socket_path()
+  if path == nil then
+    set_state("disconnected", "no socket path: set XDG_RUNTIME_DIR or setup({ socket = ... })")
+    return
+  end
+
+  local ok, chan_or_err = pcall(vim.fn.sockconnect, "pipe", path, { on_data = on_data })
 
   if ok and type(chan_or_err) == "number" and chan_or_err > 0 then
     channel = chan_or_err

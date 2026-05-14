@@ -27,7 +27,7 @@
 --- once captain wants it.
 
 local buffer = require("hyprpilot.chat.buffer")
-local composer_queue = require("hyprpilot.composer-queue")
+local composer_queue = require("hyprpilot.composer.queue")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local window = require("hyprpilot.chat.window")
@@ -182,7 +182,7 @@ local function send_head()
   -- straight to the daemon even if the agent is still working —
   -- the captain explicitly chose to drain, so the activity guard
   -- doesn't apply here.
-  require("hyprpilot.ui.composer").submit(entry.text, {
+  require("hyprpilot.composer").submit(entry.text, {
     instance_id = instance_id,
     attachments = entry.attachments,
     bypass_queue = true,
@@ -226,27 +226,10 @@ local function edit_head()
   if entry.attachments ~= nil and #entry.attachments > 0 then
     log.warn("queue_strip.edit_head: dropping %d attachment(s) on edit (not yet supported)", #entry.attachments)
   end
-  require("hyprpilot.ui.composer").set_text(instance_id, entry.text)
+  require("hyprpilot.composer").set_text(instance_id, entry.text)
 end
 
----Bind one action's configured keys. Mirrors permission_row's
----apply_action shape. `false` disables the action; a string is
----one key; a list is multiple keys mapped to the same handler.
----@param bufnr integer
----@param keys string | string[] | false | nil
----@param handler fun(): nil
----@param desc string
-local function apply_action(bufnr, keys, handler, desc)
-  if keys == false or keys == nil then
-    return
-  end
-  if type(keys) == "string" then
-    keys = { keys }
-  end
-  for _, key in ipairs(keys) do
-    vim.keymap.set("n", key, handler, { buffer = bufnr, silent = true, desc = "hyprpilot: " .. desc })
-  end
-end
+local apply_action = require("hyprpilot.ui.keymaps").apply_action
 
 ---Install the strip keymaps for `bufnr`. Reads from
 ---`config.options.queue_strip.keymaps`.
@@ -282,35 +265,23 @@ local function open_window()
     return
   end
 
-  local previous_win = vim.api.nvim_get_current_win()
-  -- See `permission_row.open_window` — `window.focus()` absorbs third-
-  -- party BufEnter throws so a missing markdown parser can't kill our
-  -- event loop.
-  if not window.focus() then
-    return
-  end
-  local ok_split = pcall(vim.cmd, "belowright 1split")
-  if not ok_split then
-    log.warn("queue_strip.open: belowright 1split failed")
-    if vim.api.nvim_win_is_valid(previous_win) then
-      pcall(vim.api.nvim_set_current_win, previous_win)
-    end
-    return
-  end
-
-  M._winid = vim.api.nvim_get_current_win()
   local bufnr = ensure_buffer()
-  vim.api.nvim_win_set_buf(M._winid, bufnr)
-  install_keymaps(bufnr)
-
-  buffer.clean_window_chrome(M._winid)
-  vim.wo[M._winid].wrap = false
-  vim.wo[M._winid].winfixheight = true
-  vim.wo[M._winid].winfixwidth = true
-
-  if vim.api.nvim_win_is_valid(previous_win) then
-    vim.api.nvim_set_current_win(previous_win)
+  local winid, err = buffer.open_aux_split({
+    direction = "belowright 1split",
+    bufnr = bufnr,
+    after = function(w)
+      install_keymaps(bufnr)
+      vim.wo[w].wrap = false
+      vim.wo[w].winfixheight = true
+      vim.wo[w].winfixwidth = true
+    end,
+  })
+  if winid == nil then
+    log.warn("queue_strip.open: %s", err)
+    return
   end
+
+  M._winid = winid
 
   M.refresh()
 end
