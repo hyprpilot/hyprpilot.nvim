@@ -100,9 +100,11 @@ end
 ---@param next hyprpilot.Activity
 function M.set_activity(instance_id, next)
   if type(instance_id) ~= "string" or instance_id == "" then
+    require("hyprpilot.log").debug("status.set_activity: ignoring call with empty/invalid instance_id (got %s)", vim.inspect(instance_id))
     return
   end
   if type(next) ~= "table" or type(next.kind) ~= "string" then
+    require("hyprpilot.log").debug("status.set_activity: instance=%s got invalid activity payload %s", instance_id, vim.inspect(next))
     return
   end
 

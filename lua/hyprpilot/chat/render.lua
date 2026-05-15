@@ -1258,8 +1258,10 @@ local function render_thought(state, text)
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row, tail_row = block_range(state, active_block)
       if head_row == nil or tail_row == nil then
-        -- Lost the marks (rare — buffer wipe race); fall through to
-        -- the mint-new-block path below.
+        -- Lost the marks (rare — buffer wipe race). The closure
+        -- captures `active_block` as an upvalue; reassigning it to
+        -- nil here propagates to the outer scope's check below
+        -- (Lua upvalues are by-reference for the lexical local).
         state.active_thought_block = nil
         active_block = nil
         return

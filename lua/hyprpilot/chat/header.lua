@@ -124,10 +124,11 @@ local function status_pill(meta)
   if meta ~= nil and type(meta.instance_state) == "string" and meta.instance_state ~= "" then
     state = meta.instance_state
   else
-    -- Default to "running" while we wait for the daemon's first
-    -- `state` event — better than rendering nothing in the leftmost
-    -- column. The pill flips to the real state on the next event.
-    state = "running"
+    -- Default to "starting" while we wait for the daemon's first
+    -- `state` event — closer to truth than a pre-emptive "running"
+    -- and clearly visible (the spinner glyph + DiagnosticInfo color
+    -- read as "boot in progress" rather than "live and ready").
+    state = "starting"
   end
 
   local icons = (require("hyprpilot.config").options.icons or {}).instance_state or {}
