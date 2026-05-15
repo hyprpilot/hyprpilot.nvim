@@ -163,14 +163,13 @@ local function dispatch(raw)
     elseif event.event == "turn_ended" then
       render.handle_turn_ended(event)
       status.set_activity(event.instanceId, { kind = "idle" })
-      -- Cancel-flush: captain-aborted turn drops the queued
-      -- follow-ups (matches desktop overlay semantics — captain
-      -- wanted to drop this line of thought, not also fire the
-      -- queued continuations).
-      local reason = event.stopReason
-      if type(reason) == "string" and reason:lower():find("cancel", 1, true) ~= nil then
-        require("hyprpilot.composer.queue").flush(event.instanceId)
-      end
+      -- Composer queue is captain-owned UI state — daemon has no
+      -- concept of it (it's a local stash of prompts typed while
+      -- the agent was busy, NOT a daemon-side prompt queue). On
+      -- cancel we deliberately KEEP the queue: the captain may
+      -- have aborted just this turn but still want their queued
+      -- follow-ups to fire next. They can drain manually via the
+      -- queue strip's keymaps if they don't.
       emit_for_instance("TurnEnded", event.instanceId, {
         turn_id = event.turnId,
         ended_at = event.endedAt or event.ended_at,
