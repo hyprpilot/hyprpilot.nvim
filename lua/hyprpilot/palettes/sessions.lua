@@ -3,8 +3,11 @@
 --- fresh instance and adopts the chosen `sessionId` via
 --- `sessions/load`.
 ---
---- Wire shape mirrors the ACP `ListSessionsResponse`:
----   { sessions: [{ sessionId, cwd, additionalDirectories? }], nextCursor? }
+--- Wire shape mirrors the ACP `ListSessionsResponse` (schema 0.12+):
+---   { sessions: [{ sessionId, cwd, title?, updatedAt?,
+---                  additionalDirectories?, _meta? }], nextCursor? }
+--- Rows are sorted by `updatedAt` descending so the most-recent
+--- session lands at the top.
 
 local client = require("hyprpilot.client")
 local instances = require("hyprpilot.rpc.instances")
@@ -17,6 +20,9 @@ local M = {}
 ---@field session_id string
 ---@field cwd? string
 ---@field additional_directories? string[]
+---@field title? string                -- agent-supplied human-readable label
+---@field updated_at? string           -- ISO 8601; sortable as a string
+---@field meta? table                  -- ACP `_meta` extensibility blob
 
 ---@class hyprpilot.palettes.sessions.Opts
 ---@field instance_id? string         -- reuse a live instance's actor for the list call
@@ -37,37 +43,110 @@ local function from_wire(wire)
     session_id = wire.sessionId,
     cwd = wire.cwd,
     additional_directories = wire.additionalDirectories,
+    title = wire.title,
+    updated_at = wire.updatedAt,
+    meta = wire._meta,
   }
+end
+
+---Trim an ISO 8601 timestamp down to `YYYY-MM-DD HH:MM` for the
+---picker row. Returns nil when the input doesn't match the shape so
+---the caller can drop the field instead of rendering a junk string.
+---@param iso string?
+---@return string?
+local function short_timestamp(iso)
+  if type(iso) ~= "string" then
+    return nil
+  end
+  local date, time = iso:match("^(%d%d%d%d%-%d%d%-%d%d)T(%d%d:%d%d)")
+  if date == nil then
+    return nil
+  end
+  return date .. " " .. time
 end
 
 ---@param item hyprpilot.palettes.sessions.Session
 ---@return string
 local function format_item(item)
-  local headline = item.cwd or "(no cwd)"
+  local headline
+  if type(item.title) == "string" and item.title ~= "" then
+    headline = item.title
+  else
+    headline = item.cwd or "(no cwd)"
+  end
+
+  local meta_parts = {}
+  -- When title carries the headline, surface the cwd alongside so
+  -- captains who orient by directory still see it without opening
+  -- the preview pane.
+  if headline ~= item.cwd and type(item.cwd) == "string" and item.cwd ~= "" then
+    table.insert(meta_parts, item.cwd)
+  end
+  local short_ts = short_timestamp(item.updated_at)
+  if short_ts ~= nil then
+    table.insert(meta_parts, short_ts)
+  end
   local short_id = (item.session_id or ""):sub(1, 8)
-  if short_id == "" then
+  if short_id ~= "" then
+    table.insert(meta_parts, short_id)
+  end
+
+  if #meta_parts == 0 then
     return headline
   end
-  return headline .. " · " .. short_id
+  return headline .. " · " .. table.concat(meta_parts, " · ")
 end
 
 ---@param item hyprpilot.palettes.sessions.Session
 ---@return { lines: string[], ft: string }
 local function format_preview(item)
-  local lines = { "# " .. (item.cwd or "(no cwd)"), "" }
-  if item.session_id ~= nil then
-    table.insert(lines, string.format("- **session id:** `%s`", item.session_id))
+  local headline = (type(item.title) == "string" and item.title ~= "" and item.title) or item.cwd or "(no cwd)"
+  local lines = { "# " .. headline, "" }
+  local function field(label, value)
+    if value ~= nil and value ~= "" then
+      table.insert(lines, string.format("- **%s:** `%s`", label, value))
+    end
   end
-  if item.cwd ~= nil then
-    table.insert(lines, string.format("- **cwd:** `%s`", item.cwd))
-  end
+  field("title", item.title)
+  field("session id", item.session_id)
+  field("cwd", item.cwd)
+  field("updated at", item.updated_at)
   if type(item.additional_directories) == "table" and #item.additional_directories > 0 then
     table.insert(lines, "- **additional directories:**")
     for _, d in ipairs(item.additional_directories) do
       table.insert(lines, "  - `" .. d .. "`")
     end
   end
+  if type(item.meta) == "table" and not vim.tbl_isempty(item.meta) then
+    table.insert(lines, "- **meta:**")
+    table.insert(lines, "")
+    table.insert(lines, "```json")
+    vim.list_extend(lines, vim.split(vim.json.encode(item.meta), "\n", { plain = true }))
+    table.insert(lines, "```")
+  end
   return { lines = lines, ft = "markdown" }
+end
+
+---ISO 8601 timestamps are lexicographically sortable when normalised
+---to the same precision; we only need a relative ordering here so a
+---raw string compare on `updated_at` is enough. Sessions without
+---`updated_at` sink to the bottom — the picker still shows them but
+---doesn't pretend they're recent.
+---@param a hyprpilot.palettes.sessions.Session
+---@param b hyprpilot.palettes.sessions.Session
+---@return boolean
+local function by_updated_desc(a, b)
+  local au, bu = a.updated_at, b.updated_at
+  if au == nil and bu == nil then
+    return false
+  end
+  if au == nil then
+    return false
+  end
+  if bu == nil then
+    return true
+  end
+  return au > bu
 end
 
 ---@param opts? hyprpilot.palettes.sessions.Opts
@@ -116,8 +195,11 @@ function M.open(opts)
       return
     end
 
+    local items = vim.tbl_map(from_wire, raw)
+    table.sort(items, by_updated_desc)
+
     pickers.open({
-      items = vim.tbl_map(from_wire, raw),
+      items = items,
       title = "sessions",
       kind = "hyprpilot.sessions",
       picker = opts.picker,
@@ -163,5 +245,7 @@ end
 M.format_item = format_item
 M.format_preview = format_preview
 M.from_wire = from_wire
+M.by_updated_desc = by_updated_desc
+M.short_timestamp = short_timestamp
 
 return M
