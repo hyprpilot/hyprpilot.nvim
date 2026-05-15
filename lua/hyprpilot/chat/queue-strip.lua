@@ -112,6 +112,51 @@ end
 ---Returns `(lines, header_row)` so the caller paints the header
 ---line highlight; `nil, nil` when nothing's queued.
 ---@param instance_id string
+--- Pick the displayable key for `action` from the configured keymaps
+--- table. `string | string[] | false` — `false` (or nil) means the
+--- action is disabled and should be omitted from the hint line; lists
+--- collapse to the first entry so the strip stays one row.
+---@param keymaps table
+---@param action string
+---@return string?
+local function display_key(keymaps, action)
+  local spec = keymaps[action]
+  if spec == nil or spec == false then
+    return nil
+  end
+  if type(spec) == "string" then
+    return spec
+  end
+  if type(spec) == "table" then
+    return spec[1]
+  end
+  return nil
+end
+
+--- Compose the hint segments from config so a captain who rebinds
+--- `send_head` from `<C-CR>` to `<CR>` (or disables `drop_all`) sees
+--- the truth on the strip — was hard-coded `<C-CR> · dd · D` before
+--- AND silently dropped the `edit_head` action (configured + bound,
+--- never advertised).
+---@param keymaps table
+---@return string
+local function compose_hints(keymaps)
+  local segments = {}
+  local actions = {
+    { name = "send_head", label = "send head" },
+    { name = "edit_head", label = "edit head" },
+    { name = "drop_head", label = "drop head" },
+    { name = "drop_all", label = "drop all" },
+  }
+  for _, a in ipairs(actions) do
+    local key = display_key(keymaps, a.name)
+    if key ~= nil then
+      table.insert(segments, key .. " " .. a.label)
+    end
+  end
+  return table.concat(segments, " · ")
+end
+
 ---@return string[]?, integer?
 local function compose(instance_id)
   local items = M.items(instance_id)
@@ -119,7 +164,15 @@ local function compose(instance_id)
     return nil, nil
   end
 
-  local lines = { string.format(" %d queued · <C-CR> send head · dd drop head · D drop all", #items) }
+  local keymaps = (config.options.queue_strip or {}).keymaps or {}
+  local hints = compose_hints(keymaps)
+  local header
+  if hints == "" then
+    header = string.format(" %d queued", #items)
+  else
+    header = string.format(" %d queued · %s", #items, hints)
+  end
+  local lines = { header }
   local header_row = 0
 
   for i, entry in ipairs(items) do
