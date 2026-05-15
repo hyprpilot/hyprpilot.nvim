@@ -74,27 +74,12 @@ end
 function M.query(params, callback)
   local sources = params.sources or (config.options.completion or {}).sources or { "skills" }
 
-  -- Resolve associated-buffer context lazily when the caller didn't
-  -- pass one — `chat.window.associated_bufnr()` returns the captain's
-  -- last working buffer. Sources that don't need it (the daemon's
-  -- skills source, etc.) ignore the field.
-  local associated = params.associated
-  if associated == nil then
-    local ok, window = pcall(require, "hyprpilot.chat.window")
-    if ok then
-      local bufnr = window.associated_bufnr and window.associated_bufnr() or nil
-      if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
-        associated = {
-          path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p"),
-          filetype = vim.bo[bufnr].filetype,
-        }
-        if associated.path == "" then
-          associated = nil
-        end
-      end
-    end
-  end
-
+  -- `associated` (captain's last working buffer) intentionally NOT
+  -- forwarded yet — the daemon's `CompletionQueryParams` uses
+  -- `deny_unknown_fields`, so shipping it early gets the whole
+  -- query rejected with "unknown field". `chat.window.associated_bufnr()`
+  -- stays available locally; once the daemon ships matching support,
+  -- restore the lazy resolve + payload.associated assignment here.
   local payload = {
     text = params.text,
     cursor = params.cursor,
@@ -102,9 +87,6 @@ function M.query(params, callback)
     manual = params.manual == true,
     sources = sources,
   }
-  if associated ~= nil then
-    payload.associated = associated
-  end
 
   client.request("completion/query", payload, nil, function(err, result)
     if err ~= nil then
