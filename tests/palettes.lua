@@ -356,15 +356,95 @@ end
 
 T["palettes.sessions.format_item composes `cwd · short-id`"] = function()
   local format = require("hyprpilot.palettes.sessions").format_item
-  -- ACP-spec session entry: just sessionId + cwd. The format string
-  -- becomes the headline + a short id slug so two sessions in the
-  -- same cwd still disambiguate.
+  -- ACP-spec session entry without title/updatedAt: headline is cwd
+  -- and a short id slug disambiguates two sessions in the same cwd.
   local out = format({
     session_id = "abcdef0123456789",
     cwd = "/tmp/proj",
   })
   MiniTest.expect.equality(out:find("/tmp/proj", 1, true) ~= nil, true)
   MiniTest.expect.equality(out:find("abcdef01", 1, true) ~= nil, true)
+end
+
+T["palettes.sessions.format_item: title becomes the headline, cwd + timestamp follow"] = function()
+  local format = require("hyprpilot.palettes.sessions").format_item
+  local out = format({
+    session_id = "abcdef0123456789",
+    cwd = "/tmp/proj",
+    title = "wire up profiles palette",
+    updated_at = "2026-05-15T10:30:45.123Z",
+  })
+  MiniTest.expect.equality(out:find("wire up profiles palette", 1, true) ~= nil, true)
+  MiniTest.expect.equality(out:find("/tmp/proj", 1, true) ~= nil, true)
+  MiniTest.expect.equality(out:find("2026-05-15 10:30", 1, true) ~= nil, true)
+  MiniTest.expect.equality(out:find("abcdef01", 1, true) ~= nil, true)
+end
+
+T["palettes.sessions.format_item: malformed updatedAt is dropped, no junk in row"] = function()
+  local format = require("hyprpilot.palettes.sessions").format_item
+  local out = format({
+    session_id = "abcdef0123456789",
+    cwd = "/tmp/proj",
+    updated_at = "not-a-real-timestamp",
+  })
+  MiniTest.expect.equality(out:find("not-a-real", 1, true), nil)
+  MiniTest.expect.equality(out:find("/tmp/proj", 1, true) ~= nil, true)
+end
+
+T["palettes.sessions: from_wire pulls title / updatedAt / _meta off the wire"] = function()
+  local from_wire = require("hyprpilot.palettes.sessions").from_wire
+  local out = from_wire({
+    sessionId = "sess-1",
+    cwd = "/tmp/proj",
+    title = "hello",
+    updatedAt = "2026-05-15T10:30:00Z",
+    _meta = { agentVersion = "1.2.3" },
+  })
+  MiniTest.expect.equality(out.session_id, "sess-1")
+  MiniTest.expect.equality(out.title, "hello")
+  MiniTest.expect.equality(out.updated_at, "2026-05-15T10:30:00Z")
+  MiniTest.expect.equality(out.meta.agentVersion, "1.2.3")
+end
+
+T["palettes.sessions: list result is sorted by updatedAt descending; nil sinks last"] = function()
+  local restore_client, calls = stub_client_with({
+    ["sessions/list"] = {
+      result = {
+        sessions = {
+          { sessionId = "old", cwd = "/tmp/a", updatedAt = "2026-01-01T00:00:00Z" },
+          { sessionId = "no-ts", cwd = "/tmp/b" },
+          { sessionId = "new", cwd = "/tmp/c", updatedAt = "2026-05-15T10:00:00Z" },
+          { sessionId = "mid", cwd = "/tmp/d", updatedAt = "2026-03-01T00:00:00Z" },
+        },
+      },
+    },
+  })
+
+  local seen_items
+  local restore_select = stub_ui_select(function(items)
+    seen_items = items
+    return nil
+  end)
+
+  require("hyprpilot.palettes.sessions").open({ picker = "vim.ui.select" })
+
+  MiniTest.expect.equality(#seen_items, 4)
+  MiniTest.expect.equality(seen_items[1].session_id, "new")
+  MiniTest.expect.equality(seen_items[2].session_id, "mid")
+  MiniTest.expect.equality(seen_items[3].session_id, "old")
+  MiniTest.expect.equality(seen_items[4].session_id, "no-ts")
+
+  -- sanity: sessions/list was called once
+  local list_count = 0
+  for _, c in ipairs(calls) do
+    if c.method == "sessions/list" then
+      list_count = list_count + 1
+    end
+  end
+  MiniTest.expect.equality(list_count, 1)
+
+  restore_select()
+  restore_client()
 end
 
 return T
