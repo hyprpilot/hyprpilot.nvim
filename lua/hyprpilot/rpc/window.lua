@@ -31,14 +31,31 @@ local HANDLERS = {
   end,
 }
 
----Subscribe every window-method handler. Idempotent in shape (each
----call appends; don't invoke twice).
+--- Track per-`register()` unsubscribe closures so a hot-reload
+--- (`shutdown()` → `setup()`) drops the prior listeners before
+--- re-subscribing. Without this, every captain re-call of
+--- `setup()` doubles up `client.on_notification` handlers and a
+--- single `nvim/show` would fire N show paths.
+local _unsubscribers = {}
+
+---Drop every previously-registered handler. Idempotent.
+function M.unregister()
+  for _, unsub in ipairs(_unsubscribers) do
+    pcall(unsub)
+  end
+  _unsubscribers = {}
+end
+
+---Subscribe every window-method handler. Wipes any prior
+---registration first so re-runs of `setup()` don't accumulate.
 function M.register()
+  M.unregister()
   for method, handler in pairs(HANDLERS) do
-    client.on_notification(method, function(params)
+    local unsub = client.on_notification(method, function(params)
       log.debug("rpc.window: %s params=%s", method, vim.inspect(params))
       handler(params)
     end)
+    table.insert(_unsubscribers, unsub)
   end
 end
 

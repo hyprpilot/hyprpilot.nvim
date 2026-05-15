@@ -830,7 +830,7 @@ T["replay with distinct turn_ids per turn still produces one header per turn"] =
   helpers.cleanup_instance(id)
 end
 
-T["empty agent_thought drops the event (no placeholder, no section)"] = function()
+T["empty agent_thought still mints the section header (timing anchor) but no body"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -845,12 +845,46 @@ T["empty agent_thought drops the event (no placeholder, no section)"] = function
   })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  -- No `### thoughts` header, no `* (empty thought)` placeholder, no
-  -- vestigial `* thought` line. The empty event was a no-op.
-  MiniTest.expect.equality(helpers.has_line_containing(lines, "### thoughts"), false)
-  MiniTest.expect.equality(helpers.has_line_containing(lines, "thought"), false)
+  -- Header is present so the captain has a visible anchor for the
+  -- elapsed-time pill that lands on `turn_ended`. No body text and
+  -- no `* thought` per-chunk subheader.
+  MiniTest.expect.equality(helpers.has_line(lines, "### thoughts"), true)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "* thought"), false)
   -- The agent_text that came WITH the empty thought still landed.
   MiniTest.expect.equality(helpers.has_line(lines, "hello"), true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["thoughts section header gets an elapsed pill on turn_ended"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  render.state(id, bufnr)
+
+  render.handle_turn_started({ instanceId = id, turnId = "t1", startedAt = os.time() * 1000 })
+  render.handle_transcript({ instanceId = id, turnId = "t1", item = { kind = "agent_thought", text = "" } })
+
+  -- Pre-end: bare `### thoughts` (no pill while live).
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line(lines, "### thoughts"), true)
+
+  -- Sleep a beat so `format_duration` gets a non-zero ms delta.
+  vim.uv.sleep(15)
+
+  render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "end_turn" })
+
+  -- Post-end: header carries an elapsed-time pill (any digits + "ms" / "s").
+  lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local saw_pill = false
+  for _, l in ipairs(lines) do
+    if l:match("^### thoughts.*%[.*[ms].*%]") then
+      saw_pill = true
+      break
+    end
+  end
+  MiniTest.expect.equality(saw_pill, true)
 
   helpers.cleanup_instance(id)
 end

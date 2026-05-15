@@ -29,19 +29,25 @@ local function stub_fn(mod, key, order, label, impl)
   end
 end
 
-T["shutdown.shutdown walks window.hide → events._reset → client.disconnect in order"] = function()
+T["shutdown.shutdown walks window.hide → events._reset → cleanup_owned → client.disconnect in order"] = function()
   local order = {}
   local r1 = stub_fn(require("hyprpilot.chat.window"), "hide", order, "window.hide")
   local r2 = stub_fn(require("hyprpilot.chat.events"), "_reset", order, "events._reset")
-  local r3 = stub_fn(require("hyprpilot.client"), "disconnect", order, "client.disconnect")
+  local r3 = stub_fn(require("hyprpilot.rpc.instances"), "cleanup_owned", order, "instances.cleanup_owned")
+  local r4 = stub_fn(require("hyprpilot.client"), "disconnect", order, "client.disconnect")
 
   require("hyprpilot.rpc.shutdown").shutdown()
 
+  -- `cleanup_owned` MUST run before `client.disconnect` — once the
+  -- channel is gone the `instances/shutdown` requests fail silently
+  -- and the daemon accumulates orphan instances.
   MiniTest.expect.equality(order[1], "window.hide")
   MiniTest.expect.equality(order[2], "events._reset")
-  MiniTest.expect.equality(order[3], "client.disconnect")
-  MiniTest.expect.equality(#order, 3)
+  MiniTest.expect.equality(order[3], "instances.cleanup_owned")
+  MiniTest.expect.equality(order[4], "client.disconnect")
+  MiniTest.expect.equality(#order, 4)
 
+  r4()
   r3()
   r2()
   r1()

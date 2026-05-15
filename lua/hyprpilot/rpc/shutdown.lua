@@ -68,6 +68,12 @@ function M.shutdown()
   step("bell._reset", function()
     require("hyprpilot.notification.bell")._reset()
   end)
+  -- Status — drop the per-instance activity table + reset the
+  -- one-shot `wired` flag. Without this, a hot-reload inherits
+  -- stale activity badges from the prior session.
+  step("status._reset", function()
+    require("hyprpilot.status")._reset()
+  end)
 
   -- 2. Drop the daemon event subscription before the channel goes
   --    away. Otherwise the `events/changed` callback can fire
@@ -76,7 +82,18 @@ function M.shutdown()
     require("hyprpilot.chat.events")._reset()
   end)
 
-  -- 3. Disconnect the client. Closes the socket via `chanclose`,
+  -- 3. Fire `instances/shutdown` for every locally-owned instance
+  --    (`spawned_with_shutdown = true`). MUST run before
+  --    `client.disconnect` — once the channel is gone the requests
+  --    silently fail and the daemon accumulates orphan instances
+  --    across captain exit / relaunch cycles. Fire-and-forget; the
+  --    daemon processes asynchronously and we don't care about the
+  --    reply (we're exiting).
+  step("instances.cleanup_owned", function()
+    require("hyprpilot.rpc.instances").cleanup_owned()
+  end)
+
+  -- 4. Disconnect the client. Closes the socket via `chanclose`,
   --    stops local in-flight timers (each timer:stop + close in
   --    `client.teardown`), fails pending callbacks with a clean
   --    "client disconnected" error so anything still awaiting
@@ -85,7 +102,34 @@ function M.shutdown()
     require("hyprpilot.client").disconnect()
   end)
 
-  -- 4. Wipe every plugin-managed buffer. All of them are named with
+  -- 5. Force-close every window still showing a plugin buffer.
+  --    `chat.window.hide()` cascades through composer / header /
+  --    queue strip / permission row, but a layout manager (edgy)
+  --    can still hold "ghost" slots — and `nvim_buf_delete` below
+  --    only swaps the buffer in any surviving window for an empty
+  --    unnamed one, leaving a literal blank window pinned in the
+  --    captain's exit screen. Walking the window list here closes
+  --    those orphans before they get re-buffered.
+  --
+  --    Skip the last remaining window: Neovim can't have zero
+  --    windows, so if every visible surface is plugin-owned we let
+  --    one survive and `wipe_buffers` swaps its buffer to an
+  --    alternate. The process is exiting on the next tick anyway.
+  step("close_plugin_windows", function()
+    local PREFIX = "hyprpilot://"
+    local wins = vim.api.nvim_list_wins()
+    for _, winid in ipairs(wins) do
+      if vim.api.nvim_win_is_valid(winid) and #vim.api.nvim_list_wins() > 1 then
+        local bufnr = vim.api.nvim_win_get_buf(winid)
+        local name = vim.api.nvim_buf_get_name(bufnr)
+        if name:sub(1, #PREFIX) == PREFIX then
+          pcall(vim.api.nvim_win_close, winid, true)
+        end
+      end
+    end
+  end)
+
+  -- 6. Wipe every plugin-managed buffer. All of them are named with
   --    a `hyprpilot://` prefix (header / permission_row / composer
   --    /<id> / <instance-id> / placeholder), so a single walk-by-
   --    prefix catches them in one go without each module needing a

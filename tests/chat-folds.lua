@@ -100,7 +100,7 @@ T["turn_ended folds plan/thought inner blocks but leaves the turn itself unfolde
   helpers.cleanup_instance(id)
 end
 
-T["tool_call_update completed folds the inner block"] = function()
+T["tool_call: folds immediately on creation; updates don't stack folds"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -122,28 +122,51 @@ T["tool_call_update completed folds the inner block"] = function()
     },
   })
 
-  -- Inner block is open while running.
-  local before_lines = vim.api.nvim_buf_line_count(bufnr)
-  MiniTest.expect.equality(fold_starts_at(winid, before_lines) > 0, false)
+  -- Brand-new running tool call → already inside a closed fold.
+  -- Layout doesn't flop later; the captain `zo`s to inspect.
+  local function inner_body_row()
+    -- The block body sits one row below the head; `foldlevel` on
+    -- that row tells us how many manual folds wrap it.
+    local total = vim.api.nvim_buf_line_count(bufnr)
+    for lnum = 1, total do
+      if fold_starts_at(winid, lnum) > 0 then
+        return lnum + 1 -- first row inside the closed fold
+      end
+    end
+    return nil
+  end
 
+  local body_row = inner_body_row()
+  MiniTest.expect.equality(body_row ~= nil, true)
+
+  -- One fold (level 1) right after creation.
+  local function fold_depth_at(row)
+    local depth
+    vim.api.nvim_win_call(winid, function()
+      depth = vim.fn.foldlevel(row)
+    end)
+    return depth
+  end
+  MiniTest.expect.equality(fold_depth_at(body_row), 1)
+
+  -- A handful of streaming updates — depth must stay at 1; otherwise
+  -- captains would need N+1 `zo`s to open the tool call.
+  for i = 1, 5 do
+    render.handle_tool_call_update(id, {
+      id = "tc-1",
+      state = "running",
+      formatted = { title = "ls", stats = {}, fields = {}, output = "chunk-" .. i },
+    })
+  end
+  MiniTest.expect.equality(fold_depth_at(body_row), 1)
+
+  -- Terminal update: still depth 1.
   render.handle_tool_call_update(id, {
     id = "tc-1",
     state = "completed",
     formatted = { title = "ls", stats = {}, fields = {}, output = "a\nb\nc" },
   })
-
-  -- After completion the body is hidden behind a fold; the head row
-  -- stays visible (it's the closed-fold display row), at least one
-  -- inner row sits inside the closed fold.
-  local total = vim.api.nvim_buf_line_count(bufnr)
-  local found_closed = false
-  for lnum = 1, total do
-    if fold_starts_at(winid, lnum) > 0 then
-      found_closed = true
-      break
-    end
-  end
-  MiniTest.expect.equality(found_closed, true)
+  MiniTest.expect.equality(fold_depth_at(body_row), 1)
 
   helpers.close_window(winid)
   helpers.cleanup_instance(id)

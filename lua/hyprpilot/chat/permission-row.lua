@@ -79,7 +79,7 @@ local function ensure_buffer()
   local bufnr = vim.api.nvim_create_buf(false, true)
 
   vim.api.nvim_buf_set_name(bufnr, BUFFER_NAME)
-  vim.bo[bufnr].filetype = "hyprpilot_permission_row"
+  vim.bo[bufnr].filetype = "hyprpilot_permission_row.markdown"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"

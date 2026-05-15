@@ -96,7 +96,7 @@ local function ensure_buffer()
 
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(bufnr, BUFFER_NAME)
-  vim.bo[bufnr].filetype = "hyprpilot_queue_strip"
+  vim.bo[bufnr].filetype = "hyprpilot_queue_strip.markdown"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"

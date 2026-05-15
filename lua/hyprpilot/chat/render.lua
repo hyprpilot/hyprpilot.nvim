@@ -57,6 +57,8 @@ local rescan_code_block_folds
 ---@field tail_mark integer                     -- extmark on the section's trailing blank row (visual separator)
 ---@field block_ids string[]                    -- ids of blocks that belong to this section (ordered)
 ---@field item_count integer                    -- number of inner blocks rendered so far (drives `[N]` chip on header)
+---@field started_at_ms? integer                -- monotonic `vim.uv.now()` stamp at section creation (drives `### thoughts` elapsed pill)
+---@field ended_at_ms? integer                  -- monotonic stamp set on `handle_turn_ended` so the elapsed pill freezes
 
 ---@class hyprpilot.render.TurnLayout
 ---@field turn_id string
@@ -622,23 +624,40 @@ local function repaint_pilot_header(state, layout)
   end)
 end
 
----Compose a section header line with the item-count pill.
+---Compose a section header line with the item-count pill (and an
+---elapsed-time pill for thoughts where item_count would always be 1).
 ---
 ---Thoughts are a special case: every chunk in a turn streams into
 ---ONE accumulated block (see `render_thought` — it appends to the
 ---layout-bound block instead of minting a new one), so a count
----would always read "1 thought" / "1 thoughts". Drop the pill
----entirely for that kind so the section reads as a clean
----`### thoughts` header above the streaming body.
+---would always read "1 thought". Show the elapsed time the agent
+---spent thinking instead — that's the metric the captain cares
+---about ("how long was it thinking?").
 ---@param kind string
----@param item_count integer
+---@param section hyprpilot.render.Section?
 ---@return string
-local function section_header_line(kind, item_count)
+local function section_header_line(kind, section)
   local base = SECTION_HEADER[kind] or ("### " .. kind)
+  local item_count = section and section.item_count or 0
+
   if kind == "thoughts" then
-    return base
+    -- Pill shows only after `handle_turn_ended` stamps
+    -- `ended_at_ms`. During streaming the captain sees the live
+    -- thinking activity on the composer's virt indicator; once the
+    -- turn ends, this pill freezes the total time the agent spent
+    -- in the thoughts section so the captain can see "the agent
+    -- thought for 3.4s here" at a glance.
+    if section == nil or section.started_at_ms == nil or section.ended_at_ms == nil then
+      return base
+    end
+    local elapsed = stats.format_duration(section.ended_at_ms - section.started_at_ms)
+    if elapsed == nil then
+      return base
+    end
+    return base .. stats.format_pills({ elapsed })
   end
-  if item_count == nil or item_count <= 0 then
+
+  if item_count <= 0 then
     return base
   end
 
@@ -670,7 +689,7 @@ local function repaint_section_header(state, kind, section)
   end
 
   local existing = vim.api.nvim_buf_get_lines(state.bufnr, row, row + 1, false)[1] or ""
-  local new_line = section_header_line(kind, section.item_count or 0)
+  local new_line = section_header_line(kind, section)
   if new_line == existing then
     return
   end
@@ -700,7 +719,10 @@ local function ensure_section(state, turn_id, kind)
   end
 
   local insert_row = find_section_insert_row(state, layout, kind)
-  local header = section_header_line(kind, 0)
+  -- Mint with no section yet — header shows the bare label;
+  -- `repaint_section_header` overwrites it once the section table
+  -- exists (immediately below) and we've taken at least one event.
+  local header = section_header_line(kind, nil)
 
   -- Add a leading blank only when the row immediately above isn't
   -- already blank (e.g. first section under `## pilot`). When the
@@ -742,7 +764,10 @@ local function ensure_section(state, turn_id, kind)
   local tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, tail_row, 0, { right_gravity = true })
   apply_line_hl(state, header_row, "HyprpilotSectionHeader")
 
-  layout.sections[kind] = { head_mark = head_mark, tail_mark = tail_mark, block_ids = {}, item_count = 0 }
+  -- Stamp `started_at_ms` (monotonic via `vim.uv.now`) so the
+  -- thoughts section header can show elapsed time on `turn_ended`.
+  -- Same clock for end stamp; `format_duration` just sees a delta.
+  layout.sections[kind] = { head_mark = head_mark, tail_mark = tail_mark, block_ids = {}, item_count = 0, started_at_ms = vim.uv.now() }
   return layout.sections[kind]
 end
 
@@ -1237,9 +1262,12 @@ local function render_tool_call(state, record)
   -- over (fenced code blocks ` ```` ` get treesitter highlight).
   apply_line_hl(state, first_row, tool_status_hl(record.state))
 
-  if record.state == "completed" or record.state == "failed" then
-    fold_block(state, block)
-  end
+  -- Tool calls fold from the moment they appear and stay folded for
+  -- their entire lifecycle. Captain `zo`s explicitly when they want
+  -- to read the body. Folding only on terminal state used to flop
+  -- the layout under the cursor every time a tool finished — chat
+  -- visibly jumped as N rows of body collapsed.
+  fold_block(state, block)
 end
 
 ---Apply a tool_call_update: re-render the header line and replace the
@@ -1292,9 +1320,12 @@ function M.handle_tool_call_update(instance_id, update)
     apply_line_hl(state, head_row, tool_status_hl(update.state))
     local _ = tail_row
 
-    if update.state == "completed" or update.state == "failed" then
-      fold_block(state, block)
-    end
+    -- DO NOT re-fold here. `:N,Mfold` stacks manual folds — every
+    -- streaming chunk would push another layer onto the same range,
+    -- and the captain would need N+1 `zo`s to open a tool call. The
+    -- create-time fold from `render_tool_call` survives body
+    -- modifications (manual folds adjust their range as lines shift)
+    -- and stays closed across the whole lifecycle.
   end)
 end
 
@@ -1306,18 +1337,24 @@ end
 ---pushes the tail mark down. Result: one continuous thought
 ---section per turn, body grows as the model thinks.
 ---
----Empty thoughts are dropped (no placeholder, no section header)
----so a turn that streams an empty thought event doesn't get a
----vestigial `### thoughts` section.
+---Empty thoughts still mint the `### thoughts` section header so the
+---captain has an anchor for the elapsed-time pill (set on
+---`turn_ended`) — they want to know how long the agent spent
+---thinking even when no thought text actually streamed.
 ---@param state hyprpilot.render.State
 ---@param text string
 local function render_thought(state, text)
+  state.active_text_block = nil
+
+  -- Always touch the section first — covers the empty-text path
+  -- (header + timer stamp, no body) AND every subsequent non-empty
+  -- chunk (header already there, falls through idempotently).
+  ensure_section(state, state.current_turn, "thoughts")
+
   if text == "" then
-    log.debug("render_thought: dropping empty thought (no placeholder)")
+    log.debug("render_thought: empty text — kept section header, no body")
     return
   end
-
-  state.active_text_block = nil
 
   local chunk_lines = vim.split(text, "\n", { plain = true })
 
@@ -2042,6 +2079,17 @@ function M.handle_turn_ended(event)
     end
   end
 
+  -- Freeze section timing on the same turn boundary as the pilot
+  -- header. Repaint each section header so any timing pill (today
+  -- only `### thoughts`, others may follow) shows the final value
+  -- instead of a stale running one.
+  if layout ~= nil then
+    for kind, section in pairs(layout.sections) do
+      section.ended_at_ms = vim.uv.now()
+      repaint_section_header(state, kind, section)
+    end
+  end
+
   -- Fold each section (tasks / thoughts / tools) belonging to this
   -- turn so the chat tightens up after the pilot finishes. Individual
   -- tool / terminal / permission blocks have already auto-folded
@@ -2060,16 +2108,40 @@ function M.handle_turn_ended(event)
     end
   end
 
-  -- Legacy fallback for turns that never got a layout (captain-only or
-  -- spontaneous items): fold any orphan plan / thought blocks the way
-  -- we used to. Match against the effective key (block.turn_id is
-  -- written from state.current_turn which already holds it).
+  -- Orphan-block fallback. The section loop above folds every
+  -- block that lives inside a `layout.sections[*]` (tasks /
+  -- thoughts / tools / attachments / adapter). Orphan blocks
+  -- (turns that never minted a layout, or items rendered before
+  -- the layout existed) need individual folds so the captain
+  -- still ends up with a clean turn-tail.
+  --
+  -- Block kinds we DO fold here:
+  --   plan, agent_thought, tool_call, terminal, permission,
+  --   adapter, agent_attachment
+  -- Block kinds we DON'T fold (these are the request/response
+  -- pair the captain explicitly wants to stay readable):
+  --   turn_header (`## you` / `## pilot`), agent_text (the prose
+  --   response under `### response`), placeholder.
+  local FOLDABLE_ORPHAN_KIND = {
+    plan = "tasks",
+    agent_thought = "thoughts",
+    tool_call = "tools",
+    terminal = "tools",
+    permission = "tools",
+    adapter = "adapter",
+    agent_attachment = "attachments",
+  }
   for _, block in pairs(state.blocks) do
-    if block.turn_id == effective_turn_id and (block.kind == "plan" or block.kind == "agent_thought") then
-      local _, tail = block_range(state, block)
-      local head, _ = block_range(state, block)
-      if layout == nil or layout.sections[block.kind == "plan" and "tasks" or "thoughts"] == nil then
-        fold_range(state, head, tail)
+    if block.turn_id == effective_turn_id then
+      local section_kind = FOLDABLE_ORPHAN_KIND[block.kind]
+      if section_kind ~= nil then
+        local already_folded_by_section = layout ~= nil and layout.sections[section_kind] ~= nil
+        if not already_folded_by_section then
+          local head, tail = block_range(state, block)
+          if head ~= nil and tail ~= nil and tail > head then
+            fold_range(state, head, tail)
+          end
+        end
       end
     end
   end

@@ -51,7 +51,7 @@ local function ensure_buffer()
   local bufnr = vim.api.nvim_create_buf(false, true)
 
   vim.api.nvim_buf_set_name(bufnr, BUFFER_NAME)
-  vim.bo[bufnr].filetype = "hyprpilot_header"
+  vim.bo[bufnr].filetype = "hyprpilot_header.markdown"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"
