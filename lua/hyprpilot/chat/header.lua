@@ -444,10 +444,11 @@ function M.open()
           require("edgy.layout").layout()
         end)
       else
-        vim.wo[w].winfixheight = true
-        vim.wo[w].winfixwidth = true
-        -- Lock to one row; `winfixheight` keeps `<C-W>=` from
-        -- redistributing space onto it.
+        -- Lock to one row. We deliberately do NOT set winfixheight
+        -- — in practice it interacts badly with `equalalways` and
+        -- can prevent our auto-resize from shrinking the window
+        -- back down. Sibling-split opens trigger a resize anyway
+        -- via the chat window's autocmd path.
         vim.api.nvim_win_set_height(w, 1)
       end
     end,

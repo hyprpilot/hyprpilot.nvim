@@ -768,13 +768,9 @@ function M.open(opts)
   buffer_mod.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
-  -- `winfixheight` keeps `<C-W>=` and other equalisation passes from
-  -- redistributing space onto the composer, so our auto-resize stays
-  -- the source of truth. Skip when a layout manager owns sizing.
-  if not buffer_mod.layout_manager_active() then
-    vim.wo[M._winid].winfixheight = true
-    vim.wo[M._winid].winfixwidth = true
-  end
+  -- No `winfixheight` / `winfixwidth` — they interact badly with
+  -- `equalalways` and can prevent our auto-resize from shrinking
+  -- the composer back down as the captain deletes content.
 
   paint_indicator(instance_id)
   M.resize()

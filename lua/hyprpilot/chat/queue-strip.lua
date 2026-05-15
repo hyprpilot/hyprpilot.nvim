@@ -306,10 +306,9 @@ local function open_window()
     after = function(w)
       install_keymaps(bufnr)
       vim.wo[w].wrap = false
-      if not buffer.layout_manager_active() then
-        vim.wo[w].winfixheight = true
-        vim.wo[w].winfixwidth = true
-      end
+      -- Deliberately no `winfixheight` / `winfixwidth` — they
+      -- interact badly with `equalalways` and can prevent our
+      -- auto-resize from shrinking the strip back down.
     end,
   })
   if winid == nil then
