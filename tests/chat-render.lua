@@ -342,7 +342,7 @@ T["plan renders checklist with done count"] = function()
   helpers.cleanup_instance(id)
 end
 
-T["agent_thought renders header + body bracketed by --- separators"] = function()
+T["agent_thought streams body lines into the `### thoughts` section"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -355,11 +355,85 @@ T["agent_thought renders header + body bracketed by --- separators"] = function(
     },
   })
 
+  -- New thought rendering: one accumulating block per turn (no
+  -- per-chunk `* thought` subheader, no `---` rule separators).
+  -- Body lines drop straight under the `### thoughts` section header.
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  MiniTest.expect.equality(helpers.has_line(lines, "* thought"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "---"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "### thoughts"), true)
   MiniTest.expect.equality(helpers.has_line(lines, "step 1"), true)
   MiniTest.expect.equality(helpers.has_line(lines, "step 2"), true)
+  -- Confirm the per-chunk subheader is gone.
+  MiniTest.expect.equality(helpers.has_line(lines, "* thought"), false)
+
+  helpers.cleanup_instance(id)
+end
+
+T["agent_thought concatenates multiple events into a single block (markdown paragraphs)"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "agent_thought", text = "first paragraph" } },
+      { turnId = "t1", item = { kind = "agent_thought", text = "second paragraph" } },
+      { turnId = "t1", item = { kind = "agent_thought", text = "third paragraph" } },
+    },
+  })
+
+  -- Multiple thought events in the same turn collapse into one block.
+  -- Only ONE `### thoughts` header should land in the buffer.
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local header_count = 0
+  local first_idx, second_idx
+  for i, l in ipairs(lines) do
+    if l == "### thoughts" then
+      header_count = header_count + 1
+    end
+    if l == "first paragraph" then
+      first_idx = i
+    end
+    if l == "second paragraph" then
+      second_idx = i
+    end
+  end
+  MiniTest.expect.equality(header_count, 1)
+  -- Markdown paragraph break between events: at least one blank
+  -- line between consecutive chunks.
+  MiniTest.expect.equality(first_idx ~= nil and second_idx ~= nil and second_idx - first_idx >= 2, true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["plan updates in the same turn overwrite the existing block (no stacking)"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "plan", steps = { { content = "Plan A", status = "pending" } } } },
+      { turnId = "t1", item = { kind = "plan", steps = { { content = "Plan A", status = "completed" } } } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  -- Only ONE plan header should be in the buffer; the second update
+  -- replaced the first instead of appending a new block.
+  local plan_count = 0
+  for _, l in ipairs(lines) do
+    if l:find("^# plan") ~= nil then
+      plan_count = plan_count + 1
+    end
+  end
+  MiniTest.expect.equality(plan_count, 1)
+  -- The completed status from the second update should be present;
+  -- the pending status from the first should NOT.
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "Plan A"), true)
 
   helpers.cleanup_instance(id)
 end

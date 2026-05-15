@@ -10,11 +10,13 @@ local T = MiniTest.new_set()
 local function active_instance(id)
   -- Force `window.active_instance()` to return `id` by registering
   -- a state with the window module — same path the real composer
-  -- relies on.
+  -- relies on. Pass `activate = true` because `register` no longer
+  -- promotes implicitly (a background spawn shouldn't flip the
+  -- captain's active instance pointer).
   local buffer = require("hyprpilot.chat.buffer")
   local window = require("hyprpilot.chat.window")
   local bufnr = buffer.create(id)
-  window.register({ bufnr = bufnr, instance_id = id })
+  window.register({ bufnr = bufnr, instance_id = id }, { activate = true })
   return bufnr
 end
 

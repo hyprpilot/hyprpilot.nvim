@@ -13,6 +13,33 @@ M._instances = {}
 ---@type string?
 M._last_active_id = nil
 
+--- The captain's last "real" working buffer — the one they were in
+--- right before opening the chat. Captured on every `M.show()` call
+--- and kept fresh by a `BufEnter` autocmd. Sources for completion
+--- (file / grep / buffer pickers running INSIDE the composer) prefer
+--- this over `nvim_get_current_buf()` (which is always the composer
+--- itself once the chat is open). Codecompanion calls the same
+--- concept `chat.buffer_context.bufnr`.
+---@type integer?
+M._associated_bufnr = nil
+
+--- Lock to prevent two rapid `M.show()` calls on an empty registry
+--- from kicking off two parallel `instances/spawn` requests. Cleared
+--- in the spawn callback so the next `show()` either hits the freshly-
+--- spawned instance OR re-locks for a follow-on auto-spawn.
+local _auto_spawn_in_flight = false
+
+--- True when a layout-manager plugin (folke/edgy.nvim today; could
+--- expand) is loaded — when present, defer width / fix-width to the
+--- layout manager's slot so its `size = 0.4 / 180` config takes
+--- effect. Without this gate, our `winfixwidth = true` would lock
+--- the window at the plugin's resolved width and edgy could never
+--- reach its slot size.
+---@return boolean
+local function layout_manager_active()
+  return package.loaded["edgy"] ~= nil
+end
+
 ---Resolve the configured width to a concrete column count.
 ---@param ui hyprpilot.ConfigUi
 ---@return integer
@@ -77,14 +104,33 @@ function M.focus()
   return true
 end
 
----Register an instance state entry. Used by future spawn() to declare a buffer.
+---Register an instance state entry. Used by `instances.spawn` /
+---`focus` / `sessions/load` callbacks to publish a freshly-minted
+---buffer.
+---
+---By default `register` does NOT promote the new instance to "active".
+---That keeps a background spawn (e.g. `instances.spawn({ show = false })`
+---fired from a palette while the captain is mid-conversation in
+---another instance) from silently flipping `_last_active_id` and
+---rerouting the next composer submit. Pass `opts.activate = true`
+---when the caller WANTS the new instance to become active (the
+---attach() helper does this when `show_after = true`).
+---
+---First registration always promotes — there's nothing else to flip
+---to and the captain expects the first spawn to land on screen.
 ---@param state hyprpilot.InstanceState
-function M.register(state)
+---@param opts? { activate?: boolean }
+function M.register(state, opts)
+  opts = opts or {}
   local previous = M._last_active_id
   M._instances[state.instance_id] = state
-  M._last_active_id = state.instance_id
 
-  if previous ~= state.instance_id then
+  local activate = opts.activate or previous == nil
+  if activate then
+    M._last_active_id = state.instance_id
+  end
+
+  if activate and previous ~= state.instance_id then
     require("hyprpilot.status").emit_instance_changed(state.instance_id)
   end
 end
@@ -123,6 +169,15 @@ function M.close(instance_id)
   require("hyprpilot.chat.permission-row").drop_for_instance(id)
   require("hyprpilot.composer.queue").reset(id)
   require("hyprpilot.notification.attention")._clear_instance(id)
+  -- Drop activity for the closed instance so a stale "tool" / "thinking"
+  -- doesn't surface on a future header read for the same instance id.
+  require("hyprpilot.status").forget(id)
+  -- Header keeps an `_name_fetched[id]` flag so we don't refire
+  -- `instances/info` on every re-render. Clearing it lets a daemon
+  -- that reuses the id on resume re-fetch the name fresh.
+  pcall(function()
+    require("hyprpilot.chat.header").forget(id)
+  end)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)
@@ -166,11 +221,15 @@ local function open_split(ui, bufnr)
   buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
-  -- `winfixwidth` keeps `<C-W>=` and any layout-manager equalise
-  -- pass from redistributing column space onto the chat sidebar.
-  -- The captain chose `ui.width` for a reason; honour it across
-  -- layout churn.
-  vim.wo[M._winid].winfixwidth = true
+  -- When a layout manager (folke/edgy.nvim) is loaded, defer width to
+  -- its slot config — `winfixwidth = true` would lock the window at
+  -- the plugin's resolved width and edgy could never reach its
+  -- configured `size = 0.4 / 180`. Without a layout manager we keep
+  -- the pin so `<C-W>=` doesn't redistribute column space onto our
+  -- sidebar.
+  if not layout_manager_active() then
+    vim.wo[M._winid].winfixwidth = true
+  end
   -- Manual folds: render.lua programmatically calls `:N,Mfold` when
   -- a turn ends or a block reaches a terminal state. Foldexpr would
   -- recompute on every motion and clobber fold open/closed state we
@@ -199,6 +258,38 @@ local function has_no_instances()
   return next(M._instances) == nil
 end
 
+---Snapshot the captain's "associated" buffer — the working file they
+---were sitting in before opening the chat. Skips chat-owned buffers
+---(`hyprpilot*` filetypes) and unloaded buffers so a previously-
+---captured buffer doesn't get clobbered by a re-entrant `show()`
+---from the auto-spawn callback (which fires from inside our chat
+---window). Idempotent — call as often as you want.
+local function capture_associated_buffer()
+  local cur = vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_loaded(cur) then
+    return
+  end
+  local ft = vim.bo[cur].filetype
+  if ft == "hyprpilot" or ft == "hyprpilot_input" or ft == "hyprpilot_header" or ft == "hyprpilot_permission_row" or ft == "hyprpilot_queue_strip" then
+    return
+  end
+  M._associated_bufnr = cur
+end
+
+---Return the captain's last working buffer if it's still loaded, else
+---nil. Completion sources read this when they want to scan the file
+---the captain was editing rather than the composer they're typing in
+---(matches codecompanion's `chat.buffer_context.bufnr`).
+---@return integer?
+function M.associated_bufnr()
+  local b = M._associated_bufnr
+  if b == nil or not vim.api.nvim_buf_is_loaded(b) or not vim.api.nvim_buf_is_valid(b) then
+    M._associated_bufnr = nil
+    return nil
+  end
+  return b
+end
+
 ---Show the chat window, switching to `instance_id` (or the last active).
 ---Hydrates the buffer from the daemon's snapshot + ensures the live
 ---event stream is wired. When the captain has no instances at all
@@ -207,14 +298,27 @@ end
 ---— the captain never has to manually spawn before opening the chat.
 ---@param instance_id string?
 function M.show(instance_id)
+  -- Capture the captain's working buffer BEFORE we steal focus into
+  -- the chat. The associated buffer is what completion sources scan
+  -- against; once the chat is open `nvim_get_current_buf()` is the
+  -- composer (empty / wrong target).
+  capture_associated_buffer()
+
   -- Auto-spawn path: no specific instance requested + no instances
   -- registered yet → spin up a default one and reroute. The async
   -- spawn callback re-enters `M.show(new_id)` once the daemon is
   -- ready, so the captain's keybind lands them in a populated chat
-  -- on the first call.
+  -- on the first call. Lock prevents two rapid show() calls from
+  -- spawning two instances in parallel.
   if instance_id == nil and has_no_instances() then
+    if _auto_spawn_in_flight then
+      log.debug("window.show: auto-spawn already in flight, skipping")
+      return
+    end
+    _auto_spawn_in_flight = true
     log.debug("window.show: no instances registered, auto-spawning default")
     require("hyprpilot.rpc.instances").spawn({}, function(err, info)
+      _auto_spawn_in_flight = false
       if err ~= nil then
         log.warn("window.show: auto-spawn failed: %s", err.message)
         return
@@ -223,6 +327,15 @@ function M.show(instance_id)
         M.show(info.id)
       end
     end)
+    return
+  end
+
+  -- Reject unknown instance_id rather than silently rendering the
+  -- placeholder buffer with a stale `_last_active_id` — the old code
+  -- left the UI lying about which instance was active and composer
+  -- submits would dispatch to the wrong instance.
+  if instance_id ~= nil and M._instances[instance_id] == nil then
+    log.warn("window.show: unknown instance=%s — refusing to silently render placeholder", instance_id)
     return
   end
 
@@ -322,6 +435,12 @@ function M.hide()
   log.debug("window.hide")
 end
 
+-- One augroup for window-level autocmds: the WinClosed teardown plus
+-- a BufEnter listener that keeps `_associated_bufnr` fresh so
+-- completion sources (which run inside the composer) always have a
+-- correct pointer to the captain's last working buffer.
+local _window_augroup = vim.api.nvim_create_augroup("HyprpilotChatWindow", { clear = true })
+
 -- When the chat window goes away through stock Vim controls
 -- (`:q`, `<C-w>q`, layout collapse), our `M._winid` becomes a
 -- stale handle and the auxiliary surfaces (header / queue strip
@@ -332,7 +451,7 @@ end
 -- Catching `WinClosed` here drains the children and resets state
 -- the same way `M.hide()` would.
 vim.api.nvim_create_autocmd("WinClosed", {
-  group = vim.api.nvim_create_augroup("HyprpilotChatWindow", { clear = true }),
+  group = _window_augroup,
   callback = function(args)
     if M._winid == nil then
       return
@@ -352,6 +471,34 @@ vim.api.nvim_create_autocmd("WinClosed", {
   end,
 })
 
+-- Track the captain's last "real" working buffer. Mirrors
+-- codecompanion's `chat.buffer_context` refresh on `BufEnter` —
+-- as the captain navigates between files, this keeps pointing at
+-- whichever non-plugin buffer they were just in. Sources for
+-- completion (file/grep/buffer pickers running INSIDE the
+-- composer) read `M.associated_bufnr()` to scan the right file
+-- instead of the composer they're typing in.
+vim.api.nvim_create_autocmd("BufEnter", {
+  group = _window_augroup,
+  callback = function(args)
+    local bufnr = args.buf
+    if not vim.api.nvim_buf_is_loaded(bufnr) then
+      return
+    end
+    local ft = vim.bo[bufnr].filetype
+    if ft == "hyprpilot" or ft == "hyprpilot_input" or ft == "hyprpilot_header" or ft == "hyprpilot_permission_row" or ft == "hyprpilot_queue_strip" then
+      return
+    end
+    -- Skip unnamed scratch buffers (filetype empty + no name) — they
+    -- have nothing useful to scan against. The previous association
+    -- stays valid until the captain enters a real file.
+    if vim.api.nvim_buf_get_name(bufnr) == "" and ft == "" then
+      return
+    end
+    M._associated_bufnr = bufnr
+  end,
+})
+
 ---Toggle the chat window: hide if visible, otherwise show.
 function M.toggle()
   if M.is_visible() then
@@ -362,6 +509,20 @@ function M.toggle()
 end
 
 ---Switch the chat window's buffer to `instance_id` without (re)opening.
+---
+---Critical: the new instance's auxiliary surfaces (header, queue
+---strip, permission row) all need to re-paint against the
+---switched-to instance — `M.show()` did this implicitly, but the
+---old `M.switch()` skipped it, leaving stale queue counts and
+---hidden permission rows after a peek-switch. We delegate the same
+---refresh dance to keep the two paths consistent.
+---
+---Permission row entries for OTHER instances are preserved
+---(`drop_for_instance(previous)` instead of the previous
+---`reset()`). The daemon's resolution slot for B's permission still
+---exists when the captain peeks at A, so wiping B's row entry meant
+---the captain had to wait for the daemon to re-emit; now switching
+---back to B surfaces the row immediately.
 ---@param instance_id string
 function M.switch(instance_id)
   local state = M._instances[instance_id]
@@ -378,14 +539,25 @@ function M.switch(instance_id)
   if M.is_visible() then
     vim.api.nvim_win_set_buf(M._winid, state.bufnr)
 
-    -- Drain the permission row queue. Pending permission requests
-    -- belong to whichever instance the captain was looking at;
-    -- carrying them over to the newly-switched-to instance would
-    -- surface the wrong tool / kind / options for the wrong agent.
-    -- The daemon still holds the resolution slot — captain can
-    -- replay via `permissions/pending` after switching back if a
-    -- pending request was lost from the row.
-    require("hyprpilot.chat.permission-row").reset()
+    -- Re-hydrate the switched-to instance's meta snapshot — it may
+    -- have drifted (mode change, usage update, daemon-side rename)
+    -- while it was off-screen.
+    require("hyprpilot.chat.events").hydrate(instance_id, state.bufnr)
+    require("hyprpilot.chat.render").apply_pending_folds(state.bufnr)
+
+    -- Permission row: every instance's pending entries stay in the
+    -- shared queue — `permission-row.head_for(active_id)` filters
+    -- the rendered head to the active instance. So switching is a
+    -- pure re-render: previous-instance entries persist (their
+    -- daemon-side resolution slot is still live; switching back
+    -- surfaces them intact), the row's head flips to the new
+    -- active instance's first pending entry (or hides if none).
+    require("hyprpilot.chat.permission-row").refresh_if_queued()
+
+    -- Queue strip: re-render against the new instance's queue.
+    -- Without this, the strip showed the previous instance's
+    -- queued prompts until the next queue mutation event.
+    require("hyprpilot.chat.queue-strip").refresh()
 
     -- Composer.open() is idempotent: when the composer's already
     -- visible it swaps its buffer to the new instance's draft.

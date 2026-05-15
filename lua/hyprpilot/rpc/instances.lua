@@ -91,12 +91,19 @@ local SPAWN_TIMEOUT_MS = 30000
 
 ---Translate the daemon's camelCase Instance wire shape into our
 ---snake_case `hyprpilot.Instance` shape. Used for `instances/list`
----and `instances/info` replies.
----@param wire table
+---and `instances/info` replies. Defensively coerces the input to a
+---table so a malformed daemon reply (nil / vim.NIL / wrong type)
+---degrades to an empty Instance rather than crashing the callback
+---chain — every caller can read the returned `id` and decide
+---whether to proceed.
+---@param wire any
 ---@return hyprpilot.Instance
 local function from_wire(wire)
+  if type(wire) ~= "table" then
+    return { id = "" }
+  end
   return {
-    id = wire.instanceId,
+    id = wire.instanceId or "",
     name = wire.name,
     agent_id = wire.agentId,
     profile_id = wire.profileId,
@@ -112,9 +119,12 @@ end
 ---no `instanceId` / `name` / `agentId`, but it carries mode /
 ---model / usage / mcps_count / available_* fields the pickers and
 ---winbar consume.
----@param wire table
+---@param wire any
 ---@return hyprpilot.InstanceMeta
 local function from_meta_wire(wire)
+  if type(wire) ~= "table" then
+    return {}
+  end
   return {
     profile_id = wire.profileId,
     session_id = wire.sessionId,
@@ -134,12 +144,16 @@ end
 local with_config = require("hyprpilot.rpc.with-config")
 
 ---Bring a freshly-spawned instance into the local registry + window.
+---`activate = show_after`: a background spawn (`show = false`) leaves
+---the existing active instance in place rather than silently flipping
+---`_last_active_id` and rerouting the next composer submit. Shown
+---spawns flip active as part of the explicit `window.show` below.
 ---@param instance hyprpilot.Instance
 ---@param show_after boolean
 local function attach(instance, show_after)
   local bufnr = buffer.create(instance.id)
 
-  window.register({ bufnr = bufnr, instance_id = instance.id, name = instance.name })
+  window.register({ bufnr = bufnr, instance_id = instance.id, name = instance.name }, { activate = show_after })
 
   if show_after then
     window.show(instance.id)
@@ -156,7 +170,8 @@ function M.list(callback)
       return
     end
 
-    callback(nil, vim.tbl_map(from_wire, result.instances or {}))
+    local list = (type(result) == "table" and type(result.instances) == "table") and result.instances or {}
+    callback(nil, vim.tbl_map(from_wire, list))
   end)
 end
 

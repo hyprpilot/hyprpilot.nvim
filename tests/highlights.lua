@@ -137,6 +137,11 @@ T["permission_row enqueue paints the header/button highlights on its own buffer"
   local permission_row = require("hyprpilot.chat.permission-row")
   permission_row.reset()
 
+  -- Permission row now filters its rendered head by active
+  -- instance (multi-instance isolation). Ensure inst-1 is active
+  -- so the enqueued request is the one that renders.
+  local restore_active = helpers.stub_active_instance("inst-1")
+
   permission_row.enqueue("inst-1", {
     request_id = "req-1",
     tool = "Bash",
@@ -174,6 +179,7 @@ T["permission_row enqueue paints the header/button highlights on its own buffer"
   MiniTest.expect.equality(row_line_hl(row_of(row_bufnr, "[> Allow <]")), "HyprpilotPermissionButton")
 
   permission_row.reset()
+  restore_active()
 end
 
 T["agent_thought applies header + body highlights"] = function()
@@ -189,10 +195,14 @@ T["agent_thought applies header + body highlights"] = function()
     },
   })
 
-  local header_row = row_of(bufnr, "* thought")
-  MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotThoughtHeader")
-  -- Body lines have no line_hl_group (markdown highlighter handles them).
-  MiniTest.expect.equality(line_hl(bufnr, header_row + 1), nil)
+  -- Thoughts now stream into a single block (no `* thought`
+  -- per-chunk subheader) — find the body row directly via the
+  -- streamed text. The first body line gets HyprpilotThoughtBody;
+  -- subsequent body lines stay plain (markdown highlighter handles
+  -- them).
+  local body_row = row_of(bufnr, "first")
+  MiniTest.expect.equality(line_hl(bufnr, body_row), "HyprpilotThoughtBody")
+  MiniTest.expect.equality(line_hl(bufnr, body_row + 1), nil)
 
   helpers.cleanup_instance(id)
 end

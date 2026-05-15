@@ -13,6 +13,15 @@ local BUFFER_PREFIX = "hyprpilot://"
 local _placeholder_bufnr = nil
 
 ---Open the buffer for write, run `fn`, restore read-only state.
+---
+---Errors INSIDE `fn` are now logged + swallowed instead of re-raised.
+---The previous behaviour bubbled the throw out through the
+---`events.dispatch` autocmd chain and stalled every later handler in
+---the same tick — one render-side nil-deref on a half-built turn
+---took down sibling handlers (winbar updates, status emissions, etc.)
+---across every instance. Catching here keeps the UI in a recoverable
+---state: the buffer's read-only flag is restored, the bad render
+---logs, and the next event continues to fire.
 ---@param bufnr integer
 ---@param fn fun(): nil
 function M.with_buffer(bufnr, fn)
@@ -31,7 +40,7 @@ function M.with_buffer(bufnr, fn)
   vim.bo[bufnr].readonly = true
 
   if not ok then
-    error(err)
+    log.warn("with_buffer: bufnr=%s render fn errored: %s", bufnr, tostring(err))
   end
 end
 

@@ -48,6 +48,14 @@ M.LINKS = {
 
   -- Composer
   HyprpilotComposerAttachments = "Comment",
+  -- Composer activity strip — virt-text shown above the captain's
+  -- writable row when the BOUND instance is non-idle. Per-kind
+  -- groups so captains can dim or accent any one independently.
+  HyprpilotComposerActivity = "DiagnosticHint",
+  HyprpilotComposerActivityStreaming = "DiagnosticInfo",
+  HyprpilotComposerActivityThinking = "DiagnosticHint",
+  HyprpilotComposerActivityTool = "Function",
+  HyprpilotComposerActivityPermission = "DiagnosticWarn",
 
   -- Header buffer (pinned single-line bar above the chat split).
   -- `HyprpilotHeader` is the background fill via `line_hl_group`; per-
@@ -66,6 +74,19 @@ M.LINKS = {
   HyprpilotHeaderUsage = "Number",
   HyprpilotHeaderCount = "Comment",
   HyprpilotHeaderSeparator = "NonText",
+  -- Cwd pill (`../<basename>` segment). Picks up Directory so it
+  -- reads as a path-shaped piece against the rest of the bar.
+  HyprpilotHeaderCwd = "Directory",
+  -- Per-instance lifecycle status pill (leftmost). Color-coded by
+  -- state so the captain reads "is this instance live, booting,
+  -- ended, or errored" at a glance — diagnostic palette mirrors
+  -- the LSP signs they're already trained on.
+  HyprpilotHeaderStatusStarting = "DiagnosticInfo",
+  HyprpilotHeaderStatusRunning = "DiagnosticOk",
+  HyprpilotHeaderStatusEnded = "Comment",
+  HyprpilotHeaderStatusError = "DiagnosticError",
+  -- Activity pills (kept for backwards compatibility — header no
+  -- longer paints them but captains may still hook the groups).
   HyprpilotHeaderActivity = "DiagnosticHint",
   HyprpilotHeaderActivityStreaming = "DiagnosticInfo",
   HyprpilotHeaderActivityThinking = "DiagnosticHint",

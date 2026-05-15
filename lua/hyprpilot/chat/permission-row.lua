@@ -157,10 +157,63 @@ local function smart_match(options, patterns)
   return nil, nil
 end
 
----Resolve the active entry (head of queue).
+---Resolve the head entry FOR a specific instance. The row only ever
+---renders one instance's pending permissions at a time — entries
+---belonging to other instances stay in `_queue` (their daemon-side
+---resolution slot is still live) so a switch back surfaces them
+---intact.
+---@param instance_id? string
+---@return hyprpilot.chat.permission-row.Entry?
+local function head_for(instance_id)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    return nil
+  end
+  for _, entry in ipairs(M._queue) do
+    if entry.instance_id == instance_id then
+      return entry
+    end
+  end
+  return nil
+end
+
+---Resolve the head entry for the currently-active instance. Wrapper
+---around `head_for(window.active_instance())` for the internal call
+---sites that fire from an autocmd / keymap context where the active
+---id is the implicit operating instance.
 ---@return hyprpilot.chat.permission-row.Entry?
 local function head()
-  return M._queue[1]
+  return head_for(window.active_instance())
+end
+
+---Count pending entries belonging to other instances (i.e., not the
+---one currently being rendered). Used in the "+N more" suffix so the
+---captain knows other-instance permissions are silently waiting.
+---@param instance_id? string
+---@return integer
+local function other_count(instance_id)
+  if instance_id == nil then
+    return #M._queue
+  end
+  local n = 0
+  for _, entry in ipairs(M._queue) do
+    if entry.instance_id ~= instance_id then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+---Count entries belonging to `instance_id`.
+---@param instance_id string
+---@return integer
+local function count_for(instance_id)
+  local n = 0
+  for _, entry in ipairs(M._queue) do
+    if entry.instance_id == instance_id then
+      n = n + 1
+    end
+  end
+  return n
 end
 
 ---True when the head entry is edit-shaped and a diff preview can
@@ -226,7 +279,8 @@ end
 ---@return integer? button_row
 ---@return integer? header_row
 local function compose()
-  local entry = head()
+  local active_id = window.active_instance()
+  local entry = head_for(active_id)
   if entry == nil then
     return { "" }, nil, nil
   end
@@ -238,12 +292,34 @@ local function compose()
 
   table.insert(lines, "")
 
-  local extra = #M._queue > 1 and string.format(" (+%d more)", #M._queue - 1) or ""
+  -- Count same-instance pending (after the head) plus other-instance
+  -- pending separately so the captain reads "this instance has 2
+  -- more, plus 1 from another instance" — actionable context vs the
+  -- old `(+N more)` that lumped everything together.
+  local same_extra_count = count_for(active_id) - 1
+  local others = other_count(active_id)
+  local extra_parts = {}
+  if same_extra_count > 0 then
+    table.insert(extra_parts, string.format("+%d more", same_extra_count))
+  end
+  if others > 0 then
+    table.insert(extra_parts, string.format("+%d on other instance%s", others, others == 1 and "" or "s"))
+  end
+  local extra = #extra_parts > 0 and (" (" .. table.concat(extra_parts, ", ") .. ")") or ""
+
   local kind_icons = (config.options.icons or {}).tool_kind or {}
   local kind_glyph = kind_icons[entry.tool_kind or ""] or kind_icons.default or ""
   local prefix_glyph = kind_glyph ~= "" and (kind_glyph .. " ") or ""
   table.insert(lines, string.format("# %s %s%s%s", status_icon(), prefix_glyph, entry.tool or "tool", extra))
   local header_row = #lines - 1
+
+  -- Stamp the daemon-side respond failure (if any) directly under
+  -- the header so the captain can see why their last submit didn't
+  -- take. Cleared automatically when they retry against a fresh
+  -- daemon-emitted entry (different request_id).
+  if type(entry._respond_error) == "string" and entry._respond_error ~= "" then
+    table.insert(lines, "  daemon rejected: " .. entry._respond_error)
+  end
 
   -- Body lines from the daemon's `formatted` payload (diff /
   -- description / fields) — same shape as the inline tool-call
@@ -361,6 +437,16 @@ local function submit(patterns)
   require("hyprpilot.rpc.permissions").respond(entry.request_id, opt.optionId, function(err)
     if err ~= nil then
       log.warn("permission_row.respond: %s (%s/%s)", err.message, entry.request_id, opt.optionId)
+      -- Surface respond failures via vim.notify (which routes through
+      -- the captain's notification backend). Without a visible signal
+      -- the row stays interactive on a still-pending entry but the
+      -- captain has no idea the daemon rejected the response — they'd
+      -- mash submit thinking nothing happened. Stamp the entry with
+      -- the err so a future render can paint a "✗ daemon rejected"
+      -- pill (cheap state stash; Compose reads if present).
+      entry._respond_error = err.message or "respond failed"
+      pcall(vim.notify, "hyprpilot: permission respond failed — " .. tostring(err.message), vim.log.levels.WARN)
+      M.refresh()
     else
       log.debug("permission_row.respond: ok %s/%s", entry.request_id, opt.optionId)
     end
@@ -529,6 +615,21 @@ function M.enqueue(instance_id, record)
     raw_input = record.raw_input,
   })
 
+  -- Auto-pop the row only when the new request belongs to the active
+  -- instance — a permission landing on a background instance stays
+  -- queued silently and surfaces when the captain switches there
+  -- (refresh runs from window.switch). This keeps a tool call on
+  -- background instance B from blocking the captain's read of A.
+  local active_id = window.active_instance()
+  if instance_id ~= active_id then
+    -- Refresh the visible row anyway so the same-instance "+N more"
+    -- count updates if the active row is currently displayed.
+    if M.is_visible() then
+      M.refresh()
+    end
+    return
+  end
+
   if M.is_visible() then
     M.refresh()
   else
@@ -549,21 +650,31 @@ function M.resolve(request_id, resolved_label)
     end
   end
 
-  if #M._queue == 0 then
+  -- Close only when the ACTIVE instance's queue drained — entries
+  -- still pending on other instances stay in the queue, the row
+  -- stays hidden, and a future switch surfaces them.
+  if head_for(window.active_instance()) == nil then
     M.close()
   elseif M.is_visible() then
     M.refresh()
   end
 end
 
----Re-open the row when there's at least one queued entry but no
----visible window. Called by `chat.window.show()` so a captain who
----closed the chat (manually with `:q` or via `hp.hide()`) and
----re-opens it gets the still-pending permission prompts back on
----screen automatically — without it, the row stays hidden until
----the daemon emits a fresh `permission_request` event.
+---Re-open the row when the active instance has at least one queued
+---entry but no visible window. Called by `chat.window.show()` /
+---`chat.window.switch()` so a captain who closed the chat (manually
+---with `:q` or via `hp.hide()`) or peeked at a different instance
+---and came back gets the still-pending permission prompts back on
+---screen automatically — without it, the row stays hidden until the
+---daemon emits a fresh `permission_request` event.
 function M.refresh_if_queued()
-  if #M._queue == 0 then
+  if head_for(window.active_instance()) == nil then
+    -- No pending for active instance — close the row even if other
+    -- instances still have queued entries (we don't surface them on
+    -- the captain's current screen).
+    if M.is_visible() then
+      M.close()
+    end
     return
   end
   if M.is_visible() then

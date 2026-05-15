@@ -14,7 +14,7 @@ T["palettes.instances preview includes a tail of the chat buffer"] = function()
   local window = require("hyprpilot.chat.window")
   local id = helpers.unique_id()
   local bufnr = buffer.create(id)
-  window.register({ bufnr = bufnr, instance_id = id })
+  window.register({ bufnr = bufnr, instance_id = id }, { activate = true })
   local state = render.state(id, bufnr)
 
   render.hydrate(state, {

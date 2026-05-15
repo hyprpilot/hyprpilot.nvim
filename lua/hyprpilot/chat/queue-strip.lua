@@ -132,22 +132,35 @@ end
 
 ---Repaint the strip with the current head-instance queue. Closes
 ---the window when the queue is empty.
+---
+---Stamps `M._rendered_instance_id` on every successful refresh so
+---keymap closures (send_head / drop_head / drop_all / edit_head)
+---operate on the instance the strip was VISUALLY showing at the
+---moment the captain pressed the key — not whatever
+---`window.active_instance()` happens to return at fire time. Without
+---this, a fast switch between two instances with non-empty queues
+---could pop B's queue against the strip's A-rendered display.
 function M.refresh()
   ensure_buffer()
 
   local instance_id = window.active_instance()
   if instance_id == nil or not composer_queue.has_items(instance_id) then
     -- Queue empty / no active instance → close the window if open;
-    -- the buffer persists for next show.
+    -- the buffer persists for next show. Clear the rendered binding
+    -- so a stale instance id doesn't linger.
+    M._rendered_instance_id = nil
     M.close()
     return
   end
 
   local lines, header_row = compose(instance_id)
   if lines == nil then
+    M._rendered_instance_id = nil
     M.close()
     return
   end
+
+  M._rendered_instance_id = instance_id
 
   buffer.with_buffer(M._bufnr, function()
     vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, lines)
@@ -165,11 +178,23 @@ function M.refresh()
   end
 end
 
+---Resolve the instance the strip's keymaps should operate on. The
+---strip displays exactly one instance's queue at a time; keymap
+---callbacks must target THAT instance, not whatever
+---`window.active_instance()` returns at fire time (a switch that
+---hasn't repainted the strip yet would otherwise route the action
+---to the wrong queue). Falls back to the active instance only when
+---the strip hasn't rendered anything yet (early refresh path).
+---@return string?
+local function rendered_instance()
+  return M._rendered_instance_id or window.active_instance()
+end
+
 ---Send the head entry NOW: pop it from the queue + dispatch via
----composer.submit. Active instance only — the queue is per-instance
----and we always operate against the visible one.
+---composer.submit. Routes against the strip's currently-rendered
+---instance.
 local function send_head()
-  local instance_id = window.active_instance()
+  local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
@@ -190,7 +215,7 @@ local function send_head()
 end
 
 local function drop_head()
-  local instance_id = window.active_instance()
+  local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
@@ -198,7 +223,7 @@ local function drop_head()
 end
 
 local function drop_all()
-  local instance_id = window.active_instance()
+  local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
@@ -206,7 +231,7 @@ local function drop_all()
 end
 
 local function edit_head()
-  local instance_id = window.active_instance()
+  local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end

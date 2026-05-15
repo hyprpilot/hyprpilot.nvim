@@ -15,7 +15,7 @@ local function active_instance(id)
   local buffer = require("hyprpilot.chat.buffer")
   local window = require("hyprpilot.chat.window")
   local bufnr = buffer.create(id)
-  window.register({ bufnr = bufnr, instance_id = id })
+  window.register({ bufnr = bufnr, instance_id = id }, { activate = true })
   return bufnr
 end
 

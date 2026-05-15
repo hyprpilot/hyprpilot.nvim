@@ -234,7 +234,18 @@ function M.ensure_activity_listener()
   vim.api.nvim_create_autocmd("User", {
     group = vim.api.nvim_create_augroup("HyprpilotWinbarActivity", { clear = true }),
     pattern = "HyprpilotActivityChanged",
-    callback = function()
+    callback = function(args)
+      -- Filter on the addressed instance: a tool tick on background
+      -- instance B should not redraw A's winbar. The render only
+      -- ever paints for the active instance anyway, so off-instance
+      -- nudges are pure churn.
+      local data = args.data or {}
+      if data.instance_id ~= nil then
+        local active = require("hyprpilot.chat.window").active_instance()
+        if data.instance_id ~= active then
+          return
+        end
+      end
       M.nudge_all()
     end,
   })

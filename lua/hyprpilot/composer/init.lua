@@ -40,12 +40,24 @@ local attachments_by_instance = {}
 M._winid = nil
 
 local INDICATOR_NS = vim.api.nvim_create_namespace("hyprpilot.composer.attachments")
+--- Distinct namespace for the activity strip so attachment repaints
+--- (which clear `INDICATOR_NS`) don't wipe the activity line and
+--- vice-versa. One row of virt_text painted at the top of the
+--- composer buffer when the bound instance is non-idle.
+local ACTIVITY_NS = vim.api.nvim_create_namespace("hyprpilot.composer.activity")
 
 ---Forward-declared so `ensure_buffer`'s TextChanged autocmd can call
 ---it (the body anchors virt_lines to the current last line, so every
 ---edit needs a reposition to keep attachments at the bottom).
 ---@type fun(instance_id: string)
 local paint_indicator
+
+---Forward-declared activity painter — fires from the per-buffer
+---HyprpilotActivityChanged listener and from `M.open` so a fresh
+---open shows the current activity immediately rather than waiting
+---for the next event tick.
+---@type fun(instance_id: string)
+local paint_activity
 
 ---Resolve a config height field (`min_height` or `max_height`). The
 ---field can be `integer` (constant), a `fun(lines: number)` (passed
@@ -208,12 +220,18 @@ local function ensure_buffer(instance_id)
 
   local keymaps = (config.options.composer or {}).keymaps or {}
 
+  -- Closure-capture `instance_id` at bind time — never re-resolve via
+  -- `window.active_instance()` at fire time. The composer buffer for
+  -- A could become focused while B is the active instance (manual
+  -- `:b hyprpilot://composer/<id>`, layout-manager adoption, race
+  -- between switch and a queued keystroke); without the bound id,
+  -- submit / cancel would route to the wrong instance.
   apply_action(bufnr, keymaps.submit, function()
-    M.submit()
+    M.submit(nil, { instance_id = instance_id })
   end, "submit composer prompt")
 
   apply_action(bufnr, keymaps.cancel, function()
-    M.cancel()
+    M.cancel(instance_id)
   end, "cancel in-flight turn")
 
   apply_action(bufnr, keymaps.close, function()
@@ -228,6 +246,23 @@ local function ensure_buffer(instance_id)
     buffer = bufnr,
     callback = function()
       paint_indicator(instance_id)
+    end,
+  })
+
+  -- Per-instance autocmd group for activity strip refresh. Filtering
+  -- on `data.instance_id == instance_id` is the key multi-instance
+  -- isolation guard: B's tool call must NOT repaint A's composer
+  -- activity strip even though both listen on the same
+  -- `User HyprpilotActivityChanged` pattern.
+  vim.api.nvim_create_autocmd("User", {
+    group = vim.api.nvim_create_augroup("HyprpilotComposerActivity:" .. instance_id, { clear = true }),
+    pattern = "HyprpilotActivityChanged",
+    callback = function(args)
+      local data = args.data or {}
+      if data.instance_id ~= instance_id then
+        return
+      end
+      paint_activity(instance_id)
     end,
   })
 
@@ -302,6 +337,74 @@ end
 ---No-op when the composer buffer doesn't exist yet. Triggers
 ---`M.resize` afterwards so the window grows / shrinks to fit.
 ---@param instance_id string
+---Resolve the activity glyph + label for a kind. Reads
+---`config.icons.activity` (captain-overridable; ASCII fallbacks
+---kick in when a key is empty / missing).
+---@param kind string
+---@param tool_name? string
+---@return string?, string  -- text, hl_group
+local function activity_text(kind, tool_name)
+  if kind == nil or kind == "idle" then
+    return nil, "HyprpilotComposerActivity"
+  end
+  local icons = (require("hyprpilot.config").options.icons or {}).activity or {}
+  local glyph
+  local hl
+  local label
+  if kind == "tool" then
+    glyph = icons.tool
+    hl = "HyprpilotComposerActivityTool"
+    label = (type(tool_name) == "string" and tool_name ~= "") and tool_name or "tool"
+  elseif kind == "thinking" then
+    glyph = icons.thinking
+    hl = "HyprpilotComposerActivityThinking"
+    label = "thinking"
+  elseif kind == "streaming" then
+    glyph = icons.streaming
+    hl = "HyprpilotComposerActivityStreaming"
+    label = "streaming"
+  elseif kind == "awaiting_permission" then
+    glyph = icons.permission
+    hl = "HyprpilotComposerActivityPermission"
+    label = "awaiting permission"
+  else
+    return nil, "HyprpilotComposerActivity"
+  end
+  -- Glyph + label together ("⚙ tool · Bash"). Captains who clear an
+  -- icon (set to "") get the bare label so the indicator stays
+  -- legible in nerd-font-less terminals.
+  if glyph ~= nil and glyph ~= "" then
+    return glyph .. " " .. label, hl
+  end
+  return label, hl
+end
+
+paint_activity = function(instance_id)
+  local bufnr = buffers[instance_id]
+  if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(bufnr, ACTIVITY_NS, 0, -1)
+
+  local activity = require("hyprpilot.status").activity(instance_id)
+  if activity == nil or activity.kind == "idle" then
+    return
+  end
+
+  local text, hl = activity_text(activity.kind, activity.tool_name)
+  if text == nil then
+    return
+  end
+
+  -- Anchor the activity strip at row 0, virt_lines_above = true so it
+  -- sits ABOVE the captain's first writable row. One line of virt
+  -- text — doesn't consume buffer rows, doesn't shift the cursor.
+  pcall(vim.api.nvim_buf_set_extmark, bufnr, ACTIVITY_NS, 0, 0, {
+    virt_lines = { { { text, hl } } },
+    virt_lines_above = true,
+  })
+end
+
 paint_indicator = function(instance_id)
   local bufnr = buffers[instance_id]
   if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -449,6 +552,24 @@ end
 
 ---Convenience: attach the file backing `bufnr` (defaults to current).
 ---Skips with a warn when the buffer has no on-disk path.
+---
+---Two non-obvious bits:
+---
+---1. **Path is normalised to absolute** via `fnamemodify(:p)`. The
+---    daemon's `Attachment` struct (`src-tauri/src/adapters/transcript.rs`)
+---    uses `path` to build the `file://<...>` URI shipped to the
+---    agent and to (eventually) read the file server-side. A relative
+---    path under a different cwd would resolve to the wrong file.
+---
+---2. **Body is read from the BUFFER, not disk.** Captures the
+---    captain's unsaved edits (the buffer they're actively typing
+---    into) and sidesteps the "agent reads file → empty content"
+---    bug where the daemon receives `path` only and the agent gets
+---    `TextResourceContents { text = "", uri = "file://..." }`. We
+---    populate `body` so the agent gets the actual content; the
+---    daemon will accept it (`Attachment.body` is `#[serde(default)]
+---    String`) and use it verbatim instead of trying to read the
+---    file itself.
 ---@param bufnr? integer
 ---@param opts? { instance_id?: string, title?: string }
 ---@return hyprpilot.composer.Attachment?
@@ -459,13 +580,25 @@ function M.attach_buffer(bufnr, opts)
     return nil
   end
 
-  local path = vim.api.nvim_buf_get_name(bufnr)
-  if path == "" then
+  local raw_name = vim.api.nvim_buf_get_name(bufnr)
+  if raw_name == "" then
     log.warn("composer.attach_buffer: bufnr=%s has no name (write it first)", bufnr)
     return nil
   end
 
-  return M.attach(vim.tbl_extend("force", { path = path }, opts or {}))
+  -- Normalise to an absolute path. `nvim_buf_get_name` may return a
+  -- relative path when the buffer was opened with one, which would
+  -- resolve to the wrong file daemon-side under any other cwd.
+  local path = vim.fn.fnamemodify(raw_name, ":p")
+
+  -- Read the buffer's CURRENT contents (captures unsaved edits) and
+  -- ship as `body` so the agent receives the actual file text — the
+  -- daemon doesn't read the file itself; without `body` the agent
+  -- gets an empty `TextResourceContents`.
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local body = table.concat(lines, "\n")
+
+  return M.attach(vim.tbl_extend("force", { path = path, body = body }, opts or {}))
 end
 
 ---Convenience: when `img-clip.nvim` is installed, drop the clipboard
@@ -497,11 +630,32 @@ function M.attach_clipboard_image(opts)
     return nil
   end
 
+  -- Read the saved PNG back into base64 so the daemon can ship it
+  -- as `ImageContent.data`. Without this, the agent receives the
+  -- image as `{ data = "", uri = "file://<temp>", mimeType = ... }`
+  -- — most agents need the inline base64; few resolve via URI.
+  local fd = vim.uv.fs_open(path, "r", 438)
+  local data
+  if fd ~= nil then
+    local stat = vim.uv.fs_fstat(fd)
+    if stat ~= nil and stat.size > 0 then
+      local raw = vim.uv.fs_read(fd, stat.size, 0)
+      if type(raw) == "string" then
+        data = vim.base64.encode(raw)
+      end
+    end
+    vim.uv.fs_close(fd)
+  end
+  if data == nil then
+    log.warn("composer.attach_clipboard_image: failed to read %s for base64 encoding", path)
+  end
+
   return M.attach({
     path = path,
     instance_id = opts.instance_id,
     title = opts.title,
     mime = "image/png",
+    data = data,
   })
 end
 
@@ -663,6 +817,7 @@ function M.open(opts)
     end
 
     paint_indicator(instance_id)
+    paint_activity(instance_id)
     M.resize()
     return
   end
@@ -692,6 +847,7 @@ function M.open(opts)
   vim.wo[M._winid].winfixwidth = true
 
   paint_indicator(instance_id)
+  paint_activity(instance_id)
   M.resize()
 
   if focus then
@@ -781,11 +937,14 @@ function M.submit(text, opts)
     end
   end
 
-  -- Queue route: when the agent is busy (anything but idle), park
-  -- the prompt instead of firing it. The strip subscribes to
-  -- queue mutations and pops in automatically.
+  -- Queue route: when THIS instance's agent is busy, park the prompt
+  -- instead of firing it. Critically reads `status.activity(instance_id)`
+  -- — the per-instance activity, NOT the global flag. Without this
+  -- scoping, a long turn on instance A would cause every prompt
+  -- typed in idle instance B's composer to land in B's queue (the
+  -- old global flag was non-idle because A was running).
   if not opts.bypass_queue then
-    local activity = require("hyprpilot.status").get().activity
+    local activity = require("hyprpilot.status").activity(instance_id)
     if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
       require("hyprpilot.composer.queue").enqueue(instance_id, {
         text = text,
@@ -902,6 +1061,12 @@ function M.wipe(instance_id)
   if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
     pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
   end
+
+  -- Drop the per-instance activity-listener augroup so a future
+  -- `ensure_buffer(instance_id)` for the same id re-creates it
+  -- against the fresh buffer (and we don't leak listeners that
+  -- fire callbacks on a deleted bufnr).
+  pcall(vim.api.nvim_del_augroup_by_name, "HyprpilotComposerActivity:" .. instance_id)
 
   buffers[instance_id] = nil
   attachments_by_instance[instance_id] = nil

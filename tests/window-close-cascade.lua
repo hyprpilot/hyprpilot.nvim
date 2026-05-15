@@ -16,7 +16,7 @@ T["window.close cascades into composer.wipe (composer buffer drops with chat buf
 
   local id = helpers.unique_id()
   local chat_buf = buffer.create(id)
-  window.register({ bufnr = chat_buf, instance_id = id })
+  window.register({ bufnr = chat_buf, instance_id = id }, { activate = true })
 
   -- The composer module mints the per-instance buffer lazily on
   -- `open()`. Opening the split needs a real chat window which the
@@ -61,8 +61,8 @@ T["window.close drops permission-row queue entries for the closed instance"] = f
 
   local id_a = helpers.unique_id()
   local id_b = helpers.unique_id()
-  window.register({ bufnr = buffer.create(id_a), instance_id = id_a })
-  window.register({ bufnr = buffer.create(id_b), instance_id = id_b })
+  window.register({ bufnr = buffer.create(id_a), instance_id = id_a }, { activate = true })
+  window.register({ bufnr = buffer.create(id_b), instance_id = id_b }, { activate = true })
 
   permission_row.reset()
   permission_row.enqueue(id_a, {

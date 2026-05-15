@@ -111,23 +111,59 @@ local function compact(n)
   return require("hyprpilot.chat.stats").format_tokens(n or 0) or "0"
 end
 
----@param activity? hyprpilot.Activity
+---Resolve the instance-state pill — one glyph + a short label per
+---lifecycle state. The pill is the LEFTMOST column so the captain
+---reads "is this instance live / booting / ended / errored" before
+---parsing anything else. Glyph alone when set; falls back to the
+---bare label when the captain cleared the icon (no double-emit).
+---Highlight reflects the state's diagnostic palette.
+---@param meta? table
 ---@return string?, string  -- text, hl_group
-local function activity_pill(activity)
-  if activity == nil or activity.kind == nil or activity.kind == "idle" then
-    return nil, "HyprpilotHeaderActivity"
+local function status_pill(meta)
+  local state
+  if meta ~= nil and type(meta.instance_state) == "string" and meta.instance_state ~= "" then
+    state = meta.instance_state
+  else
+    -- Default to "running" while we wait for the daemon's first
+    -- `state` event — better than rendering nothing in the leftmost
+    -- column. The pill flips to the real state on the next event.
+    state = "running"
   end
-  if activity.kind == "tool" then
-    local text = activity.tool_name ~= nil and ("tool · " .. activity.tool_name) or "tool"
-    return text, "HyprpilotHeaderActivityTool"
-  elseif activity.kind == "awaiting_permission" then
-    return "permission?", "HyprpilotHeaderActivityPermission"
-  elseif activity.kind == "streaming" then
-    return "streaming", "HyprpilotHeaderActivityStreaming"
-  elseif activity.kind == "thinking" then
-    return "thinking", "HyprpilotHeaderActivityThinking"
+
+  local icons = (require("hyprpilot.config").options.icons or {}).instance_state or {}
+  local glyph = icons[state]
+  local hl_map = {
+    starting = "HyprpilotHeaderStatusStarting",
+    running = "HyprpilotHeaderStatusRunning",
+    ended = "HyprpilotHeaderStatusEnded",
+    error = "HyprpilotHeaderStatusError",
+  }
+  local hl = hl_map[state] or "HyprpilotHeaderState"
+
+  if glyph ~= nil and glyph ~= "" then
+    return glyph, hl
   end
-  return activity.kind, "HyprpilotHeaderActivity"
+  -- No glyph configured — fall back to the bare state label so the
+  -- pill is still visible. We never duplicate (glyph + label) because
+  -- the icon stands on its own.
+  return state, hl
+end
+
+---Shorten a cwd to `../<basename>` for the header pill. Keeps the
+---last directory name (the captain's context) without burning the
+---bar's width on the full path. The full cwd shows up in the
+---instance preview palette when needed.
+---@param cwd? string
+---@return string?
+local function shorten_cwd(cwd)
+  if type(cwd) ~= "string" or cwd == "" then
+    return nil
+  end
+  local base = vim.fs.basename(cwd)
+  if base == nil or base == "" or base == "/" then
+    return cwd
+  end
+  return "../" .. base
 end
 
 ---Track which instances we've already kicked an `instances/info`
@@ -182,20 +218,35 @@ end
 
 ---@return hyprpilot.chat.header.Segment[]
 local function compose_segments()
-  local segments = { { text = "hyprpilot", hl = "HyprpilotHeaderBrand" } }
-
   local instance_id = window.active_instance()
   if instance_id == nil then
-    table.insert(segments, { text = "(no instance)", hl = "HyprpilotHeaderEmpty" })
-    return segments
+    return {
+      { text = "hyprpilot", hl = "HyprpilotHeaderBrand" },
+      { text = "(no instance)", hl = "HyprpilotHeaderEmpty" },
+    }
   end
 
   local meta = winbar._meta[instance_id]
-  local activity = require("hyprpilot.status").get().activity
 
-  if meta ~= nil and is_str(meta.instance_state) and meta.instance_state ~= "running" then
-    table.insert(segments, { text = meta.instance_state, hl = "HyprpilotHeaderState" })
+  -- Order (left → right): status · cwd · brand · name · profile ·
+  -- agent · model · mode · used/size · +N mcps. The status pill
+  -- leads because it's the captain's "is this thing alive" check;
+  -- cwd is next so they orient by directory; brand / name / etc.
+  -- follow as identifying detail. Activity moved out of the header
+  -- entirely — it lives on the composer now (where the captain is
+  -- typing) for max visibility.
+  local segments = {}
+  local status_text, status_hl = status_pill(meta)
+  if is_str(status_text) then
+    table.insert(segments, { text = status_text, hl = status_hl })
   end
+
+  local cwd_short = meta ~= nil and shorten_cwd(meta.cwd) or nil
+  if is_str(cwd_short) then
+    table.insert(segments, { text = cwd_short, hl = "HyprpilotHeaderCwd" })
+  end
+
+  table.insert(segments, { text = "hyprpilot", hl = "HyprpilotHeaderBrand" })
 
   if meta ~= nil then
     if is_str(meta.name) then
@@ -232,11 +283,6 @@ local function compose_segments()
     end
   end
 
-  local activity_text, activity_hl = activity_pill(activity)
-  if is_str(activity_text) then
-    table.insert(segments, { text = activity_text, hl = activity_hl })
-  end
-
   return segments
 end
 
@@ -249,9 +295,14 @@ end
 ---@return string, { start_col: integer, end_col: integer, hl: string }[]
 local function render_line(segments)
   local SEP = " · "
-  local pieces = { " " }
+  -- Lead with a markdown H1 prefix so the chat buffer's markdown
+  -- treesitter parser highlights the line as a heading. Per-segment
+  -- extmark hl groups still paint over the heading colour because
+  -- extmarks layer above syntax.
+  local PREFIX = "# "
+  local pieces = { PREFIX }
   local ranges = {}
-  local col = 1 -- leading space at col 0
+  local col = #PREFIX
 
   -- Filter non-string segment text first so the main loop stays
   -- linear (no goto / continue). `compose_segments` already does
@@ -357,6 +408,13 @@ end
 local listeners_wired = false
 
 ---Wire the autocmds that drive `refresh()` (idempotent).
+---
+---Critical filter: Meta and Activity events for *non-active*
+---instances no longer trigger a header repaint. Without this, every
+---meta tick or tool-call on a background instance would re-render
+---the captain's foreground header even though the rendered line
+---only ever reads the active instance's state — visible flicker on
+---slow terminals, wasted CPU at scale.
 function M.ensure_listeners()
   if listeners_wired then
     return
@@ -365,19 +423,41 @@ function M.ensure_listeners()
 
   local group = vim.api.nvim_create_augroup("HyprpilotHeader", { clear = true })
 
-  for _, pattern in ipairs({
-    "HyprpilotInstanceChanged",
-    "HyprpilotInstanceMetaChanged",
-    "HyprpilotActivityChanged",
-  }) do
+  -- InstanceChanged always refreshes (the active instance flipped,
+  -- everything is stale by definition).
+  vim.api.nvim_create_autocmd("User", {
+    group = group,
+    pattern = "HyprpilotInstanceChanged",
+    callback = function()
+      M.refresh()
+    end,
+  })
+
+  -- Meta + activity events filter on instance_id == active so we
+  -- only repaint when the change is actually visible.
+  for _, pattern in ipairs({ "HyprpilotInstanceMetaChanged", "HyprpilotActivityChanged" }) do
     vim.api.nvim_create_autocmd("User", {
       group = group,
       pattern = pattern,
-      callback = function()
+      callback = function(args)
+        local data = args.data or {}
+        if data.instance_id ~= nil and data.instance_id ~= window.active_instance() then
+          return
+        end
         M.refresh()
       end,
     })
   end
+end
+
+---Drop the cached `_name_fetched` flag for `instance_id` so a future
+---instance that reuses the id (daemon-side resume, manual recreate)
+---re-runs the `instances/info` round-trip rather than reading the
+---stale "we already fetched this" sentinel. Called from
+---`window.close`.
+---@param instance_id string
+function M.forget(instance_id)
+  _name_fetched[instance_id] = nil
 end
 
 return M

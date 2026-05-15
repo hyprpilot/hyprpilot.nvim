@@ -40,7 +40,7 @@ T["composer.submit while activity != idle enqueues + no wire call"] = function()
 
   -- Force activity to non-idle so submit routes to the queue.
   local status = require("hyprpilot.status")
-  status.set_activity({ kind = "streaming" })
+  status.set_activity("inst-1", { kind = "streaming" })
 
   local composer = require("hyprpilot.composer")
   composer.submit("queued prompt", { instance_id = "inst-1" })
@@ -52,7 +52,7 @@ T["composer.submit while activity != idle enqueues + no wire call"] = function()
   MiniTest.expect.equality(#items, 1)
   MiniTest.expect.equality(items[1].text, "queued prompt")
 
-  status.set_activity({ kind = "idle" })
+  status.set_activity("inst-1", { kind = "idle" })
   queue.reset("inst-1")
   restore_client()
   restore_active()
@@ -69,7 +69,7 @@ T["composer.submit while idle fires prompts/send (no queue)"] = function()
   local _ = mint_composer_buffer("inst-1")
 
   local status = require("hyprpilot.status")
-  status.set_activity({ kind = "idle" })
+  status.set_activity("inst-1", { kind = "idle" })
 
   require("hyprpilot.composer").submit("ship it", { instance_id = "inst-1" })
 
@@ -96,7 +96,7 @@ T["composer.submit with bypass_queue=true fires the wire even when busy"] = func
   local _ = mint_composer_buffer("inst-1")
 
   -- Activity is non-idle, but bypass_queue overrides.
-  require("hyprpilot.status").set_activity({ kind = "streaming" })
+  require("hyprpilot.status").set_activity("inst-1", { kind = "streaming" })
 
   require("hyprpilot.composer").submit("force send", {
     instance_id = "inst-1",
@@ -108,7 +108,7 @@ T["composer.submit with bypass_queue=true fires the wire even when busy"] = func
   MiniTest.expect.equality(calls[1].params.text, "force send")
   MiniTest.expect.equality(queue.has_items("inst-1"), false)
 
-  require("hyprpilot.status").set_activity({ kind = "idle" })
+  require("hyprpilot.status").set_activity("inst-1", { kind = "idle" })
   queue.reset("inst-1")
   restore_client()
   restore_active()
