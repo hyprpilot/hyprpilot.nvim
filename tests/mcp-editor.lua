@@ -105,4 +105,89 @@ T["editor_read: unreadable path → is_error result"] = function()
   MiniTest.expect.equality(result.is_error, true)
 end
 
+T["editor_status: returns mode + focused buffer + buffer list"] = function()
+  vim.cmd("new")
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].buflisted = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "alpha", "beta" })
+  vim.api.nvim_win_set_cursor(0, { 2, 1 })
+
+  local result = require("hyprpilot.mcp.editor").tools.status.handler({})
+
+  MiniTest.expect.equality(result.json.focused.bufnr, bufnr)
+  MiniTest.expect.equality(result.json.focused.line, 1) -- 0-indexed
+  MiniTest.expect.equality(result.json.focused.character, 1)
+  MiniTest.expect.equality(result.json.focused.line_count, 2)
+  MiniTest.expect.equality(type(result.json.mode), "string")
+
+  local saw = false
+  for _, b in ipairs(result.json.buffers) do
+    if b.bufnr == bufnr then
+      saw = true
+    end
+  end
+  MiniTest.expect.equality(saw, true)
+
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
+T["editor_jump: clamps line + moves cursor in current buffer"] = function()
+  vim.cmd("new")
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "one", "two", "three" })
+
+  local result = require("hyprpilot.mcp.editor").tools.jump.handler({ line = 99 })
+
+  -- 99 clamps to 3 (1-indexed line count); response is 0-indexed.
+  MiniTest.expect.equality(result.json.line, 2)
+  MiniTest.expect.equality(result.json.bufnr, bufnr)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  MiniTest.expect.equality(cursor[1], 3)
+
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
+T["editor_select: enters line-wise visual over the requested range"] = function()
+  vim.cmd("new")
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "a", "b", "c", "d" })
+
+  local result = require("hyprpilot.mcp.editor").tools.select.handler({
+    start_line = 2,
+    end_line = 3,
+  })
+
+  MiniTest.expect.equality(result.json.start_line, 1) -- 0-indexed
+  MiniTest.expect.equality(result.json.end_line, 2)
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  MiniTest.expect.equality(cursor[1], 3)
+
+  -- Exit visual mode so we don't pollute later tests.
+  pcall(vim.cmd, "stopinsert")
+  pcall(vim.cmd, "normal! \027")
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
+T["editor_file_open: missing file returns is_error"] = function()
+  local result = require("hyprpilot.mcp.editor").tools.file_open.handler({
+    path = "/tmp/hyprpilot-mcp-editor-does-not-exist-" .. tostring(vim.uv.hrtime()),
+  })
+  MiniTest.expect.equality(result.is_error, true)
+end
+
+T["editor_format: no-LSP buffer returns ok (no-op)"] = function()
+  vim.cmd("new")
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "no LSP attached here" })
+
+  local result = require("hyprpilot.mcp.editor").tools.format.handler({})
+
+  -- Without an attached formatter LSP, vim.lsp.buf.format is a no-op
+  -- (no error). Tool should return success with the bufnr echoed.
+  MiniTest.expect.equality(result.json.bufnr, bufnr)
+  MiniTest.expect.equality(result.is_error, nil)
+
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
 return T

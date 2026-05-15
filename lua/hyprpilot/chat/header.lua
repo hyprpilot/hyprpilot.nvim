@@ -346,21 +346,11 @@ local function render_line(segments)
   -- linear (no goto / continue). `compose_segments` already does
   -- this via `is_str`, but defence in depth — a future caller that
   -- appends a raw `vim.NIL` userdata shouldn't crash `#seg.text`.
-  --
-  -- Sanitise embedded newlines: the header is a SINGLE buffer line
-  -- by design, and `nvim_buf_set_lines` rejects multi-line
-  -- replacement entries with "'replacement string' item contains
-  -- newlines". Daemon-supplied fields (tool names, model names,
-  -- etc.) occasionally carry `\n`; strip them to space so the
-  -- column count stays predictable for our extmark ranges and the
-  -- write doesn't crash through `with_buffer`.
-  local valid = {}
-  for _, seg in ipairs(segments) do
-    if type(seg.text) == "string" then
-      local cleaned = seg.text:gsub("[\r\n]", " ")
-      table.insert(valid, { text = cleaned, hl = seg.hl })
-    end
-  end
+  -- Newline-stripping happens at the actual `set_lines` write site
+  -- (one chokepoint, no per-layer redundancy).
+  local valid = vim.tbl_filter(function(seg)
+    return type(seg.text) == "string"
+  end, segments)
 
   for i, seg in ipairs(valid) do
     if i > 1 then
@@ -396,7 +386,17 @@ function M.refresh()
   local line, ranges = render_line(segments)
 
   buffer.with_buffer(M._bufnr, function()
-    vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, { line })
+    -- Header is one buffer row by design — strip `\r\n` so a
+    -- daemon-supplied segment with embedded newlines (rare but
+    -- happens with multi-line tool / model names) doesn't crash
+    -- `nvim_buf_set_lines` with "'replacement string' item
+    -- contains newlines". Single chokepoint: every render path
+    -- ends up here, no per-layer sanitisation needed upstream.
+    -- Stripping (vs splitting) preserves the row count + keeps
+    -- the per-segment extmark column ranges valid (newline → space
+    -- is byte-for-byte).
+    local safe_line = line:gsub("[\r\n]", " ")
+    vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, { safe_line })
     vim.api.nvim_buf_clear_namespace(M._bufnr, NS, 0, -1)
     -- Background fill for the whole row + per-segment highlights on
     -- top. `line_hl_group` sets the trailing background so the bar
