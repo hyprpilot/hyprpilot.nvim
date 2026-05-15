@@ -205,4 +205,74 @@ T["focus: previous window closed before jump-back → log + stay in chrome"] = f
   teardown_windows({ chat, composer })
 end
 
+T["scroll_to_end: focuses chat + lands cursor on the last buffer line"] = function()
+  local home, chat, composer = mint_window_triple()
+  local prev_chat = require("hyprpilot.chat.window")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
+  setup_chrome(chat, composer)
+
+  -- Plant content so "last line" isn't trivially row 1.
+  local bufnr = vim.api.nvim_win_get_buf(chat)
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "row 1", "row 2", "row 3", "row 4", "row 5" })
+  vim.bo[bufnr].modifiable = false
+
+  -- Start cursor at top of chat to prove we actually scrolled.
+  vim.api.nvim_set_current_win(chat)
+  vim.api.nvim_win_set_cursor(chat, { 1, 0 })
+  vim.api.nvim_set_current_win(home)
+
+  require("hyprpilot.ui.window").scroll_to_end()
+
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), chat)
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(chat)[1], 5)
+
+  restore_chrome(prev_chat, prev_composer)
+  teardown_windows({ chat, composer })
+end
+
+T["focus: target = 'permission' lands on the permission row when visible"] = function()
+  local home, chat, composer = mint_window_triple()
+  vim.cmd("split")
+  local permission = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_win(home)
+
+  local prev_chat = require("hyprpilot.chat.window")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
+  local prev_permission = (package.loaded["hyprpilot.chat.permission-row"] or {})._winid
+  setup_chrome(chat, composer)
+  require("hyprpilot.chat.permission-row")._winid = permission
+  require("hyprpilot.ui.window")._prev_winid = nil
+
+  require("hyprpilot.ui.window").focus({ target = "permission" })
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), permission)
+
+  restore_chrome(prev_chat, prev_composer)
+  require("hyprpilot.chat.permission-row")._winid = prev_permission
+  teardown_windows({ chat, composer, permission })
+end
+
+T["focus: target = 'permission' with no permission row visible → warn-only no-op"] = function()
+  local home, chat, composer = mint_window_triple()
+  local prev_chat = require("hyprpilot.chat.window")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
+  local prev_permission = (package.loaded["hyprpilot.chat.permission-row"] or {})._winid
+  setup_chrome(chat, composer)
+  -- Explicitly clear the permission row's winid so resolve_target_winid
+  -- returns nil for the "permission" target.
+  if package.loaded["hyprpilot.chat.permission-row"] ~= nil then
+    require("hyprpilot.chat.permission-row")._winid = nil
+  end
+
+  require("hyprpilot.ui.window").focus({ target = "permission" })
+  -- Cursor stays where it was — no permission row to land on.
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), home)
+
+  restore_chrome(prev_chat, prev_composer)
+  if package.loaded["hyprpilot.chat.permission-row"] ~= nil then
+    require("hyprpilot.chat.permission-row")._winid = prev_permission
+  end
+  teardown_windows({ chat, composer })
+end
+
 return T

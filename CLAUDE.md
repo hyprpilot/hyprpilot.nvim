@@ -228,6 +228,35 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
   `client.request` / `permissions.respond` (helpers in
   `tests/helpers.lua`) to capture wire-side effects; never mock the
   modules under test.
+- **Plugin filetypes use the dotted `<bare>.markdown` form** — chat
+  is `hyprpilot.markdown`, composer is `hyprpilot_composer.markdown`,
+  header / queue strip / permission row follow the same shape. The
+  bare component drives autocmd patterns (vim's ft pattern matching
+  iterates dotted components on its own); the second component
+  pulls in markdown's ftplugin AND cmp / snippet sources keyed to
+  `"markdown"` for free. Equality checks (`ft == "hyprpilot"` etc.)
+  go through `chat_buffer.has_filetype(bufnr, "<bare>")` /
+  `is_plugin_buffer(bufnr)` so both bare and dotted forms match.
+  `vim.filetype.add` is for path → ft *detection*, not inheritance —
+  the dotted compound is the only mechanism vim ships for "this ft
+  inherits behavior from another."
+- **Per-instance state cleanup is registry-driven** — every module
+  that keys a top-level table by `instance_id` (e.g.
+  `render._states[id]`, `winbar._meta[id]`, `composer.attachments_by_instance[id]`)
+  exposes `M.forget(instance_id)` and is called from
+  `chat/window.lua::M.close`'s teardown cascade. Audit gap = stores
+  that lingerforever as captains close + reopen instances. New
+  per-instance state needs the matching `forget` + cascade entry in
+  the same PR. Stores not keyed by instance (e.g.
+  `diff_preview._state` — single slot) get a `M.forget(id)` that
+  nils itself when `state.instance_id == id`.
+- **Lifecycle resources need explicit teardown wiring** — augroups
+  with `clear = true` so a hot-reload (`shutdown()` → `setup()`)
+  doesn't double-register; subscription APIs return unsubscribe
+  closures that get tracked + invoked from `rpc/shutdown.lua`'s step
+  list (not from a per-module `_reset`-only path); per-buffer
+  autocmds use a per-buffer augroup name so re-attaching the same
+  buffer doesn't pile up handlers.
 
 ## Decision Log
 
@@ -348,8 +377,13 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
     for git-sign decorators, linters, and indent-guide drawers;
     sets blank `statusline` / `winbar`, no numbers / signcolumn /
     cursorline / fold column, hides EOB `~` glyphs via `fillchars
-    eob: `. Chat re-asserts its own `foldcolumn = "1"` afterward
-    since folds are interactive there.
+    eob: `. Chat folds use `foldcolumn = "0"` (cleaner UI; folds
+    still drive via `[h` / `]h` jumps and the manual `:N,Mfold`
+    calls from `chat/render.lua`) and re-assert their setup via
+    `chat/window.lua::M.apply_fold_setup(winid)` on every
+    `BufWinEnter` / `WinEnter` / `FileType` so a layout manager
+    (edgy) adopting the window can't strand us with stock
+    `foldmethod` defaults.
   - Why a single helper pair: every plugin window had been
     re-spelling the same six `vim.wo` lines. One helper means a
     new opt-out marker gets added in exactly one place.
@@ -416,6 +450,138 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
     diffs, no per-case isolation, no shared collector. We did this in
     early development and graduated to `mini.test` once the surface
     was big enough to warrant it.
+
+- **Always-folded tool calls + no re-fold during streaming**
+  - Chose: fold every `tool_call` block once at create-time (in
+    `render_tool_call`), NEVER re-fold during `handle_tool_call_update`.
+    Manual folds survive `nvim_buf_set_lines` body modifications via
+    the extmark range.
+  - Why: the original "fold on terminal state" UX flopped layout
+    under the cursor every time a tool finished. Re-folding on every
+    streaming chunk stacked manual folds (`:N,Mfold` creates a NEW
+    fold per call) — captains needed N+1 `zo`s to read a tool's
+    output. Fold once, trust the extmark range, stay collapsed.
+
+- **Turn outcome at prose tail, not header pill**
+  - Chose: drop a single `> <reason>` markdown blockquote at the
+    prose tail in `handle_turn_ended`, highlighted by category via
+    `HyprpilotTurnEnd{Ok,Cancelled,Error}`. Cancel-shaped reasons
+    match `:lower():find("cancel")`; errors win over reasons. Text
+    is the daemon's verbatim `event.stopReason` / `event.error` —
+    no `"ok " .. reason` humanisation.
+  - Why: header pill was easy to miss past a long response. The
+    captain's eyes are at the prose tail after reading the answer;
+    the marker lives there. Daemon is the source of truth for
+    wording; humanising plugin-side drifts from the desktop UI.
+  - Rejected: `format_stop_chip` with glyph + `"ok " / "cancelled "
+    / "error: "` prefixes — drift problem above; plus the empty-
+    glyph footgun (Lua truthy includes `""`) bit us once already.
+
+- **Tools section header aggregated stats**
+  - Chose: `### tools [N calls] [+X] [-Y] [Zs]` with diffs +
+    duration summed across every tool_call in the section.
+    `recompute_section_aggregate(state, section)` walks
+    `section.block_ids`, sums `formatted.stats[*]` diff (`added` /
+    `removed`) and duration (`ms`) entries. Wholesale per-block
+    replacement on update mirrors the daemon's running totals (per-
+    event state, not delta — summing on top would double-count).
+  - Why: tool blocks now stay folded for their lifecycle; without
+    the rolled-up section pill the captain has no at-a-glance
+    sense of "this turn touched +120 -30 lines in 3.4s."
+
+- **Auto-reconnect (peer EOF + timeout streak)**
+  - Chose: `client.lua` self-heals two failure modes — vim's
+    `{""}` channel-callback EOF (daemon crash / restart closes the
+    socket) AND a 3-consecutive-timeout streak (daemon hung but
+    socket open). Both teardown + flip disconnected + schedule a
+    deferred `M.connect()` after `retry_delay_ms`.
+    `auto_reconnect_pending` flag gates so a flood of EOFs can't
+    enqueue parallel reconnects. `timeout_streak` resets on every
+    successful reply.
+  - Why: a daemon restart used to leave the plugin in
+    `disconnected` until the captain manually called
+    `client.reconnect()`. Self-healing makes the captain's session
+    survive routine daemon churn.
+
+- **Diff preview window resolution**
+  - Chose: `ui/diff-preview.lua::resolve_host_window` uses
+    `chat_buffer.find_editor_winid` (same routing
+    `mcp/editor.lua` uses for `editor_file_open` / `jump`) and
+    returns `(winid, owned)`. `owned = true` when no editor
+    window was visible and we created a fresh `:topleft new` —
+    `M.close`'s `unwire` then `nvim_win_close`s it so the
+    captain doesn't end up with a `[No Name]` ghost split.
+  - Why: previous bespoke `vim.startswith(ft, "hyprpilot")`
+    filter drifted from the shared helper; fresh splits hung
+    around after preview close.
+
+- **Shutdown step order: `cleanup_owned` BEFORE `client.disconnect`**
+  - Chose: `rpc/shutdown.lua::M.shutdown` runs `instances.cleanup_owned()`
+    as a step BEFORE `client.disconnect` so daemon-side
+    `instances/shutdown` requests reach the channel for owned
+    (`spawned_with_shutdown = true`) instances. Manual `M.shutdown()`
+    (hot-reload) and `VimLeavePre` both pick up the cleanup.
+  - Rejected: a standalone `VimLeavePre` autocmd in
+    `rpc/instances.lua` — registered when the module first
+    lazy-loaded (typically when the captain spawned an instance),
+    so the autocmd registered AFTER `HyprpilotShutdown` (eager
+    during `setup()`). Vim fires autocmds in registration order
+    → disconnect ran first → cleanup hit a dead channel → silently
+    no-op'd. Order-sensitive teardown joins the eager surface
+    instead of competing with it.
+
+- **Plugin-owned filetypes mirror markdown via the dotted alias**
+  - Chose: every plugin buffer's `vim.bo[bufnr].filetype` is
+    `<bare>.markdown` — chat (`hyprpilot.markdown`), composer
+    (`hyprpilot_composer.markdown`), header
+    (`hyprpilot_header.markdown`), permission row, queue strip.
+    Bare component still drives our pattern-matching autocmds (vim
+    iterates dotted components on its own); second component
+    inherits markdown's ftplugin + treesitter parser + cmp /
+    snippet sources keyed to `"markdown"`. Equality checks shift
+    to `chat_buffer.has_filetype` / `is_plugin_buffer`.
+  - Why: composer needed markdown's tooling surface (codeblock
+    snippets, table expansions). Symmetric dotting across every
+    plugin ft eliminates the chat-bare-vs-composer-dotted asymmetry
+    captains hit when wiring `add_disabled_filetypes` / cmp's
+    `per_filetype` table.
+  - Rejected: keep the asymmetry (chat bare, composer dotted) —
+    captains kept tripping on it. Rejected: drop the dot from
+    composer and manually `runtime ftplugin/markdown.vim` from a
+    `FileType` autocmd — workable but loses cmp / snippet
+    inheritance, and captains still have to enumerate sources
+    per ft.
+
+- **`composer.attach_file(path)` — generic disk-file attach**
+  - Chose: `composer.attach_file(path, opts?)` reads the file,
+    classifies via mime (`guess_mime`) → text routes to `body`
+    (`vim.fn.readfile`); binary routes to `data` (`vim.uv.fs_read`
+    + `vim.base64.encode`). Unknown mime falls through to a null-
+    byte sniff on the first 1 KiB. `composer.attach.max_bytes`
+    (default 8 MiB) caps per-file payload so a stray
+    `attach_file("/var/log/syslog")` doesn't ship a 200 MB blob.
+  - Why: previous `attach_clipboard_image` was image-specific
+    plumbing; `attach_buffer` is unsaved-buffer-specific. Generic
+    disk-file path covers every other case (PDFs, screenshots,
+    arbitrary blobs) without per-mime helpers.
+  - Rejected: keep `attach_clipboard_image` as a first-class API
+    — captains needing the clipboard flow write a 3-line wrapper
+    (`img-clip.save_image(temp_path) → attach_file(temp_path)`).
+
+- **`palettes/instances` cwd filter (sessions-style API)**
+  - Chose: `palettes.instances.open({ cwd? })` filters rows
+    against `item.cwd`. `nil` → `vim.fn.getcwd()` default,
+    `false` → no filter, `string` → that path. Mirrors
+    `palettes/sessions.lua` exactly so captains learn the shape
+    once.
+  - Why: captains in a different project hit "pick instance" and
+    don't want to scroll past unrelated instances; default
+    behaviour matches the cwd they're in.
+  - Cross-repo dependency: daemon must ship `cwd` on
+    `InstanceListEntry` (plan handoff at
+    `~/.claude/plans/hello-this-will-be-mutable-papert.md`).
+    Until that lands every item's `cwd = nil` and the default
+    filter shows nothing — the right fail-loud signal.
 
 ## Approaches Tried
 
@@ -491,6 +657,28 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
   registry is empty. Placeholder text reduced to "starting…" — the
   captain shouldn't be told to do something the plugin can do for
   them.
+- **Re-folding tool blocks on every streaming chunk** — `:N,Mfold`
+  STACKS manual folds; calling `:fold` on the same range twice
+  creates two separate fold objects. Captain hit `zo` once → outer
+  layer opened, inner stayed closed → "I can't expand the tool."
+  Now: fold once at create, trust the extmark range.
+- **Stop reason as `## pilot` header pill** — easy to miss past a
+  long response. Replaced with the prose-tail `> <reason>` marker
+  (PR #89). Daemon-verbatim text — no humanisation, since
+  plugin-side wording drifts from whatever the desktop UI shows.
+- **Standalone `VimLeavePre` autocmd for `instances/shutdown`
+  cleanup** — `rpc/instances.lua` registered its cleanup autocmd at
+  module-load time, AFTER `HyprpilotShutdown` (eager during
+  `setup()`). Vim fires autocmds in registration order →
+  `client.disconnect` ran first → cleanup hit a dead channel and
+  silently no-op'd via `pcall + empty callback`. Manual
+  `M.shutdown()` (hot-reload) didn't trigger the autocmd at all.
+  Moved cleanup into `rpc/shutdown.lua::M.shutdown` as a step before
+  `client.disconnect`.
+- **`attach_clipboard_image` as a first-class composer API** — folded
+  into `attach_file(path)` once mime detection covered binary + text.
+  Captains needing the clipboard flow write a 3-line wrapper
+  (`img-clip.save_image(temp_path) → attach_file(temp_path)`).
 
 ## Tools & MCP Usage
 
@@ -555,3 +743,28 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
 - **No Ex commands** — captain wires their own keybinds against
   `require("hyprpilot.*").<fn>(...)`. Don't add `:HyprpilotToggle`
   etc.; they're on the explicit-no list per the planning interview.
+- **`:N,Mfold` stacks** — running `:fold` over an already-folded
+  range creates a SECOND fold object on top. Captain has to `zo`
+  once per layer to expand. For "always folded" semantics, fold
+  ONCE at block creation; trust the manual fold to survive
+  `nvim_buf_set_lines` body modifications via the extmark range.
+  Re-folding mid-stream is the bug.
+- **Vim autocmd registration order matters** — autocmds fire in
+  registration order within an event. A lazy-required module that
+  registers its autocmd on first use lands AFTER an eager module
+  that registered during `setup()`. Order-sensitive teardown joins
+  the eager surface (`rpc/shutdown.lua`'s step list) instead of
+  competing as a separate autocmd.
+- **`nvim_buf_delete(force = true)` doesn't close windows** —
+  windows showing the deleted buffer switch to an alternate
+  (usually a new empty unnamed buffer). On VimLeavePre we walk
+  `nvim_list_wins()` and explicitly close any window holding a
+  `hyprpilot://` buffer BEFORE wiping the buffers themselves.
+  Otherwise the captain's exit screen carries blank `[No Name]`
+  ghosts where the chat / composer used to be.
+- **`vim.filetype.add` is for path → ft *detection*, not
+  inheritance** — the dotted compound (`<ft>.markdown`) is the
+  only mechanism vim ships for "this ft inherits behavior from
+  another." A `FileType` autocmd that runs `runtime
+  ftplugin/markdown.vim` is a workaround that loses cmp / snippet
+  inheritance; the dot is the right tool.
