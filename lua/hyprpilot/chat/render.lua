@@ -59,6 +59,12 @@ local rescan_code_block_folds
 ---@field item_count integer                    -- number of inner blocks rendered so far (drives `[N]` chip on header)
 ---@field started_at_ms? integer                -- monotonic `vim.uv.now()` stamp at section creation (drives `### thoughts` elapsed pill)
 ---@field ended_at_ms? integer                  -- monotonic stamp set on `handle_turn_ended` so the elapsed pill freezes
+---@field aggregated_stats? hyprpilot.render.SectionAggregatedStats  -- summed wire stats across `block_ids` (drives `### tools` pills)
+
+---@class hyprpilot.render.SectionAggregatedStats
+---@field added integer                         -- sum of `formatted.stats[*].added` across every tool_call block
+---@field removed integer                       -- sum of `formatted.stats[*].removed`
+---@field duration_ms integer                   -- sum of `formatted.stats[*].ms` for every duration stat
 
 ---@class hyprpilot.render.TurnLayout
 ---@field turn_id string
@@ -674,7 +680,29 @@ local function section_header_line(kind, section)
     unit = "items"
   end
 
-  return base .. stats.format_pills({ string.format("%d %s", item_count, unit) })
+  local pills = { string.format("%d %s", item_count, unit) }
+
+  -- Tools section: append summed `+N -M` and total `Xs` pills so the
+  -- captain reads "this turn touched +120 -30 lines across 4 tool
+  -- calls in 3.4s" at a glance from the section header — same shape
+  -- as the per-tool-call header pills, just rolled up.
+  if kind == "tools" and section ~= nil and section.aggregated_stats ~= nil then
+    local agg = section.aggregated_stats
+    if (agg.added or 0) > 0 then
+      table.insert(pills, string.format("+%d", agg.added))
+    end
+    if (agg.removed or 0) > 0 then
+      table.insert(pills, string.format("-%d", agg.removed))
+    end
+    if (agg.duration_ms or 0) > 0 then
+      local d = stats.format_duration(agg.duration_ms)
+      if d ~= nil then
+        table.insert(pills, d)
+      end
+    end
+  end
+
+  return base .. stats.format_pills(pills)
 end
 
 ---Re-paint a section header line in place after its item_count
@@ -1192,6 +1220,35 @@ local function tool_body_lines(formatted, tool_kind)
   return wrap_in_rules(paragraphs)
 end
 
+---Walk every tool_call block in `section` and sum its per-block
+---wire stats (`block.stats[*]`) into a single aggregate the section
+---header pills off. Diff entries sum added / removed; duration
+---entries sum ms. Text-kind stats are skipped (no meaningful sum
+---for free-form strings). Idempotent — recomputed from scratch on
+---every call so streaming updates that overwrite a tool's stats
+---don't double-count.
+---@param state hyprpilot.render.State
+---@param section hyprpilot.render.Section
+local function recompute_section_aggregate(state, section)
+  local added, removed, duration_ms = 0, 0, 0
+  for _, block_id in ipairs(section.block_ids) do
+    local block = state.blocks[block_id]
+    if block ~= nil and type(block.stats) == "table" then
+      for _, stat in ipairs(block.stats) do
+        if type(stat) == "table" then
+          if stat.kind == "diff" then
+            added = added + (stat.added or 0)
+            removed = removed + (stat.removed or 0)
+          elseif stat.kind == "duration" then
+            duration_ms = duration_ms + (stat.ms or 0)
+          end
+        end
+      end
+    end
+  end
+  section.aggregated_stats = { added = added, removed = removed, duration_ms = duration_ms }
+end
+
 ---Compose the header line for a tool-call block. Drops empty
 ---glyph slots before joining so a captain who clears
 ---`icons.tool_kind.default` (or any specific kind) doesn't end up
@@ -1255,12 +1312,28 @@ local function render_tool_call(state, record)
   -- `icons.tool_kind.default` (the cog), so every tool reverted to
   -- the cog glyph the moment it finished executing.
   block.tool_kind = record.toolKind
+  -- Stash the raw wire stats so `recompute_section_aggregate` can
+  -- sum diffs / durations across every tool_call in this section.
+  -- Wholesale replacement on update mirrors how the daemon ships
+  -- running totals (each event carries the current state, not a
+  -- delta) — summing block-level stats on top would double-count.
+  block.stats = (record.formatted and record.formatted.stats) or nil
   state.tool_calls[record.id] = block.id
 
   -- Header gets a status colour; body intentionally has no
   -- `line_hl_group` so the chat buffer's markdown highlighter takes
   -- over (fenced code blocks ` ```` ` get treesitter highlight).
   apply_line_hl(state, first_row, tool_status_hl(record.state))
+
+  -- Refresh the section's aggregate + repaint the `### tools`
+  -- header pills (skip when the block landed without a layout —
+  -- orphan path has no section to roll up into).
+  local layout = get_layout(state, state.current_turn)
+  local tools_section = layout and layout.sections and layout.sections.tools or nil
+  if tools_section ~= nil then
+    recompute_section_aggregate(state, tools_section)
+    repaint_section_header(state, "tools", tools_section)
+  end
 
   -- Tool calls fold from the moment they appear and stay folded for
   -- their entire lifecycle. Captain `zo`s explicitly when they want
@@ -1304,6 +1377,12 @@ function M.handle_tool_call_update(instance_id, update)
   -- the right glyph + body language.
   local merged = vim.tbl_extend("keep", update, { toolKind = block.tool_kind })
 
+  -- Refresh per-block stats from the merged payload so the section
+  -- aggregate stays accurate as durations / diffs grow during the
+  -- tool's lifecycle. Wholesale replacement (no merge) — daemon
+  -- ships running totals.
+  block.stats = (merged.formatted and merged.formatted.stats) or block.stats
+
   with_autoscroll(state, function()
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row = block_range(state, block)
@@ -1312,6 +1391,14 @@ function M.handle_tool_call_update(instance_id, update)
     end)
 
     replace_block_body(state, block, tool_body_lines(merged.formatted, merged.toolKind))
+
+    -- Bubble the refreshed stats up to the section header.
+    local layout = get_layout(state, block.turn_id)
+    local tools_section = layout and layout.sections and layout.sections.tools or nil
+    if tools_section ~= nil then
+      recompute_section_aggregate(state, tools_section)
+      repaint_section_header(state, "tools", tools_section)
+    end
 
     -- Re-apply highlights: header colour can flip with the new state;
     -- body has no line_hl_group (markdown highlighter handles it).
