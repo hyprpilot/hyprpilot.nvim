@@ -227,7 +227,7 @@ local defaults = {
     -- (omnifunc, blink.cmp's `path` provider) that don't need to
     -- round-trip through the daemon. Captain can extend this list
     -- when the daemon adds more sources.
-    sources = { "skills" },
+    sources = { "skills", "commands" },
   },
   notification = {
     bell = {
