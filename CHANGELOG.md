@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.4.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.3.1...hyprpilot.nvim-v1.4.0) (2026-05-15)
+
+
+### Features
+
+* **composer:** attach_file + dotted plugin fts + always-collapsed tools + leak fixes ([#88](https://github.com/hyprpilot/hyprpilot.nvim/issues/88)) ([5c7b8a6](https://github.com/hyprpilot/hyprpilot.nvim/commit/5c7b8a600de4cfc3eb375ca56bcd950f197a11ba))
+* **instances:** with_shutdown opt — clean up owned instances on VimLeavePre ([#82](https://github.com/hyprpilot/hyprpilot.nvim/issues/82)) ([5caa48f](https://github.com/hyprpilot/hyprpilot.nvim/commit/5caa48f3b5411442daddbba24a8ff5cdfe4667d3))
+* **mcp/editor:** status / file_open / jump / select / format tools ([#81](https://github.com/hyprpilot/hyprpilot.nvim/issues/81)) ([a66ca89](https://github.com/hyprpilot/hyprpilot.nvim/commit/a66ca899eb0ecf252dbabffb52de3d5812005b6b))
+
+
+### Bug Fixes
+
+* **chat:** re-assert fold setup on BufWinEnter / WinEnter ([#86](https://github.com/hyprpilot/hyprpilot.nvim/issues/86)) ([d27a22e](https://github.com/hyprpilot/hyprpilot.nvim/commit/d27a22e6e6c8a3b81634ef671a49b7f797370d04))
+* header newline crash + instances palette attach for daemon-only ids ([#80](https://github.com/hyprpilot/hyprpilot.nvim/issues/80)) ([24e86e3](https://github.com/hyprpilot/hyprpilot.nvim/commit/24e86e30a3d0f1ca4486d396217990b55e3f06b4))
+* **mcp/editor:** route navigation away from plugin windows + composer detach keymap ([#87](https://github.com/hyprpilot/hyprpilot.nvim/issues/87)) ([972de15](https://github.com/hyprpilot/hyprpilot.nvim/commit/972de15d2211fd674687d02adef169c1d613478e))
+* **regressions:** per-instance isolation, header redesign, stats/folds, attachment body, reconnect ([#78](https://github.com/hyprpilot/hyprpilot.nvim/issues/78)) ([df87c74](https://github.com/hyprpilot/hyprpilot.nvim/commit/df87c74379a9f215b71594b47ad8c980117260c3))
+
+
+### Refactor
+
+* **composer:** rename hyprpilot_input → hyprpilot_composer + alias to markdown ([#84](https://github.com/hyprpilot/hyprpilot.nvim/issues/84)) ([3125b12](https://github.com/hyprpilot/hyprpilot.nvim/commit/3125b120682dfe17ee5b512f695a2e5f3c27dcf0))
+* **queue:** daemon-mirror model — drop local FIFO, wire through queue/* RPCs ([#83](https://github.com/hyprpilot/hyprpilot.nvim/issues/83)) ([dd77240](https://github.com/hyprpilot/hyprpilot.nvim/commit/dd772403c102ea6daf9cd5752a5426dcf991b131))
+
 ## [1.3.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.3.0...hyprpilot.nvim-v1.3.1) (2026-05-15)
 
 
