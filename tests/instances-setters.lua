@@ -147,4 +147,68 @@ T["setters propagate the daemon's reply through the callback"] = function()
   client.request = original
 end
 
+T["attach with id already in local registry calls window.show, no daemon round-trip"] = function()
+  local restore_client, calls = helpers.stub_client_with({})
+
+  local window = require("hyprpilot.chat.window")
+  local id = helpers.unique_id()
+  -- Pre-register so attach takes the local-known branch.
+  window.register({ bufnr = require("hyprpilot.chat.buffer").create(id), instance_id = id }, { activate = true })
+
+  local original_show = window.show
+  local shown_id
+  window.show = function(arg)
+    shown_id = arg
+  end
+
+  require("hyprpilot.rpc.instances").attach(id)
+
+  MiniTest.expect.equality(shown_id, id)
+  -- Local-known branch must NOT call instances/info.
+  MiniTest.expect.equality(#calls, 0)
+
+  window.show = original_show
+  helpers.cleanup_instance(id)
+  restore_client()
+end
+
+T["attach with id only in daemon hydrates via instances/info"] = function()
+  local id = helpers.unique_id()
+  local restore_client, calls = helpers.stub_client_with({
+    ["instances/info"] = {
+      result = {
+        instanceId = id,
+        name = "from-daemon",
+        agentId = "claude-code",
+      },
+    },
+  })
+
+  local window = require("hyprpilot.chat.window")
+  -- Sanity: not in local registry yet.
+  MiniTest.expect.equality(window._instances[id], nil)
+
+  local original_show = window.show
+  local shown_id
+  window.show = function(arg)
+    shown_id = arg
+  end
+
+  require("hyprpilot.rpc.instances").attach(id)
+
+  -- Wire-side: instances/info fired with the right id.
+  MiniTest.expect.equality(#calls, 1)
+  MiniTest.expect.equality(calls[1].method, "instances/info")
+  MiniTest.expect.equality(calls[1].params.instanceId, id)
+
+  -- Local-side: registry now carries the id + show fired against it.
+  MiniTest.expect.equality(window._instances[id] ~= nil, true)
+  MiniTest.expect.equality(window._instances[id].name, "from-daemon")
+  MiniTest.expect.equality(shown_id, id)
+
+  window.show = original_show
+  helpers.cleanup_instance(id)
+  restore_client()
+end
+
 return T
