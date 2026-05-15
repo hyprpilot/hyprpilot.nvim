@@ -104,9 +104,7 @@ local function compose(instance_id)
     -- stays compact. Captain can pop into the composer for the
     -- full text via the `edit_head` keymap.
     local preview = (entry.text or ""):gsub("\n", " ⏎ ")
-    if #preview > 80 then
-      preview = preview:sub(1, 77) .. "..."
-    end
+
     table.insert(lines, string.format("  %d. %s", i, preview))
   end
 

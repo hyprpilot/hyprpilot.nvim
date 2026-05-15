@@ -333,6 +333,16 @@ function M.open_aux_split(opts)
     return unwind("nvim_win_set_buf failed: " .. tostring(buf_err))
   end
 
+  -- Mark every aux split with `edgy_disable` so folke/edgy.nvim
+  -- explicitly skips them during adoption. The chat is the only
+  -- window the captain registers with edgy; header / composer /
+  -- queue strip / permission row are sub-splits we manage as
+  -- siblings of the chat. Without this marker, edgy could try to
+  -- pull them into separate views and the layout fights itself.
+  pcall(function()
+    vim.w[winid].edgy_disable = true
+  end)
+
   M.clean_window_chrome(winid)
 
   if opts.after ~= nil then
