@@ -346,9 +346,21 @@ local function render_line(segments)
   -- linear (no goto / continue). `compose_segments` already does
   -- this via `is_str`, but defence in depth — a future caller that
   -- appends a raw `vim.NIL` userdata shouldn't crash `#seg.text`.
-  local valid = vim.tbl_filter(function(seg)
-    return type(seg.text) == "string"
-  end, segments)
+  --
+  -- Sanitise embedded newlines: the header is a SINGLE buffer line
+  -- by design, and `nvim_buf_set_lines` rejects multi-line
+  -- replacement entries with "'replacement string' item contains
+  -- newlines". Daemon-supplied fields (tool names, model names,
+  -- etc.) occasionally carry `\n`; strip them to space so the
+  -- column count stays predictable for our extmark ranges and the
+  -- write doesn't crash through `with_buffer`.
+  local valid = {}
+  for _, seg in ipairs(segments) do
+    if type(seg.text) == "string" then
+      local cleaned = seg.text:gsub("[\r\n]", " ")
+      table.insert(valid, { text = cleaned, hl = seg.hl })
+    end
+  end
 
   for i, seg in ipairs(valid) do
     if i > 1 then

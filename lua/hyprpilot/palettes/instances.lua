@@ -113,8 +113,16 @@ function M.open(opts)
     end
 
     local active_id = window.active_instance()
+    -- Default commit is `instances.attach` (NOT `window.switch`)
+    -- so the picker handles BOTH known-local AND daemon-only
+    -- instances. After a plugin restart / re-source the local
+    -- registry is empty but the daemon still has instances
+    -- running; picking one should mint a fresh local buffer +
+    -- hydrate from the daemon's snapshot — exactly what attach
+    -- does. For locally-known ids it falls through to
+    -- `window.show` which is the existing switch behaviour.
     local commit = opts.on_pick or function(id)
-      window.switch(id)
+      hp_instances.attach(id)
     end
 
     pickers.open({

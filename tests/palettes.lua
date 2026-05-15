@@ -195,7 +195,7 @@ end
 -- instances
 ---------------------------------------------------------------------
 
-T["palettes.instances: picks a row → calls window.switch with the chosen id"] = function()
+T["palettes.instances: picks a row → calls instances.attach with the chosen id"] = function()
   local restore_client, calls = stub_client_with({
     ["instances/list"] = {
       result = {
@@ -209,12 +209,15 @@ T["palettes.instances: picks a row → calls window.switch with the chosen id"] 
 
   local restore_active = stub_active_instance("inst-a")
 
-  -- Stub window.switch to capture the call without touching real splits.
-  local window = require("hyprpilot.chat.window")
-  local original_switch = window.switch
-  local switched_to
-  window.switch = function(id)
-    switched_to = id
+  -- Stub `instances.attach` (the new default commit) — picker
+  -- now routes through it so daemon-only ids (not in the local
+  -- registry) get hydrated rather than crashing through
+  -- `window.switch`.
+  local hp_instances = require("hyprpilot.rpc.instances")
+  local original_attach = hp_instances.attach
+  local attached_to
+  hp_instances.attach = function(id)
+    attached_to = id
   end
 
   local restore_select, ui_calls = stub_ui_select(function(items)
@@ -225,12 +228,12 @@ T["palettes.instances: picks a row → calls window.switch with the chosen id"] 
   require("hyprpilot.palettes.instances").open()
 
   MiniTest.expect.equality(ui_calls[1].opts.kind, "hyprpilot.instances")
-  MiniTest.expect.equality(switched_to, "inst-b")
+  MiniTest.expect.equality(attached_to, "inst-b")
   -- The meta fetch never fired — instances palette only needs `list`.
   MiniTest.expect.equality(#calls, 1)
   MiniTest.expect.equality(calls[1].method, "instances/list")
 
-  window.switch = original_switch
+  hp_instances.attach = original_attach
   restore_select()
   restore_client()
   restore_active()

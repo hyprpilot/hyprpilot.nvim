@@ -160,6 +160,72 @@ local function attach(instance, show_after)
   end
 end
 
+---Attach to an instance the daemon knows about — mint a local
+---buffer, register it with the window, hydrate the chat snapshot,
+---and (by default) show it. When the instance is ALREADY in the
+---local registry this is a thin wrapper around `window.show(id)`
+---so callers don't need to distinguish "known locally" from
+---"only known daemon-side" — same call works for both.
+---
+---Use case: the captain opens the instances palette after a
+---restart / re-source. The plugin's local registry is empty, but
+---the daemon still has the instance running. Picking it from
+---`instances/list` should bring it back into the captain's UI
+---without forcing a respawn — that's exactly what this does.
+---@param instance_id string
+---@param opts? { show?: boolean, callback?: hyprpilot.InstanceCallback }
+function M.attach(instance_id, opts)
+  opts = opts or {}
+  local show_after = opts.show ~= false
+  local callback = opts.callback
+
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.attach: instance_id must be a non-empty string")
+    if callback ~= nil then
+      callback({ message = "instance_id required" }, nil)
+    end
+    return
+  end
+
+  -- Already known locally — just show. `window.show` handles the
+  -- already-visible / not-visible cases idempotently.
+  if window._instances[instance_id] ~= nil then
+    if show_after then
+      window.show(instance_id)
+    end
+    if callback ~= nil then
+      callback(nil, { id = instance_id })
+    end
+    return
+  end
+
+  -- Daemon-only — fetch the instance shape so we can register with
+  -- the right name, then mint + hydrate. `attach()` (the local
+  -- helper above) handles the mint / register / show / hydrate
+  -- choreography so spawn / focus / load_session / attach all
+  -- converge on the same path.
+  M.info(instance_id, function(err, info)
+    if err ~= nil then
+      log.warn("instances.attach: info failed for %s: %s", instance_id, err.message)
+      if callback ~= nil then
+        callback(err, nil)
+      end
+      return
+    end
+    if type(info) ~= "table" or info.id == nil or info.id == "" then
+      log.warn("instances.attach: daemon returned no instance for %s", instance_id)
+      if callback ~= nil then
+        callback({ message = "daemon returned no instance" }, nil)
+      end
+      return
+    end
+    attach(info, show_after)
+    if callback ~= nil then
+      callback(nil, info)
+    end
+  end)
+end
+
 ---List every live instance the daemon knows about.
 ---@param callback hyprpilot.InstancesCallback
 function M.list(callback)
