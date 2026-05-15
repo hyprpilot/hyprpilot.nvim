@@ -216,11 +216,35 @@ local function with_autoscroll(state, fn)
 end
 
 ---Append `lines` to the end of the buffer. Returns the line index of
+---Flatten a list of strings so no element contains an embedded
+---newline. `nvim_buf_set_lines` rejects multi-line items with
+---"'replacement string' item contains newlines"; defensively
+---splitting here lets every caller pass the daemon's wire-supplied
+---strings through without each one having to remember to split.
+---Empty input returns empty; nil-safe via the `lines or {}` guard
+---at every call site.
+---@param lines string[]
+---@return string[]
+local function flatten_lines(lines)
+  local out = {}
+  for _, line in ipairs(lines) do
+    if type(line) ~= "string" then
+      table.insert(out, "")
+    elseif line:find("\n", 1, true) == nil then
+      table.insert(out, line)
+    else
+      vim.list_extend(out, vim.split(line, "\n", { plain = true }))
+    end
+  end
+  return out
+end
+
 ---the first appended line.
 ---@param state hyprpilot.render.State
 ---@param lines string[]
 ---@return integer first_line
 local function append_lines(state, lines)
+  lines = flatten_lines(lines)
   local bufnr = state.bufnr
   local total = vim.api.nvim_buf_line_count(bufnr)
   local first_line
@@ -733,10 +757,15 @@ local function insert_block_into_section(state, turn_id, kind, block_id, block_k
   -- previous block's closing `---` and the new block's header would
   -- otherwise sit on adjacent rows. The first block uses the
   -- section's own spacer row (head+1) as its leading separator.
-  local lines_to_insert = lines
+  -- Defensive flatten: any caller (tool_body_lines, render_attachment,
+  -- adapter notes) that passes a daemon-supplied string with an
+  -- embedded `\n` would crash `nvim_buf_set_lines` with the
+  -- "'replacement string' item contains newlines" error. Splitting
+  -- here is one place to fix every caller.
+  local lines_to_insert = flatten_lines(lines)
   local block_row_offset = 0
   if #section.block_ids > 0 then
-    lines_to_insert = vim.list_extend({ "" }, lines)
+    lines_to_insert = vim.list_extend({ "" }, lines_to_insert)
     block_row_offset = 1
   end
 
@@ -785,6 +814,7 @@ end
 ---@param lines string[]
 ---@return integer
 local function insert_at_prose_anchor(state, turn_id, lines)
+  lines = flatten_lines(lines)
   local layout = get_layout(state, turn_id)
   if layout == nil then
     return append_lines(state, lines)

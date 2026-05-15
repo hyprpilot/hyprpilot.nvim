@@ -219,6 +219,47 @@ function M.clean_window_chrome(winid)
   end
 end
 
+-- Re-apply window chrome cleanup whenever a plugin-owned buffer
+-- becomes visible. A layout manager (folke/edgy.nvim) or a peer
+-- plugin that re-hooks `WinEnter` may reset window-local options
+-- (signcolumn, statusline, etc.) after our open-time setup,
+-- letting things like gitsigns / mini.diff / lsp signs leak `+`,
+-- `>`, `~` glyphs onto the chat surface. Re-applying on
+-- `BufWinEnter` + `WinEnter` is cheap and idempotent — captures
+-- every adoption / focus path without us having to know which
+-- peer reset the option.
+do
+  local group = vim.api.nvim_create_augroup("HyprpilotBufferChrome", { clear = true })
+  local plugin_filetypes = {
+    "hyprpilot",
+    "hyprpilot_input",
+    "hyprpilot_header",
+    "hyprpilot_permission_row",
+    "hyprpilot_queue_strip",
+  }
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter", "FileType" }, {
+    group = group,
+    pattern = plugin_filetypes,
+    callback = function(args)
+      -- BufWinEnter / FileType pass `args.buf`; WinEnter doesn't
+      -- (it's a window event). For WinEnter we look up the bufnr
+      -- from the current window.
+      local bufnr = args.buf
+      if bufnr == nil or bufnr == 0 then
+        bufnr = vim.api.nvim_get_current_buf()
+      end
+      if not vim.api.nvim_buf_is_valid(bufnr) then
+        return
+      end
+      local winid = vim.fn.bufwinid(bufnr)
+      if winid == -1 then
+        return
+      end
+      M.clean_window_chrome(winid)
+    end,
+  })
+end
+
 ---@class hyprpilot.chat.buffer.AuxSplitOpts
 ---@field direction string                       -- ex-cmd suffix, e.g. `"belowright 1split"` / `"aboveleft 1split"`
 ---@field bufnr integer                          -- buffer to attach to the new split
