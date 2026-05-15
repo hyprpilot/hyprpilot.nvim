@@ -37,6 +37,23 @@ local _auto_spawn_in_flight = false
 -- flicker.
 local layout_manager_active = buffer.layout_manager_active
 
+---Coerce a numeric width into a concrete column count. Mirrors
+---edgy's convention so the same width function works across both
+---surfaces: values `< 1` are treated as a fraction of the total
+---column count (`0.5` → 50% of `vim.o.columns`); values `>= 1`
+---are absolute columns. Without the fraction handling, a captain
+---returning `0.5` would get `math.floor(0.5) = 0` → clamp-to-1
+---column = a one-column chat surface.
+---@param value number
+---@param columns integer
+---@return integer
+local function coerce_width(value, columns)
+  if value < 1 then
+    return math.max(1, math.floor(value * columns))
+  end
+  return math.max(1, math.floor(value))
+end
+
 ---Resolve the configured width to a concrete column count.
 ---@param ui hyprpilot.ConfigUi
 ---@return integer
@@ -48,7 +65,7 @@ local function resolve_width(ui)
     local ok, value = pcall(raw, columns)
 
     if ok and type(value) == "number" then
-      return math.max(1, math.floor(value))
+      return coerce_width(value, columns)
     end
 
     log.warn("window: width function returned %s; falling back to 80", vim.inspect(value))
@@ -57,7 +74,7 @@ local function resolve_width(ui)
   end
 
   if type(raw) == "number" then
-    return math.max(1, math.floor(raw))
+    return coerce_width(raw, columns)
   end
 
   return math.min(80, columns - 1)
