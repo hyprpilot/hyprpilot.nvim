@@ -768,9 +768,17 @@ function M.open(opts)
   buffer_mod.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
-  -- No `winfixheight` / `winfixwidth` — they interact badly with
-  -- `equalalways` and can prevent our auto-resize from shrinking
-  -- the composer back down as the captain deletes content.
+  -- `winfixheight` protects against `equalalways` redistributing
+  -- height when sibling splits (permission-row, queue-strip) open
+  -- belowright. Without it, the composer gets squeezed and our
+  -- auto-resize doesn't fire (no TextChanged event on a
+  -- sibling-open). `nvim_win_set_height` still works on a
+  -- winfixheight window — the flag only blocks automatic equalize.
+  -- Skip under a layout manager (edgy owns sizing).
+  if not buffer_mod.layout_manager_active() then
+    vim.wo[M._winid].winfixheight = true
+    vim.wo[M._winid].winfixwidth = true
+  end
 
   paint_indicator(instance_id)
   M.resize()

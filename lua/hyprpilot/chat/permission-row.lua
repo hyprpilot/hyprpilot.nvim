@@ -566,9 +566,13 @@ local function open_window()
       install_keymaps(bufnr)
       vim.wo[w].wrap = true
       vim.wo[w].linebreak = true
-      -- No `winfixheight` / `winfixwidth` — they interact badly with
-      -- `equalalways` and can prevent our auto-resize from shrinking
-      -- the row back down.
+      -- `winfixheight` protects against `equalalways` redistributing
+      -- height when sibling splits open. Direct
+      -- `nvim_win_set_height` still works through the pin.
+      if not buffer.layout_manager_active() then
+        vim.wo[w].winfixheight = true
+        vim.wo[w].winfixwidth = true
+      end
     end,
   })
   if winid == nil then
