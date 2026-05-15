@@ -1,1 +1,37 @@
+# Ripgrep noise filter — keeps `rg` searches focused on the source
+# tree (`lua/`, `plugin/`, `pkg/hyprpilot_nvim_mcp/`).
+# Honoured by `rg`/`ripgrep`; not by git, stylua, or selene.
+# Force-include with `rg --no-ignore` / `rg -uu` when you need it.
+
+# Build / dependency artefacts
 /.task
+/.venv
+/uv.lock
+
+# Tests + scripts
+/tests
+/pkg/tests
+/scripts
+
+# Docs + prose
+*.md
+/LICENSE
+/pkg/LICENSE
+
+# Project / lint / editor config
+/.editorconfig
+/.gitattributes
+/.gitignore
+/.luarc.json
+/.rgignore
+/.stylua.toml
+/mise.toml
+/selene.toml
+/vim.toml
+/Taskfile.yml
+/pkg/Taskfile.yml
+/pyproject.toml
+/pkg/pyproject.toml
+
+# CI + release config
+/.github
