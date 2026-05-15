@@ -44,18 +44,29 @@ local function is_hyprpilot_window(winid)
 end
 
 ---@class hyprpilot.ui.window.FocusOpts
----@field target? "composer" | "chat"  -- default: composer (where the captain types)
+---@field target? "composer" | "chat" | "permission"  -- default: composer (where the captain types)
 
 ---Resolve the winid to focus on for `target_name`. Composer is the
 ---default but may not exist yet (no active instance, placeholder
 ---buffer, post-hide reopen) — fall back to chat in that case.
----@param target_name "composer" | "chat"
+---`permission` resolves only when the permission row is currently
+---visible (it auto-opens on `permission_request` events; nothing for
+---us to focus when no permission is pending).
+---@param target_name "composer" | "chat" | "permission"
 ---@return integer? target_winid, integer? composer_winid
 local function resolve_target_winid(target_name)
   local composer_winid = (package.loaded["hyprpilot.composer"] or {})._winid
 
   if target_name == "chat" then
     return chat_window._winid, composer_winid
+  end
+
+  if target_name == "permission" then
+    local permission_winid = (package.loaded["hyprpilot.chat.permission-row"] or {})._winid
+    if permission_winid ~= nil and vim.api.nvim_win_is_valid(permission_winid) then
+      return permission_winid, composer_winid
+    end
+    return nil, composer_winid
   end
 
   if composer_winid ~= nil and vim.api.nvim_win_is_valid(composer_winid) then
@@ -143,6 +154,48 @@ end
 ---Hide the chat window. Buffers persist for resume.
 function M.hide()
   chat_window.hide()
+end
+
+---Show the chat window (if hidden), focus it, and scroll to the
+---last line so the captain sees the most recent transcript content
+---without manually `G`-ing inside the read-only chat buffer.
+---Mirror of `focus({ target = "chat" })` plus a cursor jump — the
+---captain can scroll back up afterwards if they want; this is the
+---"jump me to the live tail" action, distinct from the focus toggle.
+---No toggle-back semantics: a second press re-asserts the bottom
+---view (cheap; idempotent) instead of jumping back.
+function M.scroll_to_end()
+  if not chat_window.is_visible() then
+    M._prev_winid = vim.api.nvim_get_current_win()
+    chat_window.show()
+  end
+
+  local chat_winid = chat_window._winid
+  if chat_winid == nil or not vim.api.nvim_win_is_valid(chat_winid) then
+    log.warn("ui.window.scroll_to_end: no chat window to scroll (no active instance?)")
+    return
+  end
+
+  local ok_focus, focus_err = pcall(vim.api.nvim_set_current_win, chat_winid)
+  if not ok_focus then
+    log.warn("ui.window.scroll_to_end: nvim_set_current_win failed: %s", focus_err)
+    return
+  end
+
+  -- Jump to the last buffer line. `G` (Goto last) handles the
+  -- scroll-into-view automatically; `zb` would push the line to the
+  -- bottom of the viewport which fights captains running with
+  -- `scrolloff`. Stick with vim's stock G for the most-natural feel.
+  local bufnr = vim.api.nvim_win_get_buf(chat_winid)
+  local last_line = vim.api.nvim_buf_line_count(bufnr)
+  pcall(vim.api.nvim_win_set_cursor, chat_winid, { last_line, 0 })
+  vim.api.nvim_win_call(chat_winid, function()
+    -- Open any folds covering the tail so the latest content actually
+    -- shows — common when the captain scrolled back into a folded
+    -- turn and then hit "go to end" expecting to see the live agent
+    -- output, not a closed `### tools` section.
+    pcall(vim.cmd, "normal! zv")
+  end)
 end
 
 return M
