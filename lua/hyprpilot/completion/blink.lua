@@ -16,7 +16,7 @@
 ---   })
 ---
 --- The source only completes inside the composer buffer (filetype
---- `hyprpilot_input`) — other buffers should keep their native LSP /
+--- `hyprpilot_composer`) — other buffers should keep their native LSP /
 --- path / buffer providers as the source of truth. Captain can
 --- widen the activation predicate via `opts.enabled`.
 ---
@@ -34,7 +34,7 @@ Provider.__index = Provider
 
 ---@class hyprpilot.completion.blink.Opts
 ---@field sources? string[]                       -- override config.completion.sources for this provider
----@field enabled? fun(): boolean                 -- override default `filetype == "hyprpilot_input"` gate
+---@field enabled? fun(): boolean                 -- override default `filetype == "hyprpilot_composer"` gate
 ---@field manual_only? boolean                    -- only emit completions when blink invokes us with `manual` context
 
 -- blink.cmp's CompletionItemKind enum. Map our wire `kind` string
@@ -67,7 +67,10 @@ function Provider:enabled()
     return self.opts.enabled()
   end
   local bufnr = vim.api.nvim_get_current_buf()
-  return vim.bo[bufnr].filetype == "hyprpilot_input"
+  -- Dotted-aware: composer's ft is `hyprpilot_composer.markdown`
+  -- (alias so cmp/snippet sources keyed to "markdown" inherit).
+  -- Plain `==` comparison would miss the composer entirely.
+  return require("hyprpilot.chat.buffer").has_filetype(bufnr, "hyprpilot_composer")
 end
 
 ---blink.cmp asks for completions. `ctx` carries cursor + line state;

@@ -164,7 +164,7 @@ end
 ---NOT included on purpose: layout-manager opt-out keys. Captains
 ---who want a layout manager (any plugin that adopts windows by
 ---filetype into a managed sidebar) to handle hyprpilot register
----our filetypes (`hyprpilot`, `hyprpilot_input`,
+---our filetypes (`hyprpilot`, `hyprpilot_composer`,
 ---`hyprpilot_header`, `hyprpilot_queue_strip`,
 ---`hyprpilot_permission_row`) in that plugin's config and we get
 ---adoption for free. Captains who DON'T want adoption set the
@@ -248,15 +248,47 @@ end
 -- the captain's edgy setup looked like "hyprpilot windows ignore
 -- edgy styling". The non-edgy setups (no layout manager) still
 -- get the original gitsigns-leak protection.
+--- Dotted-filetype-aware membership check. The composer buffer's
+--- filetype is `hyprpilot_composer.markdown` (dotted alias so
+--- ftplugin/markdown.* + cmp/snippet sources keyed to "markdown"
+--- apply); equality `vim.bo.filetype == "hyprpilot_composer"`
+--- would miss it. Iterate the dot-separated components and match
+--- the bare ft name. Public so consumers (composer.is_buffer,
+--- completion.blink) call through the same predicate.
+---@param bufnr integer
+---@param ft string
+---@return boolean
+function M.has_filetype(bufnr, ft)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return false
+  end
+  local raw = vim.bo[bufnr].filetype
+  if type(raw) ~= "string" or raw == "" then
+    return false
+  end
+  for component in raw:gmatch("[^.]+") do
+    if component == ft then
+      return true
+    end
+  end
+  return false
+end
+
+--- Plugin-owned filetypes — the bare names. The composer surfaces
+--- `hyprpilot_composer.markdown` (see `composer/init.lua`); the
+--- bare component is what BufWinEnter / FileType autocmd patterns
+--- match against. Vim's autocmd ft pattern matching iterates the
+--- dotted components on its own.
+local plugin_filetypes = {
+  "hyprpilot",
+  "hyprpilot_composer",
+  "hyprpilot_header",
+  "hyprpilot_permission_row",
+  "hyprpilot_queue_strip",
+}
+
 do
   local group = vim.api.nvim_create_augroup("HyprpilotBufferChrome", { clear = true })
-  local plugin_filetypes = {
-    "hyprpilot",
-    "hyprpilot_input",
-    "hyprpilot_header",
-    "hyprpilot_permission_row",
-    "hyprpilot_queue_strip",
-  }
   vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter", "FileType" }, {
     group = group,
     pattern = plugin_filetypes,

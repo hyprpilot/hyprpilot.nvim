@@ -14,7 +14,7 @@
 -- filetype that's never assigned is dead code.
 for _, ft in ipairs({
   "hyprpilot", -- chat buffer (per-instance markdown transcript)
-  "hyprpilot_input", -- composer (captain's typing surface)
+  "hyprpilot_composer", -- composer (captain's typing surface)
   "hyprpilot_header", -- pinned 1-row header above the chat
   "hyprpilot_permission_row", -- pinned permission button strip
   "hyprpilot_queue_strip", -- pinned queue band between row + composer

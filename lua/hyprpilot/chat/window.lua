@@ -285,8 +285,18 @@ local function capture_associated_buffer()
     return
   end
   local ft = vim.bo[cur].filetype
-  if ft == "hyprpilot" or ft == "hyprpilot_input" or ft == "hyprpilot_header" or ft == "hyprpilot_permission_row" or ft == "hyprpilot_queue_strip" then
-    return
+  -- Iterate dotted components so the composer's
+  -- `hyprpilot_composer.markdown` ft also matches `hyprpilot_composer`.
+  for component in (ft or ""):gmatch("[^.]+") do
+    if
+      component == "hyprpilot"
+      or component == "hyprpilot_composer"
+      or component == "hyprpilot_header"
+      or component == "hyprpilot_permission_row"
+      or component == "hyprpilot_queue_strip"
+    then
+      return
+    end
   end
   M._associated_bufnr = cur
 end
@@ -508,7 +518,7 @@ vim.api.nvim_create_autocmd("BufEnter", {
       return
     end
     local ft = vim.bo[bufnr].filetype
-    if ft == "hyprpilot" or ft == "hyprpilot_input" or ft == "hyprpilot_header" or ft == "hyprpilot_permission_row" or ft == "hyprpilot_queue_strip" then
+    if ft == "hyprpilot" or ft == "hyprpilot_composer" or ft == "hyprpilot_header" or ft == "hyprpilot_permission_row" or ft == "hyprpilot_queue_strip" then
       return
     end
     -- Skip unnamed scratch buffers (filetype empty + no name) — they

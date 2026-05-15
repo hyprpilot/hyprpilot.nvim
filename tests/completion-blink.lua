@@ -14,7 +14,7 @@ local stub_client_with = helpers.stub_client_with
 ---@return fun()
 local function stub_composer_buffer()
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  vim.bo[bufnr].filetype = "hyprpilot_composer"
   local prev_buf = vim.api.nvim_get_current_buf()
   vim.api.nvim_set_current_buf(bufnr)
   return function()
@@ -109,7 +109,7 @@ end
 
 T["completion.blink: enabled() is false outside the composer buffer"] = function()
   -- Default (no `enabled` override): provider only fires when the
-  -- current buffer's filetype is `hyprpilot_input`.
+  -- current buffer's filetype is `hyprpilot_composer`.
   local Provider = require("hyprpilot.completion.blink")
   local source = Provider.new()
 

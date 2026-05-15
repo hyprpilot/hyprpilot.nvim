@@ -230,7 +230,13 @@ local function ensure_buffer(instance_id)
   local bufnr = vim.api.nvim_create_buf(false, true)
 
   vim.api.nvim_buf_set_name(bufnr, name)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  -- Dotted-filetype alias: composer is `hyprpilot_composer.markdown`
+  -- so vim's ftplugin/markdown.* runs (markdown ftplugin features),
+  -- AND blink/cmp / snippet sources keyed to "markdown" apply
+  -- (codeblock snippets, table snippets, etc.). Our own predicate
+  -- (`buffer.has_filetype`) iterates the dotted components so
+  -- callers comparing against "hyprpilot_composer" still match.
+  vim.bo[bufnr].filetype = "hyprpilot_composer.markdown"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"

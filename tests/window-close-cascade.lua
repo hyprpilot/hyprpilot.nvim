@@ -28,7 +28,7 @@ T["window.close cascades into composer.wipe (composer buffer drops with chat buf
   local composer_buf_name = "hyprpilot://composer/" .. id
   local stub_composer_buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(stub_composer_buf, composer_buf_name)
-  vim.bo[stub_composer_buf].filetype = "hyprpilot_input"
+  vim.bo[stub_composer_buf].filetype = "hyprpilot_composer"
 
   -- Push the stub into composer's internal map so `composer.wipe`
   -- finds it. Mirrors what the real `ensure_buffer` path does
