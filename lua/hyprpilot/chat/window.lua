@@ -252,7 +252,7 @@ local function open_split(ui, bufnr)
   vim.wo[M._winid].foldmethod = "manual"
   vim.wo[M._winid].foldenable = true
   vim.wo[M._winid].foldlevel = 99
-  vim.wo[M._winid].foldcolumn = "1"
+  vim.wo[M._winid].foldcolumn = "0"
   -- Custom foldtext renders the head row of each fold as-is (icon +
   -- status + title) instead of Neovim's default `+-- N lines:` chrome.
   vim.wo[M._winid].foldtext = "v:lua.require'hyprpilot.chat.render'.foldtext()"
