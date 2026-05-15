@@ -852,29 +852,32 @@ local function append_agent_text(state, text)
       -- `response_header_emitted` is per-layout so a re-streamed
       -- turn (continuation after cancel, etc.) doesn't double up.
       if layout ~= nil and not layout.response_header_emitted then
-        -- For agent turns whose only content is prose (no preceding
-        -- `### tasks` / `### thoughts` / `### tools` section), the
-        -- agent header lays down `## pilot` immediately followed by
-        -- the prose anchor — there's no blank between `## pilot`
-        -- and the lazy `### response` subhead. Pre-pad with a blank
-        -- when the row above the anchor isn't already empty so the
-        -- two headings don't collide.
+        -- Lay down a `### response` subhead so the prose sits inside
+        -- a sibling subsection of `### tasks` / `### thoughts` /
+        -- `### tools`. Subsequent chunks stream below the subhead
+        -- via the continuation branch.
         --
-        -- Trailing blank: `insert_at_prose_anchor` inserts at the
-        -- anchor row, and the anchor mark (gravity=true) sticks to
-        -- the right of the insertion — meaning the anchor's
-        -- original blank row persists below the inserted content.
-        -- That blank is the "one empty line between section
-        -- header and body" markdown wants, so we DON'T add another
-        -- trailing blank to the subhead lines (doing so produced
-        -- double-spacing between `### response` and the streamed
-        -- prose).
+        -- Spacing model (one blank between every adjacent element):
+        --
+        -- - leading blank pre-pads when `## pilot` (or any non-empty
+        --   row) sits directly above the anchor, so the subhead
+        --   doesn't collide with the previous element. When the row
+        --   above is already empty (e.g. a `### thoughts` section
+        --   just closed with its trailing blank), we skip the
+        --   leading to avoid double-blank stacking.
+        -- - trailing blank inserted UNCONDITIONALLY so markdown
+        --   sees one paragraph break between the subhead and the
+        --   prose. `insert_at_prose_anchor` inserts at the anchor
+        --   row and the anchor mark (gravity=true) sticks to the
+        --   right of the insertion, so the prose lands one row
+        --   below the trailing blank — exactly one blank between
+        --   `### response` and the first chunk.
         local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
         local line_above = ""
         if anchor_row > 0 then
           line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
         end
-        local subhead_lines = line_above == "" and { "### response" } or { "", "### response" }
+        local subhead_lines = line_above == "" and { "### response", "" } or { "", "### response", "" }
         insert_at_prose_anchor(state, turn_id, subhead_lines)
         layout.response_header_emitted = true
       end
@@ -1196,6 +1199,14 @@ local function render_tool_call(state, record)
   end
 
   block.tool_call_id = record.id
+  -- Stash the original toolKind on the block. `tool_call_update`
+  -- events from the daemon ship only the CHANGED fields (state,
+  -- formatted, output) — `toolKind` is omitted on updates. Without
+  -- this stash the update path would rebuild the header line via
+  -- `tool_icon(update.toolKind)` → nil → fallback to
+  -- `icons.tool_kind.default` (the cog), so every tool reverted to
+  -- the cog glyph the moment it finished executing.
+  block.tool_kind = record.toolKind
   state.tool_calls[record.id] = block.id
 
   -- Header gets a status colour; body intentionally has no
@@ -1235,14 +1246,21 @@ function M.handle_tool_call_update(instance_id, update)
     end)
   end
 
+  -- Merge the original toolKind back onto the update payload before
+  -- handing it to the header / body composers — daemon updates omit
+  -- toolKind because nothing about the kind ever changes during a
+  -- tool's lifecycle. The composers expect it to be present to pick
+  -- the right glyph + body language.
+  local merged = vim.tbl_extend("keep", update, { toolKind = block.tool_kind })
+
   with_autoscroll(state, function()
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row = block_range(state, block)
       local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(update) })
+      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(merged) })
     end)
 
-    replace_block_body(state, block, tool_body_lines(update.formatted, update.toolKind))
+    replace_block_body(state, block, tool_body_lines(merged.formatted, merged.toolKind))
 
     -- Re-apply highlights: header colour can flip with the new state;
     -- body has no line_hl_group (markdown highlighter handles it).

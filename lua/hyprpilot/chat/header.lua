@@ -332,11 +332,12 @@ end
 ---@return string, { start_col: integer, end_col: integer, hl: string }[]
 local function render_line(segments)
   local SEP = " · "
-  -- Lead with a markdown H1 prefix so the chat buffer's markdown
-  -- treesitter parser highlights the line as a heading. Per-segment
-  -- extmark hl groups still paint over the heading colour because
-  -- extmarks layer above syntax.
-  local PREFIX = "# "
+  -- Single leading space (no `# ` markdown prefix). We style every
+  -- segment via per-range extmarks ourselves; piggybacking on
+  -- treesitter's heading highlight would just fight our per-pill
+  -- colors. The space gives the leftmost segment a one-column gutter
+  -- against the window edge so it doesn't kiss the border.
+  local PREFIX = " "
   local pieces = { PREFIX }
   local ranges = {}
   local col = #PREFIX
@@ -352,7 +353,13 @@ local function render_line(segments)
   for i, seg in ipairs(valid) do
     if i > 1 then
       table.insert(pieces, SEP)
-      table.insert(ranges, { start_col = col + 1, end_col = col + 2, hl = "HyprpilotHeaderSeparator" })
+      -- The `·` glyph is U+00B7 → 2 bytes (0xC2 0xB7) in UTF-8.
+      -- The previous range covered only 1 byte (mid-character); the
+      -- extmark either rejected it or painted half a glyph, so the
+      -- separator highlight never showed. Cover both bytes via
+      -- `start_col = col + 1`, `end_col = col + 1 + #SEP_GLYPH`.
+      local SEP_GLYPH = "·"
+      table.insert(ranges, { start_col = col + 1, end_col = col + 1 + #SEP_GLYPH, hl = "HyprpilotHeaderSeparator" })
       col = col + #SEP
     end
     table.insert(pieces, seg.text)
@@ -383,10 +390,18 @@ function M.refresh()
     -- top. `line_hl_group` sets the trailing background so the bar
     -- reads as a cohesive band instead of segment-shaped islands.
     vim.api.nvim_buf_set_extmark(M._bufnr, NS, 0, 0, { line_hl_group = "HyprpilotHeader" })
+    -- Priority bump: the line starts with `# ` so the markdown
+    -- treesitter parser highlights it as H1 (`@markup.heading.1` →
+    -- `Title`) at the standard treesitter priority of 100. Default
+    -- extmark `priority` is 4096 in current Neovim, but explicit
+    -- 200 makes the override behavior intentional and survives any
+    -- future Neovim default change. Without this, every segment
+    -- inherits the heading colour and per-pill highlights vanish.
     for _, range in ipairs(ranges) do
       vim.api.nvim_buf_set_extmark(M._bufnr, NS, 0, range.start_col, {
         end_col = range.end_col,
         hl_group = range.hl,
+        priority = 200,
       })
     end
   end)
