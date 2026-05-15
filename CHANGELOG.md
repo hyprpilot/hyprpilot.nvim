@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.5.0...hyprpilot.nvim-v1.6.0) (2026-05-15)
+
+
+### Features
+
+* **palettes/instances:** cwd filter (mirrors palettes/sessions) ([#93](https://github.com/hyprpilot/hyprpilot.nvim/issues/93)) ([3164a64](https://github.com/hyprpilot/hyprpilot.nvim/commit/3164a64cc61ecfff8d9601a72440f5b2818b8c96))
+* **render:** aggregate per-tool stats into `### tools` section header ([#91](https://github.com/hyprpilot/hyprpilot.nvim/issues/91)) ([d972ae9](https://github.com/hyprpilot/hyprpilot.nvim/commit/d972ae9b6cc91454391b1013f76816e870fa45f6))
+
 ## [1.5.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.4.0...hyprpilot.nvim-v1.5.0) (2026-05-15)
 
 
