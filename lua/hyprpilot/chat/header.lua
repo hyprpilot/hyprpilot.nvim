@@ -431,11 +431,18 @@ function M.open()
     after = function(w)
       vim.wo[w].wrap = false
       vim.wo[w].winhighlight = "Normal:HyprpilotHeader"
-      -- Defer fix + sizing to a layout manager when one is loaded.
-      -- Edgy's `apply_size` clobbers post-adoption resizes anyway;
-      -- the captain configures the slot's `size = { height = 1 }`
-      -- + `wo = { winbar = false }` on their edgy view.
-      if not buffer.layout_manager_active() then
+      if buffer.layout_manager_active() then
+        -- Cooperate with edgy: set its dynamic-sizing hook to 1 row
+        -- so adopted layouts honour our intent. The captain's slot
+        -- config (`size = { height = 1 }`, `wo = { winbar = false }`)
+        -- also feeds in; this hook wins on the per-window read.
+        pcall(function()
+          vim.w[w].edgy_height = 1
+        end)
+        pcall(function()
+          require("edgy.layout").update()
+        end)
+      else
         vim.wo[w].winfixheight = true
         vim.wo[w].winfixwidth = true
         -- Lock to one row; `winfixheight` keeps `<C-W>=` from

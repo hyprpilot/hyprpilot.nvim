@@ -399,13 +399,21 @@ function M.refresh()
     end
   end)
 
-  if M.is_visible() and not buffer.layout_manager_active() then
-    -- Layout manager owns sizing once it adopts the row.
+  if M.is_visible() then
     local target = math.min(#lines, resolve_max_height())
     if target < 1 then
       target = 1
     end
-    if vim.api.nvim_win_get_height(M._winid) ~= target then
+    if buffer.layout_manager_active() then
+      -- Cooperate with edgy: set its dynamic-sizing hook + nudge
+      -- a layout pass so the change takes effect immediately.
+      pcall(function()
+        vim.w[M._winid].edgy_height = target
+      end)
+      pcall(function()
+        require("edgy.layout").update()
+      end)
+    elseif vim.api.nvim_win_get_height(M._winid) ~= target then
       pcall(vim.api.nvim_win_set_height, M._winid, target)
     end
   end

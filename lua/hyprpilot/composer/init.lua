@@ -139,15 +139,27 @@ function M.resize()
   if M._winid == nil or not vim.api.nvim_win_is_valid(M._winid) then
     return
   end
-  -- Layout manager owns sizing once it adopts the composer. Our
-  -- nvim_win_set_height races edgy's apply_size pass and flickers
-  -- without effect; the captain's edgy view config (size.height)
-  -- is the source of truth in that case.
-  if require("hyprpilot.chat.buffer").layout_manager_active() then
-    return
-  end
   local bufnr = vim.api.nvim_win_get_buf(M._winid)
   local target = compute_target_height(bufnr)
+
+  if require("hyprpilot.chat.buffer").layout_manager_active() then
+    -- Cooperate with edgy's apply_size pass instead of fighting it:
+    -- `vim.w[winid].edgy_height` is edgy's documented dynamic-sizing
+    -- hook (`win:dim("height")` reads this first, falls back to
+    -- view.size.height). Set the captain's expected height; edgy
+    -- redistributes leftover into the absorber view (the chat).
+    pcall(function()
+      vim.w[M._winid].edgy_height = target
+    end)
+    -- Nudge edgy to recompute on the next tick so the height takes
+    -- effect immediately (otherwise it waits for WinResized / a
+    -- layout event).
+    pcall(function()
+      require("edgy.layout").update()
+    end)
+    return
+  end
+
   if vim.api.nvim_win_get_height(M._winid) ~= target then
     pcall(vim.api.nvim_win_set_height, M._winid, target)
   end
