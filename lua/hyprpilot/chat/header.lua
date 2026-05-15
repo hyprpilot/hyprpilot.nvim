@@ -439,8 +439,9 @@ function M.open()
         pcall(function()
           vim.w[w].edgy_height = 1
         end)
+        -- `layout()` triggers resize + apply_size; `update()` doesn't.
         pcall(function()
-          require("edgy.layout").update()
+          require("edgy.layout").layout()
         end)
       else
         vim.wo[w].winfixheight = true

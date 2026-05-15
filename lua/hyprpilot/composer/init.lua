@@ -154,8 +154,11 @@ function M.resize()
     -- Nudge edgy to recompute on the next tick so the height takes
     -- effect immediately (otherwise it waits for WinResized / a
     -- layout event).
+    -- `M.layout()` triggers `edgebar:resize()` + `win:apply_size()`;
+    -- `M.update()` (the obvious-looking sibling) only refreshes the
+    -- win lists without recomputing dimensions.
     pcall(function()
-      require("edgy.layout").update()
+      require("edgy.layout").layout()
     end)
     return
   end
