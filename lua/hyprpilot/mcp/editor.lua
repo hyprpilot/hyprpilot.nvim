@@ -10,6 +10,7 @@
 ---     mcp.register(editor.cursor)
 ---     mcp.register(editor.read)
 
+local chat_buffer = require("hyprpilot.chat.buffer")
 local mcp = require("hyprpilot.mcp")
 
 local M = {}
@@ -39,16 +40,34 @@ end
 
 M.tools = {}
 
+---Resolve the editor window without ever spawning a new split —
+---read-only tools (`cursor` / `status`) need the editor's view but
+---shouldn't churn the captain's window layout just to answer a
+---question. Returns nil when every visible window is plugin-owned
+---(caller emits an explanatory empty/null payload).
+---@return integer?
+local function readonly_editor_winid()
+  local current = vim.api.nvim_get_current_win()
+  if not chat_buffer.is_plugin_window(current) then
+    return current
+  end
+  return chat_buffer.find_editor_winid()
+end
+
 M.tools.cursor = {
   name = "editor_cursor",
-  description = "Return what the captain is currently looking at: cursor position, buffer path / filetype, visible line range, window dimensions.",
+  description = "Return what the captain is currently looking at: cursor position, buffer path / filetype, visible line range, window dimensions. When the captain has focus in a hyprpilot surface (chat / composer), reports the editor window the captain came from instead, so navigation tools can pick up where the captain was.",
   schema = { type = "object", additionalProperties = false },
   handler = function()
-    local winid = vim.api.nvim_get_current_win()
+    local winid = readonly_editor_winid()
+    if winid == nil then
+      return { json = { available = false, reason = "no editor window visible — every window is a hyprpilot surface" } }
+    end
     local bufnr = vim.api.nvim_win_get_buf(winid)
     local cursor = vim.api.nvim_win_get_cursor(winid)
     return {
       json = {
+        available = true,
         bufnr = bufnr,
         path = vim.api.nvim_buf_get_name(bufnr),
         filetype = vim.bo[bufnr].filetype,
@@ -281,7 +300,12 @@ M.tools.files = {
 ---Resolve the buffer the action should target. Search order:
 ---  1. `bufnr` (if provided + valid)
 ---  2. `path` (open / adopt by absolute path)
----  3. current buffer
+---  3. The editor window's buffer (skipping plugin surfaces — so a
+---     default-target call while the captain has the composer focused
+---     resolves to whatever file they were last looking at, not the
+---     composer itself).
+---  4. Current buffer (last-resort fallback when every visible window
+---     is plugin-owned).
 ---Returns `(bufnr, err)`.
 ---@param args { bufnr?: integer, path?: string }
 ---@return integer?, string?
@@ -307,6 +331,14 @@ local function resolve_target_bufnr(args)
     end
     return bufnr, nil
   end
+  local current = vim.api.nvim_get_current_win()
+  if not chat_buffer.is_plugin_window(current) then
+    return vim.api.nvim_win_get_buf(current), nil
+  end
+  local editor_winid = chat_buffer.find_editor_winid()
+  if editor_winid ~= nil then
+    return vim.api.nvim_win_get_buf(editor_winid), nil
+  end
   return vim.api.nvim_get_current_buf(), nil
 end
 
@@ -325,9 +357,21 @@ M.tools.status = {
   },
   handler = function(args)
     local include_unlisted = args.include_unlisted == true
-    local winid = vim.api.nvim_get_current_win()
-    local bufnr = vim.api.nvim_win_get_buf(winid)
-    local cursor = vim.api.nvim_win_get_cursor(winid)
+    local winid = readonly_editor_winid()
+    local focused
+    if winid ~= nil then
+      local bufnr = vim.api.nvim_win_get_buf(winid)
+      local cursor = vim.api.nvim_win_get_cursor(winid)
+      focused = {
+        bufnr = bufnr,
+        path = vim.api.nvim_buf_get_name(bufnr),
+        filetype = vim.bo[bufnr].filetype,
+        modified = vim.bo[bufnr].modified,
+        line = cursor[1] - 1,
+        character = cursor[2],
+        line_count = vim.api.nvim_buf_line_count(bufnr),
+      }
+    end
 
     local buffers = {}
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
@@ -350,15 +394,7 @@ M.tools.status = {
       json = {
         mode = vim.api.nvim_get_mode().mode,
         cwd = vim.fn.getcwd(),
-        focused = {
-          bufnr = bufnr,
-          path = vim.api.nvim_buf_get_name(bufnr),
-          filetype = vim.bo[bufnr].filetype,
-          modified = vim.bo[bufnr].modified,
-          line = cursor[1] - 1,
-          character = cursor[2],
-          line_count = vim.api.nvim_buf_line_count(bufnr),
-        },
+        focused = focused,
         buffers = buffers,
       },
     }
@@ -372,6 +408,35 @@ local function center_cursor(winid)
   vim.api.nvim_win_call(winid, function()
     pcall(vim.cmd, "normal! zvzz")
   end)
+end
+
+---Resolve the window the agent's navigation should land in. Routes
+---away from plugin-owned surfaces (chat / composer / header / queue
+---strip / permission row) so an `editor_file_open` while the captain
+---is typing in the composer doesn't replace the composer's buffer
+---with the requested file. Search order:
+---  1. Current window, if not plugin-owned.
+---  2. First non-plugin, non-floating window in the tab.
+---  3. New `:topleft new` split (last resort — captain's only visible
+---     surfaces were plugin-owned).
+---Caller is responsible for `nvim_win_set_buf` afterward; we return
+---the winid only.
+---@return integer
+local function resolve_editor_winid()
+  local current = vim.api.nvim_get_current_win()
+  if not chat_buffer.is_plugin_window(current) then
+    return current
+  end
+  local found = chat_buffer.find_editor_winid()
+  if found ~= nil then
+    return found
+  end
+  -- No editor window visible — open one. `topleft new` keeps the
+  -- chat sidebar where it is and lands the new split at the top of
+  -- the editor area; the agent's `nvim_win_set_buf` then swaps the
+  -- empty unnamed buffer for the requested file.
+  vim.cmd("topleft new")
+  return vim.api.nvim_get_current_win()
 end
 
 M.tools.file_open = {
@@ -402,7 +467,7 @@ M.tools.file_open = {
       return err(why or "could not resolve target buffer")
     end
 
-    local winid = vim.api.nvim_get_current_win()
+    local winid = resolve_editor_winid()
     pcall(vim.api.nvim_win_set_buf, winid, target)
 
     local jumped_line, jumped_col
@@ -457,7 +522,7 @@ M.tools.jump = {
       return err(why or "could not resolve target buffer")
     end
 
-    local winid = vim.api.nvim_get_current_win()
+    local winid = resolve_editor_winid()
     if vim.api.nvim_win_get_buf(winid) ~= target then
       pcall(vim.api.nvim_win_set_buf, winid, target)
     end
@@ -511,7 +576,7 @@ M.tools.select = {
       return err(why or "could not resolve target buffer")
     end
 
-    local winid = vim.api.nvim_get_current_win()
+    local winid = resolve_editor_winid()
     if vim.api.nvim_win_get_buf(winid) ~= target then
       pcall(vim.api.nvim_win_set_buf, winid, target)
     end

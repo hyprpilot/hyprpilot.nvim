@@ -263,6 +263,10 @@ local function ensure_buffer(instance_id)
     M.close()
   end, "close composer split")
 
+  apply_action(bufnr, keymaps.detach, function()
+    require("hyprpilot.palettes.attachments").detach({ instance_id = instance_id })
+  end, "detach attachment")
+
   -- Repaint the attachment indicator (whose virt_lines are anchored
   -- to the current last buffer line) and re-resize the window on
   -- every edit. `paint_indicator` calls `M.resize` itself, so this

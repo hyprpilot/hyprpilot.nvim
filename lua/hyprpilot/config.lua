@@ -135,6 +135,7 @@ local M = {}
 ---@field submit? hyprpilot.ConfigComposerKeymapAction | false
 ---@field cancel? hyprpilot.ConfigComposerKeymapAction | false
 ---@field close?  hyprpilot.ConfigComposerKeymapAction | false
+---@field detach? hyprpilot.ConfigComposerKeymapAction | false  -- open the attachments palette to pick + detach a staged attachment
 
 ---@class hyprpilot.ConfigComposerKeymapAction
 ---@field normal? string | string[] | false
@@ -321,6 +322,12 @@ local defaults = {
       -- operators and visual selections).
       cancel = { normal = "<localleader>c", insert = "<C-c>" },
       close = { normal = "q" },
+      -- `<localleader>d` opens `palettes.attachments` against the
+      -- composer's bound instance — captains detach from inside the
+      -- buffer that owns the attachment instead of reaching for a
+      -- global `<leader>` keybind. No insert-mode default; insert is
+      -- typing land and `<C-d>` is already vim's de-indent.
+      detach = { normal = "<localleader>d" },
     },
   },
 }

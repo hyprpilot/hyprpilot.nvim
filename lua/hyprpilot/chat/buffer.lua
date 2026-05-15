@@ -287,6 +287,52 @@ local plugin_filetypes = {
   "hyprpilot_queue_strip",
 }
 
+---True when `bufnr`'s filetype matches one of the plugin-owned
+---surfaces (chat / composer / header / permission row / queue
+---strip). Dotted-aware via `has_filetype` so the composer's
+---`hyprpilot_composer.markdown` alias is recognised.
+---@param bufnr integer
+---@return boolean
+function M.is_plugin_buffer(bufnr)
+  for _, ft in ipairs(plugin_filetypes) do
+    if M.has_filetype(bufnr, ft) then
+      return true
+    end
+  end
+  return false
+end
+
+---True when `winid` shows a plugin-owned buffer.
+---@param winid integer
+---@return boolean
+function M.is_plugin_window(winid)
+  if not vim.api.nvim_win_is_valid(winid) then
+    return false
+  end
+  return M.is_plugin_buffer(vim.api.nvim_win_get_buf(winid))
+end
+
+---First currently-visible window whose buffer is NOT plugin-owned.
+---Used by tool-driven navigation (editor_file_open / jump / select)
+---to route file ops away from the chat / composer when the captain
+---has focus on one of our surfaces. Returns nil when every visible
+---window is plugin-owned (caller decides whether to spawn a new
+---split or error out).
+---@return integer?
+function M.find_editor_winid()
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) and not M.is_plugin_window(winid) then
+      -- Ignore floating windows — those are popups (snacks picker,
+      -- diff preview, telescope, etc.), not the captain's editor.
+      local config = vim.api.nvim_win_get_config(winid)
+      if config.relative == nil or config.relative == "" then
+        return winid
+      end
+    end
+  end
+  return nil
+end
+
 do
   local group = vim.api.nvim_create_augroup("HyprpilotBufferChrome", { clear = true })
   vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter", "FileType" }, {

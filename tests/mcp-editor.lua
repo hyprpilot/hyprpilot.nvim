@@ -175,6 +175,84 @@ T["editor_file_open: missing file returns is_error"] = function()
   MiniTest.expect.equality(result.is_error, true)
 end
 
+--- Helpers for the "captain has focus on a plugin window" tests
+--- below. We don't reach for the live composer module — just stamp
+--- the well-known plugin filetype onto a scratch buffer and shove it
+--- into a split so `find_editor_winid` / `is_plugin_window` see it.
+local function open_plugin_window(ft)
+  vim.cmd("new")
+  local winid = vim.api.nvim_get_current_win()
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[bufnr].filetype = ft
+  vim.bo[bufnr].buftype = "nofile"
+  return winid, bufnr
+end
+
+T["editor_cursor: when focus is on a plugin window, reroutes to the editor window"] = function()
+  vim.cmd("only")
+  vim.cmd("new") -- editor split
+  local editor_bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(editor_bufnr, 0, -1, false, { "alpha", "beta", "gamma" })
+  vim.api.nvim_win_set_cursor(0, { 2, 1 })
+
+  -- Now drop into a composer-flavoured window so the cursor handler
+  -- sees current = plugin and has to walk to the editor split.
+  local plugin_winid, plugin_bufnr = open_plugin_window("hyprpilot_composer.markdown")
+
+  local result = require("hyprpilot.mcp.editor").tools.cursor.handler({})
+
+  MiniTest.expect.equality(result.json.available, true)
+  MiniTest.expect.equality(result.json.bufnr, editor_bufnr)
+  MiniTest.expect.equality(result.json.line, 1)
+
+  pcall(vim.api.nvim_win_close, plugin_winid, true)
+  pcall(vim.api.nvim_buf_delete, plugin_bufnr, { force = true })
+  pcall(vim.api.nvim_buf_delete, editor_bufnr, { force = true })
+end
+
+T["editor_cursor: when every visible window is a plugin surface, reports unavailable"] = function()
+  -- Collapse to one window, then turn that window's buffer into a
+  -- plugin surface — `:only` can't leave us with zero windows, so
+  -- this is the cleanest "only plugin windows visible" setup.
+  vim.cmd("only")
+  local sole_bufnr = vim.api.nvim_create_buf(false, true)
+  vim.bo[sole_bufnr].filetype = "hyprpilot_composer.markdown"
+  vim.api.nvim_win_set_buf(0, sole_bufnr)
+
+  local result = require("hyprpilot.mcp.editor").tools.cursor.handler({})
+  MiniTest.expect.equality(result.json.available, false)
+
+  -- Restore a normal scratch buffer so later cases don't inherit
+  -- the plugin filetype on the sole remaining window.
+  vim.api.nvim_win_set_buf(0, vim.api.nvim_create_buf(false, true))
+  pcall(vim.api.nvim_buf_delete, sole_bufnr, { force = true })
+end
+
+T["editor_jump: when focus is on a plugin window, lands the cursor in the editor window (not the plugin one)"] = function()
+  vim.cmd("only")
+  vim.cmd("new")
+  local editor_winid = vim.api.nvim_get_current_win()
+  local editor_bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(editor_bufnr, 0, -1, false, { "one", "two", "three", "four" })
+
+  local plugin_winid, plugin_bufnr = open_plugin_window("hyprpilot_composer.markdown")
+
+  -- Jump targeting the editor buffer explicitly (so we don't need the
+  -- default-target heuristic too).
+  require("hyprpilot.mcp.editor").tools.jump.handler({ bufnr = editor_bufnr, line = 3 })
+
+  -- Composer window's buffer must NOT have changed.
+  MiniTest.expect.equality(vim.api.nvim_win_get_buf(plugin_winid), plugin_bufnr)
+  -- Editor window now shows the editor buffer at line 3.
+  MiniTest.expect.equality(vim.api.nvim_win_get_buf(editor_winid), editor_bufnr)
+  local cursor = vim.api.nvim_win_get_cursor(editor_winid)
+  MiniTest.expect.equality(cursor[1], 3)
+
+  pcall(vim.api.nvim_win_close, plugin_winid, true)
+  pcall(vim.api.nvim_buf_delete, plugin_bufnr, { force = true })
+  pcall(vim.api.nvim_buf_delete, editor_bufnr, { force = true })
+end
+
 T["editor_format: no-LSP buffer returns ok (no-op)"] = function()
   vim.cmd("new")
   local bufnr = vim.api.nvim_get_current_buf()
