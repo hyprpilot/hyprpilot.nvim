@@ -4,32 +4,29 @@
 --- shared 1-buffer / 1-window pinned strip that auto-shows when the
 --- active instance has queued prompts, auto-resizes to fit content
 --- (clamped via `config.queue_strip.max_height`), auto-hides on
---- empty queue. Keymaps are configurable via
---- `config.queue_strip.keymaps`:
+--- empty queue.
 ---
----   send_head — send the head entry now (dispatch through composer)
----   drop_head — drop the head entry without sending
----   drop_all  — clear the entire queue for this instance
----   edit_head — pop the head into the composer for editing
+--- Daemon-mirror model: the daemon owns the queue (single mailbox,
+--- monotonic `enqueued_seq`, lock-protected). This module mirrors
+--- the per-instance snapshot in a local cache (`M._items_by_instance`)
+--- driven by:
+---   - `instance/snapshot/queue` on chat-window show (hydrate)
+---   - `acp:queue-changed` events (full-snapshot wholesale replace)
+--- The strip's keymaps fire daemon `queue/*` RPCs; nothing here
+--- pops or mutates locally.
 ---
---- The strip displays:
----
----   N queued (cancel-flush on turn cancel)
----
----   1. <text preview>
----   2. <text preview>
----   ...
----
---- Head-line drainage matches the desktop overlay's
---- `QueueStrip.vue` — captain stays in explicit control. We don't
---- expose per-row actions in v1 (no cursor-driven focus); the
---- keymaps always target the head. Per-row actions are a follow-up
---- once captain wants it.
+--- Keymaps (configurable via `config.queue_strip.keymaps`):
+---   send_head — `queue/dispatch` (no itemId = head)
+---   drop_head — `queue/remove` of the head id
+---   drop_all  — `queue/clear`
+---   edit_head — pop the head into the composer for in-place edit
+---     (composer's submit then calls `queue/edit` instead of
+---     `prompts/send` — see `composer/init.lua` editing-slot path)
 
 local buffer = require("hyprpilot.chat.buffer")
-local composer_queue = require("hyprpilot.composer.queue")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
+local rpc_queue = require("hyprpilot.rpc.queue")
 local window = require("hyprpilot.chat.window")
 
 local M = {}
@@ -43,8 +40,14 @@ M._winid = nil
 ---@type integer?
 M._bufnr = nil
 
----@type fun()?
-local _unsubscribe = nil
+--- Per-instance daemon-mirror cache. Wholesale-replaced on
+--- QueueChanged events + snapshot hydrate. The strip reads from
+--- this for rendering; all mutations come from the daemon.
+---@type table<string, hyprpilot.QueueItem[]>
+M._items_by_instance = {}
+
+---@type string?
+M._rendered_instance_id = nil
 
 ---True when the strip window exists + is valid.
 ---@return boolean
@@ -57,6 +60,26 @@ function M.is_visible()
     return false
   end
   return true
+end
+
+---Read the current cached queue for an instance. Returns an empty
+---list when nothing's cached (instance never hydrated, or queue
+---legitimately empty). Public so the composer can read the queue
+---size to decide submit-vs-edit display hints.
+---@param instance_id string?
+---@return hyprpilot.QueueItem[]
+function M.items(instance_id)
+  if instance_id == nil then
+    return {}
+  end
+  return M._items_by_instance[instance_id] or {}
+end
+
+---True when `instance_id` has at least one queued item.
+---@param instance_id string?
+---@return boolean
+function M.has_items(instance_id)
+  return instance_id ~= nil and #(M._items_by_instance[instance_id] or {}) > 0
 end
 
 ---@return integer
@@ -91,7 +114,7 @@ end
 ---@param instance_id string
 ---@return string[]?, integer?
 local function compose(instance_id)
-  local items = composer_queue.list(instance_id)
+  local items = M.items(instance_id)
   if #items == 0 then
     return nil, nil
   end
@@ -101,10 +124,9 @@ local function compose(instance_id)
 
   for i, entry in ipairs(items) do
     -- Strip newlines + trim long entries to one row so the strip
-    -- stays compact. Captain can pop into the composer for the
-    -- full text via the `edit_head` keymap.
+    -- stays compact. Captain pops into the composer for the full
+    -- text via the `edit_head` keymap.
     local preview = (entry.text or ""):gsub("\n", " ⏎ ")
-
     table.insert(lines, string.format("  %d. %s", i, preview))
   end
 
@@ -128,24 +150,19 @@ local function resolve_max_height()
   return math.max(3, math.floor(vim.o.lines * 0.4))
 end
 
----Repaint the strip with the current head-instance queue. Closes
----the window when the queue is empty.
+---Repaint the strip with the active instance's cached queue.
+---Closes the window when the queue is empty.
 ---
 ---Stamps `M._rendered_instance_id` on every successful refresh so
 ---keymap closures (send_head / drop_head / drop_all / edit_head)
 ---operate on the instance the strip was VISUALLY showing at the
 ---moment the captain pressed the key — not whatever
----`window.active_instance()` happens to return at fire time. Without
----this, a fast switch between two instances with non-empty queues
----could pop B's queue against the strip's A-rendered display.
+---`window.active_instance()` happens to return at fire time.
 function M.refresh()
   ensure_buffer()
 
   local instance_id = window.active_instance()
-  if instance_id == nil or not composer_queue.has_items(instance_id) then
-    -- Queue empty / no active instance → close the window if open;
-    -- the buffer persists for next show. Clear the rendered binding
-    -- so a stale instance id doesn't linger.
+  if instance_id == nil or not M.has_items(instance_id) then
     M._rendered_instance_id = nil
     M.close()
     return
@@ -171,13 +188,9 @@ function M.refresh()
   if M.is_visible() then
     local target = math.min(#lines, resolve_max_height())
     if buffer.layout_manager_active() then
-      -- Cooperate with edgy: set its dynamic-sizing hook
-      -- (`vim.w[winid].edgy_height`, read first by `win:dim`),
-      -- then nudge a layout pass so the change takes effect now.
       pcall(function()
         vim.w[M._winid].edgy_height = target
       end)
-      -- `layout()` triggers resize + apply_size; `update()` doesn't.
       pcall(function()
         require("edgy.layout").layout()
       end)
@@ -187,40 +200,27 @@ function M.refresh()
   end
 end
 
----Resolve the instance the strip's keymaps should operate on. The
----strip displays exactly one instance's queue at a time; keymap
----callbacks must target THAT instance, not whatever
----`window.active_instance()` returns at fire time (a switch that
----hasn't repainted the strip yet would otherwise route the action
----to the wrong queue). Falls back to the active instance only when
----the strip hasn't rendered anything yet (early refresh path).
+---Resolve the instance the strip's keymaps should operate on.
 ---@return string?
 local function rendered_instance()
   return M._rendered_instance_id or window.active_instance()
 end
 
----Send the head entry NOW: pop it from the queue + dispatch via
----composer.submit. Routes against the strip's currently-rendered
----instance.
+---Send the head entry NOW: `queue/dispatch` (no itemId = head).
+---Daemon pops the item, fires its prompt, broadcasts a new
+---`QueueChanged` snapshot which our event listener will reflect.
 local function send_head()
   local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
-  local entry = composer_queue.pop_head(instance_id)
-  if entry == nil then
-    return
-  end
-  log.debug("queue_strip.send_head: instance=%s id=%s", instance_id, entry.id)
-  -- `bypass_queue = true` so the composer fires the prompt
-  -- straight to the daemon even if the agent is still working —
-  -- the captain explicitly chose to drain, so the activity guard
-  -- doesn't apply here.
-  require("hyprpilot.composer").submit(entry.text, {
-    instance_id = instance_id,
-    attachments = entry.attachments,
-    bypass_queue = true,
-  })
+  rpc_queue.dispatch(instance_id, nil, function(err, result)
+    if err ~= nil then
+      log.warn("queue_strip.send_head: %s", err.message)
+      return
+    end
+    log.debug("queue_strip.send_head: instance=%s accepted=%s", instance_id, tostring(result and result.accepted))
+  end)
 end
 
 local function drop_head()
@@ -228,7 +228,16 @@ local function drop_head()
   if instance_id == nil then
     return
   end
-  composer_queue.pop_head(instance_id)
+  local items = M.items(instance_id)
+  local head = items[1]
+  if head == nil then
+    return
+  end
+  rpc_queue.remove(instance_id, head.id, function(err)
+    if err ~= nil then
+      log.warn("queue_strip.drop_head: %s", err.message)
+    end
+  end)
 end
 
 local function drop_all()
@@ -236,37 +245,41 @@ local function drop_all()
   if instance_id == nil then
     return
   end
-  composer_queue.flush(instance_id)
+  rpc_queue.clear(instance_id, function(err, cleared)
+    if err ~= nil then
+      log.warn("queue_strip.drop_all: %s", err.message)
+      return
+    end
+    log.debug("queue_strip.drop_all: instance=%s cleared=%d", instance_id, cleared or 0)
+  end)
 end
 
+---Edit the head queued item in the composer. Item STAYS in the
+---queue (no pop) — composer pre-fills with the item's text +
+---attachments and stamps the editing-slot pointer so the next
+---submit calls `queue/edit` (preserving the slot's id /
+---enqueued_seq / enqueued_at) instead of `prompts/send`.
 local function edit_head()
   local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
-  local entry = composer_queue.pop_head(instance_id)
-  if entry == nil then
+  local items = M.items(instance_id)
+  local head = items[1]
+  if head == nil then
     return
   end
-  -- Drop the popped entry's text into the composer buffer for
-  -- editing — matches the desktop overlay's `onQueueEdit` behaviour
-  -- (load + edit, no auto-dispatch). Captain hits submit (or the
-  -- composer's <CR>) when they're ready; if the agent is still busy
-  -- the prompt will naturally re-enqueue at the tail.
-  -- TODO: preserve attachments — `composer.set_text` only carries
-  -- text today; the staged attachment list on `entry.attachments` is
-  -- dropped on edit. Once we expose a public attach-from-list API
-  -- on the composer, restore them here.
-  if entry.attachments ~= nil and #entry.attachments > 0 then
-    log.warn("queue_strip.edit_head: dropping %d attachment(s) on edit (not yet supported)", #entry.attachments)
-  end
-  require("hyprpilot.composer").set_text(instance_id, entry.text)
+  -- Composer's `set_text` accepts an editing-slot opt that stamps
+  -- the per-instance state so the next submit routes through
+  -- `queue/edit` instead of `prompts/send`.
+  require("hyprpilot.composer").set_text(instance_id, head.text or "", {
+    editing_queue_item_id = head.id,
+    editing_queue_attachments = head.attachments,
+  })
 end
 
 local apply_action = require("hyprpilot.ui.keymaps").apply_action
 
----Install the strip keymaps for `bufnr`. Reads from
----`config.options.queue_strip.keymaps`.
 ---@param bufnr integer
 local function install_keymaps(bufnr)
   local keymaps = (config.options.queue_strip or {}).keymaps or {}
@@ -276,7 +289,7 @@ local function install_keymaps(bufnr)
   apply_action(bufnr, keymaps.edit_head, edit_head, "edit queued head in composer")
 end
 
--- Test-only seam: see `permission-row.lua` for rationale.
+-- Test-only seam.
 ---@param bufnr integer
 function M._install_keymaps_for_tests(bufnr)
   install_keymaps(bufnr)
@@ -284,13 +297,13 @@ end
 
 ---Open the strip below the chat split + above the composer. Sized
 ---to fit content (capped by `max_height`). No-op when the chat
----isn't visible OR the queue is empty.
+---isn't visible OR the active instance has no queued items.
 local function open_window()
   if not window.is_visible() then
     return
   end
   local instance_id = window.active_instance()
-  if instance_id == nil or not composer_queue.has_items(instance_id) then
+  if instance_id == nil or not M.has_items(instance_id) then
     return
   end
 
@@ -306,10 +319,6 @@ local function open_window()
     after = function(w)
       install_keymaps(bufnr)
       vim.wo[w].wrap = false
-      -- `winfixheight` protects against `equalalways` redistributing
-      -- height when sibling splits open. `nvim_win_set_height` still
-      -- works (the flag only blocks automatic equalize). Skip under
-      -- a layout manager which owns sizing itself.
       if not buffer.layout_manager_active() then
         vim.wo[w].winfixheight = true
         vim.wo[w].winfixwidth = true
@@ -335,36 +344,83 @@ function M.close()
   M._winid = nil
 end
 
----Bootstrap the strip: subscribe to queue-change notifications.
----Idempotent; called from `chat.window.show` after the chat split
----is up. The actual window pops in via `refresh()` when the queue
----has items.
-function M.ensure_listeners()
-  if _unsubscribe ~= nil then
+---Wholesale replace the cached queue for `instance_id` with a
+---fresh snapshot. Called from:
+---  - `chat.events.dispatch` on `queue_changed` events (full-
+---    snapshot replace; daemon never sends deltas)
+---  - `M.hydrate` once on chat-window show (initial snapshot read)
+---After replacement, repaints the strip if the active instance
+---is the one we just updated.
+---@param instance_id string
+---@param items hyprpilot.QueueItem[]
+function M.handle_queue_changed(instance_id, items)
+  if type(instance_id) ~= "string" or instance_id == "" then
     return
   end
-  _unsubscribe = composer_queue.on_change(function(_instance_id)
-    -- Repaint on every change so the strip auto-shows/hides as the
-    -- queue grows/empties. Multi-instance: the strip always shows
-    -- the active instance's queue, so refresh ignores its arg and
-    -- re-resolves the active instance from `window.active_instance`.
-    if window.is_visible() then
-      local active = window.active_instance()
-      if active ~= nil and composer_queue.has_items(active) then
-        open_window()
+  M._items_by_instance[instance_id] = type(items) == "table" and items or {}
+  -- Repaint when the change applies to whatever the strip is
+  -- currently rendering (or could be rendering — the strip auto-
+  -- shows for the active instance when items appear).
+  if window.is_visible() then
+    local active = window.active_instance()
+    if active == instance_id then
+      if M.has_items(active) then
+        if M.is_visible() then
+          M.refresh()
+        else
+          open_window()
+        end
       else
         M.close()
       end
     end
+  end
+end
+
+---Fire-and-forget snapshot read for `instance_id`. Replaces the
+---local cache on success. Called from `chat.window.show` so the
+---first chat-buffer mount carries the current daemon queue (the
+---boot snapshot already includes it but a session re-show without
+---a fresh boot needs this).
+---@param instance_id string
+function M.hydrate(instance_id)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    return
+  end
+  rpc_queue.snapshot(instance_id, function(err, items)
+    if err ~= nil then
+      log.debug("queue_strip.hydrate: snapshot failed for %s: %s", instance_id, err.message)
+      return
+    end
+    M.handle_queue_changed(instance_id, items or {})
   end)
 end
 
----Wipe listener + state. Used on shutdown teardown.
-function M._reset()
-  if _unsubscribe ~= nil then
-    _unsubscribe()
-    _unsubscribe = nil
+---Drop the per-instance cache for `instance_id`. Called from
+---`chat.window.close` when the instance is wiped.
+---@param instance_id string
+function M.forget(instance_id)
+  if M._items_by_instance[instance_id] ~= nil then
+    M._items_by_instance[instance_id] = nil
+    if M._rendered_instance_id == instance_id then
+      M._rendered_instance_id = nil
+      M.close()
+    end
   end
+end
+
+---Bootstrap. No autocmd subscribers anymore (the cache is updated
+---directly from `chat/events.lua`'s `queue_changed` branch).
+---Kept as a no-op so existing callers don't break; left as a
+---hook for future test seams.
+function M.ensure_listeners()
+  -- Intentionally empty.
+end
+
+---Test-only reset.
+function M._reset()
+  M._items_by_instance = {}
+  M._rendered_instance_id = nil
   M.close()
 end
 

@@ -181,7 +181,8 @@ function M.close(instance_id)
   require("hyprpilot.chat.winbar").forget(id)
   require("hyprpilot.composer").wipe(id)
   require("hyprpilot.chat.permission-row").drop_for_instance(id)
-  require("hyprpilot.composer.queue").reset(id)
+  -- Daemon owns the queue now; just drop our local mirror cache.
+  require("hyprpilot.chat.queue-strip").forget(id)
   require("hyprpilot.notification.attention")._clear_instance(id)
   -- Drop activity for the closed instance so a stale "tool" / "thinking"
   -- doesn't surface on a future header read for the same instance id.
@@ -394,6 +395,13 @@ function M.show(instance_id)
   -- `ensure_listeners`; the strip stays hidden when the queue is
   -- empty.
   require("hyprpilot.chat.queue-strip").ensure_listeners()
+  -- Daemon-mirror queue: pull a fresh `instance/snapshot/queue` so
+  -- the strip carries the daemon's current items even on a chat
+  -- re-show without a fresh boot. Cache populates async; refresh
+  -- runs immediately + repaints again when the snapshot lands.
+  if resolved_id ~= nil then
+    require("hyprpilot.chat.queue-strip").hydrate(resolved_id)
+  end
   require("hyprpilot.chat.queue-strip").refresh()
   -- Permission row mirrors the same pattern — when the chat
   -- re-appears (after a `:q`-driven WinClosed cascade or a
@@ -568,9 +576,11 @@ function M.switch(instance_id)
     -- active instance's first pending entry (or hides if none).
     require("hyprpilot.chat.permission-row").refresh_if_queued()
 
-    -- Queue strip: re-render against the new instance's queue.
-    -- Without this, the strip showed the previous instance's
-    -- queued prompts until the next queue mutation event.
+    -- Queue strip: hydrate the daemon snapshot for the new
+    -- instance so the strip reflects current daemon-side state
+    -- (the QueueChanged listener catches mutations going forward;
+    -- this one-shot covers the gap if we joined mid-queue).
+    require("hyprpilot.chat.queue-strip").hydrate(instance_id)
     require("hyprpilot.chat.queue-strip").refresh()
 
     -- Composer.open() is idempotent: when the composer's already

@@ -52,10 +52,9 @@ function M.shutdown()
     require("hyprpilot.chat.window").hide()
   end)
 
-  -- Queue-strip listener teardown. The subscriber otherwise keeps
-  -- a closure on `composer-queue` alive across hot-reload cycles,
-  -- which fires `open_window()` against a stale `chat.window`
-  -- module reference.
+  -- Queue-strip cache teardown — drops every per-instance daemon-
+  -- mirror entry so a hot-reload doesn't render against a stale
+  -- snapshot from the previous session.
   step("queue_strip._reset", function()
     require("hyprpilot.chat.queue-strip")._reset()
   end)

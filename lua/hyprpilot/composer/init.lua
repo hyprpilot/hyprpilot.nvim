@@ -36,6 +36,15 @@ local buffers = {}
 ---@type table<string, hyprpilot.composer.Attachment[]>
 local attachments_by_instance = {}
 
+--- Per-instance "you're editing this queue slot" pointer. Set by
+--- `M.set_text` when the queue strip's `edit_head` keymap loads a
+--- queued item into the composer. The next `M.submit` on this
+--- instance routes through `queue/edit` (preserving the slot's
+--- `id` / `enqueued_seq` / `enqueued_at` daemon-side) instead of
+--- firing `prompts/send`. Cleared on submit success / wipe.
+---@type table<string, { item_id: string, attachments?: table[] }>
+local editing_queue_slot_by_instance = {}
+
 ---@type integer?
 M._winid = nil
 
@@ -808,25 +817,28 @@ function M.toggle()
 end
 
 ---Submit the composer's contents (or `text` when provided) to the
----active instance. Clears the composer buffer on success.
+---active instance.
 ---
----When the agent is non-idle (`status.activity.kind ~= "idle"`),
----the submit is routed to the per-instance composer queue
----(`composer_queue.enqueue`) instead of going straight to the
----daemon. The queue strip surfaces queued prompts above the
----composer; captain drains the head explicitly via the strip's
----`<C-CR>` (default) keymap. This mirrors the desktop overlay's
----`QueueStrip.vue` behaviour — captain stays in control of when
----the next prompt lands. Pass `opts.bypass_queue = true` to skip
----the queue check (the queue strip's send-now path uses this).
----`opts.with_config` mirrors `instances.spawn`'s field — only the
----daemon's auto-spawn fallback on `prompts/send` (no `instance_id`
----resolved live) actually uses it, but the composer carries it
----through for completeness so a captain calling
----`composer.submit(text, { with_config = ... })` against a not-yet-
----spawned instance gets the patches honoured.
+---Daemon-mirror queue model: the daemon owns the queue (single
+---mailbox, monotonic `enqueued_seq`, lock-protected). `prompts/send`
+---auto-routes — daemon decides immediate dispatch vs append-to-tail
+---based on its own busy-check. The plugin no longer pre-checks
+---activity / parks on a local FIFO; we just fire and let the daemon
+---reply with a `disposition: "sent" | "queued" | "drafted"` so we
+---can emit the right `HyprpilotPrompt*` autocmd.
+---
+---Edit-slot route: when the captain edited a queued item via the
+---queue strip's `edit_head` keymap, `M.set_text` stamped the
+---`editing_queue_slot_by_instance[id]` pointer. The next submit
+---fires `queue/edit` instead of `prompts/send`, preserving the
+---slot's daemon-side `id` / `enqueued_seq` / `enqueued_at`. On
+---success the slot pointer is cleared.
+---
+---`opts.with_config` overlays the captain's global baseline (the
+---daemon's auto-spawn fallback uses it when no instance_id is yet
+---live).
 ---@param text string?
----@param opts { instance_id?: string, attachments?: table[], bypass_queue?: boolean, with_config?: hyprpilot.ConfigPatch[] }?
+---@param opts { instance_id?: string, attachments?: table[], with_config?: hyprpilot.ConfigPatch[] }?
 function M.submit(text, opts)
   opts = opts or {}
   local instance_id = opts.instance_id or window.active_instance()
@@ -859,9 +871,6 @@ function M.submit(text, opts)
     return
   end
 
-  -- Snapshot attachments at submit / enqueue time so a downstream
-  -- composer edit doesn't change what a queued turn eventually
-  -- sends (matches desktop overlay's pop-then-edit semantics).
   local attachments_snapshot = opts.attachments
   if attachments_snapshot == nil then
     local staged = attachments_by_instance[instance_id]
@@ -870,29 +879,40 @@ function M.submit(text, opts)
     end
   end
 
-  -- Queue route: when THIS instance's agent is busy, park the prompt
-  -- instead of firing it. Critically reads `status.activity(instance_id)`
-  -- — the per-instance activity, NOT the global flag. Without this
-  -- scoping, a long turn on instance A would cause every prompt
-  -- typed in idle instance B's composer to land in B's queue (the
-  -- old global flag was non-idle because A was running).
-  if not opts.bypass_queue then
-    local activity = require("hyprpilot.status").activity(instance_id)
-    if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
-      require("hyprpilot.composer.queue").enqueue(instance_id, {
-        text = text,
-        attachments = attachments_snapshot,
-      })
-      -- Clear the composer buffer + staged attachments — the queue
-      -- now owns the snapshot. Same UX as a successful send.
-      if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
-        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
-      end
-      attachments_by_instance[instance_id] = nil
-      paint_indicator(instance_id)
-      log.debug("composer.submit: queued (activity=%s)", tostring(activity.kind))
-      return
+  local function clear_composer_state()
+    if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
     end
+    attachments_by_instance[instance_id] = nil
+    paint_indicator(instance_id)
+  end
+
+  -- Edit-slot route: the captain pulled a queued item into the
+  -- composer via `edit_head`; submit means "save the edit", not
+  -- "send a new prompt". Daemon's `queue/edit` preserves the
+  -- slot's id / enqueued_seq / enqueued_at so the queue order
+  -- stays intact.
+  local edit_slot = editing_queue_slot_by_instance[instance_id]
+  if edit_slot ~= nil and type(edit_slot.item_id) == "string" then
+    require("hyprpilot.rpc.queue").edit(instance_id, edit_slot.item_id, {
+      text = text,
+      attachments = attachments_snapshot or {},
+    }, function(err)
+      if err ~= nil then
+        -- Keep the composer draft + slot pointer for retry. Daemon
+        -- error already logged at the rpc layer; surface here too
+        -- so the captain knows the edit didn't take.
+        log.warn("composer.submit: queue/edit failed: %s — keeping composer draft for retry", err.message)
+        return
+      end
+      editing_queue_slot_by_instance[instance_id] = nil
+      clear_composer_state()
+      pcall(vim.api.nvim_exec_autocmds, "User", {
+        pattern = "HyprpilotQueueItemEdited",
+        data = { instance_id = instance_id, bufnr = bufnr, item_id = edit_slot.item_id },
+      })
+    end)
+    return
   end
 
   local payload = { instanceId = instance_id, text = text }
@@ -906,9 +926,7 @@ function M.submit(text, opts)
 
   -- Fire BEFORE the daemon round-trip so captain autocmd handlers
   -- (UI detach, statusline "sending…" pill, etc.) can run while
-  -- the request is still in flight. Captains who hook this won't
-  -- double-fire when a submit is queue-parked — that path returns
-  -- above.
+  -- the request is still in flight.
   pcall(vim.api.nvim_exec_autocmds, "User", {
     pattern = "HyprpilotComposerSubmitted",
     data = { instance_id = instance_id, bufnr = bufnr, text = text },
@@ -920,20 +938,9 @@ function M.submit(text, opts)
       return
     end
 
-    -- Daemon-side disposition (added in hyprpilot's post-`with_config`
-    -- branch): the daemon takes a `was_busy` snapshot at submit time
-    -- and returns one of `sent` (immediate dispatch) / `queued`
-    -- (parked behind the in-flight turn, auto-dispatches when it
-    -- drains) / `drafted` (draft path — composer doesn't use this).
-    --
-    -- Races: the plugin's pre-flight `status.activity.kind ~= "idle"`
-    -- check parks on the local queue strip when busy, but a turn
-    -- can start between that check and the daemon receiving the
-    -- request. In that case the daemon queues the prompt and we
-    -- learn about it here. The composer still clears (the captain
-    -- handed off the draft), but a `HyprpilotPromptQueued` event
-    -- fires so notification handlers (bell, toast) can surface that
-    -- the prompt isn't running yet.
+    -- Daemon-side disposition: `sent` = dispatched immediately,
+    -- `queued` = appended to tail (auto-routed by daemon's
+    -- busy-check), `drafted` = draft path (composer doesn't use).
     local disposition = (type(result) == "table" and type(result.disposition) == "string") and result.disposition or "sent"
     local accepted = type(result) ~= "table" or result.accepted ~= false
 
@@ -942,11 +949,7 @@ function M.submit(text, opts)
       return
     end
 
-    if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
-      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
-    end
-    attachments_by_instance[instance_id] = nil
-    paint_indicator(instance_id)
+    clear_composer_state()
 
     if disposition == "queued" then
       log.info("composer.submit: daemon queued the prompt behind an in-flight turn")
@@ -997,6 +1000,7 @@ function M.wipe(instance_id)
 
   buffers[instance_id] = nil
   attachments_by_instance[instance_id] = nil
+  editing_queue_slot_by_instance[instance_id] = nil
 end
 
 ---Replace the composer buffer's content for `instance_id` with
@@ -1006,16 +1010,46 @@ end
 ---`onQueueEdit` behaviour) instead of an immediate dispatch.
 ---Opens the composer + drops the cursor at end-of-buffer in
 ---insert mode so the captain can keep typing immediately.
+---
+---Optional `opts.editing_queue_item_id`: when set, the next
+---`M.submit` for this instance routes through `queue/edit`
+---against the daemon (preserving the slot's id /
+---enqueued_seq / enqueued_at) instead of `prompts/send`.
+---`opts.editing_queue_attachments` pre-fills the staged
+---attachments so the captain sees the originals + can drop /
+---add before saving.
 ---@param instance_id string
 ---@param text string
-function M.set_text(instance_id, text)
+---@param opts? { editing_queue_item_id?: string, editing_queue_attachments?: table[] }
+function M.set_text(instance_id, text, opts)
   if type(text) ~= "string" then
     log.warn("composer.set_text: text must be a string")
     return
   end
 
+  opts = opts or {}
+
   local bufnr = ensure_buffer(instance_id)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(text, "\n", { plain = true }))
+
+  -- Stamp the editing-slot pointer so the next submit routes
+  -- through `queue/edit`. Cleared on submit success / wipe / a
+  -- subsequent `set_text` without the opt (captain abandoned the
+  -- edit and is starting a fresh prompt).
+  if type(opts.editing_queue_item_id) == "string" and opts.editing_queue_item_id ~= "" then
+    editing_queue_slot_by_instance[instance_id] = {
+      item_id = opts.editing_queue_item_id,
+      attachments = opts.editing_queue_attachments,
+    }
+    -- Pre-fill staged attachments from the queued item so the
+    -- captain sees the originals and can drop / add before save.
+    if type(opts.editing_queue_attachments) == "table" then
+      attachments_by_instance[instance_id] = vim.deepcopy(opts.editing_queue_attachments)
+    end
+  else
+    editing_queue_slot_by_instance[instance_id] = nil
+  end
+
   paint_indicator(instance_id)
 
   -- Surface the composer for editing. `focus = true` is the default,
