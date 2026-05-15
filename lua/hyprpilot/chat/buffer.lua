@@ -184,6 +184,19 @@ function M.suppress_external_ui(bufnr)
   vim.b[bufnr].miniindentscope_disable = true
 end
 
+---True when a layout manager (folke/edgy.nvim today; could expand)
+---is loaded. Multiple plugin surfaces gate their own
+---window-management — `winfixheight` / `winfixwidth` pins,
+---`nvim_win_set_height` resizes — on this so we don't fight the
+---layout manager's `apply_size` pass. Edgy patches
+---`nvim_win_set_height` globally and re-asserts its own computed
+---heights on every layout tick; our resize calls visibly flicker
+---and lose every race against it.
+---@return boolean
+function M.layout_manager_active()
+  return package.loaded["edgy"] ~= nil
+end
+
 ---Strip Neovim's stock chrome off a plugin window: hide the
 ---statusline (set to a single space — Neovim renders nothing
 ---visible), suppress numbers / fold column / sign column, and

@@ -29,16 +29,13 @@ M._associated_bufnr = nil
 --- spawned instance OR re-locks for a follow-on auto-spawn.
 local _auto_spawn_in_flight = false
 
---- True when a layout-manager plugin (folke/edgy.nvim today; could
---- expand) is loaded — when present, defer width / fix-width to the
---- layout manager's slot so its `size = 0.4 / 180` config takes
---- effect. Without this gate, our `winfixwidth = true` would lock
---- the window at the plugin's resolved width and edgy could never
---- reach its slot size.
----@return boolean
-local function layout_manager_active()
-  return package.loaded["edgy"] ~= nil
-end
+-- Shared gate (`buffer.layout_manager_active`) — every plugin
+-- surface uses the same predicate to decide whether to set its own
+-- `winfixwidth` / `winfixheight` / `nvim_win_set_height`. Edgy
+-- patches `nvim_win_set_height` and re-asserts on every layout
+-- tick; doing the work just makes the layout race visibly
+-- flicker.
+local layout_manager_active = buffer.layout_manager_active
 
 ---Resolve the configured width to a concrete column count.
 ---@param ui hyprpilot.ConfigUi

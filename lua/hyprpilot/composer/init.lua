@@ -139,6 +139,13 @@ function M.resize()
   if M._winid == nil or not vim.api.nvim_win_is_valid(M._winid) then
     return
   end
+  -- Layout manager owns sizing once it adopts the composer. Our
+  -- nvim_win_set_height races edgy's apply_size pass and flickers
+  -- without effect; the captain's edgy view config (size.height)
+  -- is the source of truth in that case.
+  if require("hyprpilot.chat.buffer").layout_manager_active() then
+    return
+  end
   local bufnr = vim.api.nvim_win_get_buf(M._winid)
   local target = compute_target_height(bufnr)
   if vim.api.nvim_win_get_height(M._winid) ~= target then
@@ -742,14 +749,17 @@ function M.open(opts)
   M._winid = vim.api.nvim_get_current_win()
 
   vim.api.nvim_win_set_buf(M._winid, bufnr)
-  require("hyprpilot.chat.buffer").clean_window_chrome(M._winid)
+  local buffer_mod = require("hyprpilot.chat.buffer")
+  buffer_mod.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   -- `winfixheight` keeps `<C-W>=` and other equalisation passes from
   -- redistributing space onto the composer, so our auto-resize stays
-  -- the source of truth.
-  vim.wo[M._winid].winfixheight = true
-  vim.wo[M._winid].winfixwidth = true
+  -- the source of truth. Skip when a layout manager owns sizing.
+  if not buffer_mod.layout_manager_active() then
+    vim.wo[M._winid].winfixheight = true
+    vim.wo[M._winid].winfixwidth = true
+  end
 
   paint_indicator(instance_id)
   M.resize()

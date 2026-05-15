@@ -399,7 +399,8 @@ function M.refresh()
     end
   end)
 
-  if M.is_visible() then
+  if M.is_visible() and not buffer.layout_manager_active() then
+    -- Layout manager owns sizing once it adopts the row.
     local target = math.min(#lines, resolve_max_height())
     if target < 1 then
       target = 1
@@ -556,8 +557,10 @@ local function open_window()
       install_keymaps(bufnr)
       vim.wo[w].wrap = true
       vim.wo[w].linebreak = true
-      vim.wo[w].winfixheight = true
-      vim.wo[w].winfixwidth = true
+      if not buffer.layout_manager_active() then
+        vim.wo[w].winfixheight = true
+        vim.wo[w].winfixwidth = true
+      end
     end,
   })
   if winid == nil then

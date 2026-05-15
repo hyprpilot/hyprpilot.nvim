@@ -430,12 +430,18 @@ function M.open()
     bufnr = bufnr,
     after = function(w)
       vim.wo[w].wrap = false
-      vim.wo[w].winfixheight = true
-      vim.wo[w].winfixwidth = true
       vim.wo[w].winhighlight = "Normal:HyprpilotHeader"
-      -- Lock to one row; `winfixheight` keeps `<C-W>=` from
-      -- redistributing space onto it.
-      vim.api.nvim_win_set_height(w, 1)
+      -- Defer fix + sizing to a layout manager when one is loaded.
+      -- Edgy's `apply_size` clobbers post-adoption resizes anyway;
+      -- the captain configures the slot's `size = { height = 1 }`
+      -- + `wo = { winbar = false }` on their edgy view.
+      if not buffer.layout_manager_active() then
+        vim.wo[w].winfixheight = true
+        vim.wo[w].winfixwidth = true
+        -- Lock to one row; `winfixheight` keeps `<C-W>=` from
+        -- redistributing space onto it.
+        vim.api.nvim_win_set_height(w, 1)
+      end
     end,
   })
   if winid == nil then

@@ -168,7 +168,10 @@ function M.refresh()
     end
   end)
 
-  if M.is_visible() then
+  if M.is_visible() and not buffer.layout_manager_active() then
+    -- Layout manager owns sizing once it adopts the strip; our
+    -- nvim_win_set_height races edgy's apply_size and visibly
+    -- flickers without effect.
     local target = math.min(#lines, resolve_max_height())
     if vim.api.nvim_win_get_height(M._winid) ~= target then
       pcall(vim.api.nvim_win_set_height, M._winid, target)
@@ -295,8 +298,10 @@ local function open_window()
     after = function(w)
       install_keymaps(bufnr)
       vim.wo[w].wrap = false
-      vim.wo[w].winfixheight = true
-      vim.wo[w].winfixwidth = true
+      if not buffer.layout_manager_active() then
+        vim.wo[w].winfixheight = true
+        vim.wo[w].winfixwidth = true
+      end
     end,
   })
   if winid == nil then
