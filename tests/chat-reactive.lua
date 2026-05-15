@@ -65,7 +65,7 @@ T["activity transitions through tool / awaiting_permission via dispatch flow"] =
   MiniTest.expect.equality(status.get("inst-1").activity.kind, "idle")
 end
 
-T["turn_ended with cancel-shaped stopReason marks the chip as cancelled on the pilot header"] = function()
+T["turn_ended writes the verbatim daemon stopReason as a prose-tail marker"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -81,22 +81,58 @@ T["turn_ended with cancel-shaped stopReason marks the chip as cancelled on the p
 
   render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "cancelled_by_user" })
 
-  -- The cancel chip should land on the `## pilot` header line as a
-  -- stat-style pill, NOT as virt_text at the end of the buffer.
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local pilot_line
+
+  -- Pilot header MUST NOT carry a stop pill anymore — it lives at
+  -- the prose tail instead.
   for _, l in ipairs(lines) do
     if l:find("^## pilot") then
-      pilot_line = l
-      break
+      MiniTest.expect.equality(l:find("cancelled", 1, true), nil)
+      MiniTest.expect.equality(l:find("ok ", 1, true), nil)
     end
   end
 
-  MiniTest.expect.equality(pilot_line ~= nil, true)
-  MiniTest.expect.equality(pilot_line:find("[cancelled cancelled_by_user]", 1, true) ~= nil, true)
+  -- A single `> cancelled_by_user` line lands at the prose tail —
+  -- verbatim daemon text, no humanisation.
+  local saw_marker = false
+  for _, l in ipairs(lines) do
+    if l == "> cancelled_by_user" then
+      saw_marker = true
+      break
+    end
+  end
+  MiniTest.expect.equality(saw_marker, true)
 
-  -- The unused `state` binding makes selene happy without dropping a
-  -- side effect we still need (state registration with the buffer).
+  local _ = state
+  helpers.cleanup_instance(id)
+end
+
+T["turn_ended writes a verbatim error marker when the daemon ships an error"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.handle_turn_started({ instanceId = id, turnId = "t1" })
+  render.handle_transcript({
+    instanceId = id,
+    turnId = "t1",
+    item = { kind = "agent_text", text = "partial reply" },
+  })
+
+  render.handle_turn_ended({ instanceId = id, turnId = "t1", error = "context_window_exceeded" })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local saw_error_marker = false
+  for _, l in ipairs(lines) do
+    if l == "> context_window_exceeded" then
+      saw_error_marker = true
+      break
+    end
+  end
+  MiniTest.expect.equality(saw_error_marker, true)
+
   local _ = state
   helpers.cleanup_instance(id)
 end
