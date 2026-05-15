@@ -220,14 +220,21 @@ function M.clean_window_chrome(winid)
 end
 
 -- Re-apply window chrome cleanup whenever a plugin-owned buffer
--- becomes visible. A layout manager (folke/edgy.nvim) or a peer
--- plugin that re-hooks `WinEnter` may reset window-local options
--- (signcolumn, statusline, etc.) after our open-time setup,
--- letting things like gitsigns / mini.diff / lsp signs leak `+`,
--- `>`, `~` glyphs onto the chat surface. Re-applying on
--- `BufWinEnter` + `WinEnter` is cheap and idempotent — captures
--- every adoption / focus path without us having to know which
--- peer reset the option.
+-- becomes visible. A peer plugin that re-hooks `WinEnter` may reset
+-- window-local options (signcolumn, statusline, etc.) after our
+-- open-time setup, letting things like gitsigns / mini.diff / lsp
+-- signs leak `+`, `>`, `~` glyphs onto the chat surface. Re-
+-- applying on `BufWinEnter` + `WinEnter` is cheap and idempotent —
+-- captures every adoption / focus path without us having to know
+-- which peer reset the option.
+--
+-- IMPORTANT: when a layout manager (folke/edgy.nvim) is loaded we
+-- back off and let it own the chrome. Edgy applies its own
+-- `winbar`, `winhighlight`, `signcolumn`, etc. on adopted windows;
+-- our re-apply was stripping those right after edgy set them, so
+-- the captain's edgy setup looked like "hyprpilot windows ignore
+-- edgy styling". The non-edgy setups (no layout manager) still
+-- get the original gitsigns-leak protection.
 do
   local group = vim.api.nvim_create_augroup("HyprpilotBufferChrome", { clear = true })
   local plugin_filetypes = {
@@ -241,6 +248,13 @@ do
     group = group,
     pattern = plugin_filetypes,
     callback = function(args)
+      -- Skip everything when a layout manager is present — it owns
+      -- window-local options on the adopted window. Captain's
+      -- styling came through `edgy`'s slot config; we shouldn't
+      -- fight that.
+      if package.loaded["edgy"] ~= nil then
+        return
+      end
       -- BufWinEnter / FileType pass `args.buf`; WinEnter doesn't
       -- (it's a window event). For WinEnter we look up the bufnr
       -- from the current window.
