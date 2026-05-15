@@ -82,7 +82,18 @@ function M.shutdown()
     require("hyprpilot.chat.events")._reset()
   end)
 
-  -- 3. Disconnect the client. Closes the socket via `chanclose`,
+  -- 3. Fire `instances/shutdown` for every locally-owned instance
+  --    (`spawned_with_shutdown = true`). MUST run before
+  --    `client.disconnect` — once the channel is gone the requests
+  --    silently fail and the daemon accumulates orphan instances
+  --    across captain exit / relaunch cycles. Fire-and-forget; the
+  --    daemon processes asynchronously and we don't care about the
+  --    reply (we're exiting).
+  step("instances.cleanup_owned", function()
+    require("hyprpilot.rpc.instances").cleanup_owned()
+  end)
+
+  -- 4. Disconnect the client. Closes the socket via `chanclose`,
   --    stops local in-flight timers (each timer:stop + close in
   --    `client.teardown`), fails pending callbacks with a clean
   --    "client disconnected" error so anything still awaiting
@@ -91,7 +102,7 @@ function M.shutdown()
     require("hyprpilot.client").disconnect()
   end)
 
-  -- 4. Force-close every window still showing a plugin buffer.
+  -- 5. Force-close every window still showing a plugin buffer.
   --    `chat.window.hide()` cascades through composer / header /
   --    queue strip / permission row, but a layout manager (edgy)
   --    can still hold "ghost" slots — and `nvim_buf_delete` below
@@ -118,7 +129,7 @@ function M.shutdown()
     end
   end)
 
-  -- 5. Wipe every plugin-managed buffer. All of them are named with
+  -- 6. Wipe every plugin-managed buffer. All of them are named with
   --    a `hyprpilot://` prefix (header / permission_row / composer
   --    /<id> / <instance-id> / placeholder), so a single walk-by-
   --    prefix catches them in one go without each module needing a

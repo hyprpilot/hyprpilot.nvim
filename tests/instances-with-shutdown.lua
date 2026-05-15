@@ -99,7 +99,7 @@ T["focus(ensure=true) defaults with_shutdown true; ensure=false (pure focus) nev
   restore_client()
 end
 
-T["VimLeavePre fires instances/shutdown for owned instances only"] = function()
+T["cleanup_owned fires instances/shutdown for owned instances only"] = function()
   local restore_client, calls = helpers.stub_client_with({
     ["instances/shutdown"] = { result = { instanceId = "ignored" } },
   })
@@ -129,8 +129,11 @@ T["VimLeavePre fires instances/shutdown for owned instances only"] = function()
     spawned_with_shutdown = false,
   }, { activate = false })
 
-  -- Trigger the VimLeavePre autocmd we wired at module load.
-  vim.api.nvim_exec_autocmds("VimLeavePre", { group = "HyprpilotInstancesCleanup" })
+  -- Drive the public entry point directly. Production wires this
+  -- into `rpc/shutdown.lua::M.shutdown` BEFORE `client.disconnect`
+  -- so the requests reach the daemon — see the audit gap fix where
+  -- the prior standalone `VimLeavePre` autocmd lost the order race.
+  require("hyprpilot.rpc.instances").cleanup_owned()
 
   -- Only the owned instance gets the shutdown call.
   local shutdown_targets = {}
@@ -148,5 +151,6 @@ T["VimLeavePre fires instances/shutdown for owned instances only"] = function()
   window._instances["inst-borrowed"] = nil
   restore_client()
 end
+
 
 return T

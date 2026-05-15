@@ -584,44 +584,38 @@ function M.set_option(instance_id, config_id, value, callback)
   end)
 end
 
--- VimLeavePre cleanup — fire `instances/shutdown` for every live
--- instance the registry marks as `spawned_with_shutdown = true`.
--- Captains who passed `with_shutdown = true` on spawn opted in to
--- "this instance is tied to my nvim lifetime"; cleaning up here
--- prevents the daemon from accumulating orphans across exit /
--- relaunch cycles.
---
--- Choice of `VimLeavePre` over `VimLeave`: VimLeavePre fires
--- BEFORE the channel teardown sequence, so `client.request` still
--- reaches the daemon. We DON'T wait for the response — the daemon
--- processes the request out-of-band and the captain doesn't care
--- about the reply (we're exiting anyway). Fire-and-forget keeps
--- exit snappy.
---
--- Owned instances the captain already shut down via the palette
--- get dropped from `_instances` by `window.close`, so the
--- iteration here naturally skips them.
-vim.api.nvim_create_autocmd("VimLeavePre", {
-  group = vim.api.nvim_create_augroup("HyprpilotInstancesCleanup", { clear = true }),
-  callback = function()
-    local owned = {}
-    for id, state in pairs(window._instances) do
-      if state.spawned_with_shutdown == true then
-        table.insert(owned, id)
-      end
+---Fire `instances/shutdown` for every live instance the registry
+---marks as `spawned_with_shutdown = true`. Captains who passed
+---`with_shutdown = true` on spawn opted in to "this instance is
+---tied to my nvim lifetime"; this is the cleanup that prevents the
+---daemon from accumulating orphans across exit / relaunch cycles.
+---
+---Called from `rpc/shutdown.lua::M.shutdown` BEFORE
+---`client.disconnect` runs — otherwise the requests hit a dead
+---channel and the daemon never sees them. Earlier this was a
+---standalone `VimLeavePre` autocmd that lost the order race against
+---the shutdown autocmd and silently no-op'd in production.
+---
+---Fire-and-forget: response (if any) lands after we've already
+---exited; nothing here would consume it. The daemon's
+---`instances/shutdown` handler is idempotent for already-dead
+---instances. Owned instances the captain already shut down via the
+---palette get dropped from `_instances` by `window.close`, so the
+---iteration naturally skips them.
+function M.cleanup_owned()
+  local owned = {}
+  for id, state in pairs(window._instances) do
+    if state.spawned_with_shutdown == true then
+      table.insert(owned, id)
     end
-    if #owned == 0 then
-      return
-    end
-    log.debug("instances.cleanup: shutting down %d owned instance(s) on VimLeavePre", #owned)
-    for _, id in ipairs(owned) do
-      -- Fire-and-forget: response (if any) lands after we've
-      -- already exited; nothing here would consume it. The
-      -- daemon's `instances/shutdown` handler is idempotent for
-      -- already-dead instances.
-      pcall(client.request, "instances/shutdown", { instanceId = id }, nil, function() end)
-    end
-  end,
-})
+  end
+  if #owned == 0 then
+    return
+  end
+  log.debug("instances.cleanup_owned: shutting down %d owned instance(s)", #owned)
+  for _, id in ipairs(owned) do
+    pcall(client.request, "instances/shutdown", { instanceId = id }, nil, function() end)
+  end
+end
 
 return M
