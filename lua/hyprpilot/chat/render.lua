@@ -2016,6 +2016,30 @@ function M.handle_turn_ended(event)
       layout.stop_reason = tostring(event.stopReason)
     end
     repaint_pilot_header(state, layout)
+
+    -- Inline error block: when the turn ended with an error
+    -- (limit-reached, internal error, transport hiccup, etc.) the
+    -- chip on the pilot header surfaces it at-a-glance, but
+    -- captains scrolled away from the header miss it. Drop a
+    -- prominent markdown-quoted block at the prose tail with the
+    -- error message verbatim — same place the captain's eyes
+    -- already are when reading the response. Idempotent per turn
+    -- via `layout.error_block_emitted`.
+    if event.error ~= nil and not layout.error_block_emitted then
+      layout.error_block_emitted = true
+      local raw = tostring(event.error)
+      local error_lines = { "", "> [!error] turn ended with error" }
+      for _, line in ipairs(vim.split(raw, "\n", { plain = true })) do
+        table.insert(error_lines, "> " .. line)
+      end
+      table.insert(error_lines, "")
+      local first_row = insert_at_prose_anchor(state, effective_turn_id, error_lines)
+      -- Apply error highlight to the lead row + every body row of
+      -- the block. `apply_line_hl` is one-row-at-a-time.
+      for i = 0, #error_lines - 2 do
+        apply_line_hl(state, first_row + i, "HyprpilotTurnEndError")
+      end
+    end
   end
 
   -- Fold each section (tasks / thoughts / tools) belonging to this
