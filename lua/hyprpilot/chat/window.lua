@@ -224,6 +224,33 @@ local function resolve_target_buffer(instance_id)
   return buffer.placeholder()
 end
 
+---Apply the chat window's fold setup. Idempotent — safe to call on
+---every `BufWinEnter` / `WinEnter` so a layout manager (edgy) re-
+---adopting the window doesn't strand us with the manager's defaults
+---(`foldenable = true`, `foldmethod = "manual"`, `foldlevel = 99` —
+---the values `:N,Mfold` callers from `chat/render.lua` rely on to
+---auto-collapse tool calls / thoughts on `turn_ended`).
+---@param winid integer
+function M.apply_fold_setup(winid)
+  if not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+  -- Manual folds: render.lua programmatically calls `:N,Mfold` when
+  -- a turn ends or a block reaches a terminal state. Foldexpr would
+  -- recompute on every motion and clobber fold open/closed state we
+  -- care about (a closed t1 fold should stay closed when t3 ends).
+  vim.wo[winid].foldmethod = "manual"
+  vim.wo[winid].foldenable = true
+  vim.wo[winid].foldlevel = 99
+  vim.wo[winid].foldcolumn = "0"
+  -- Custom foldtext renders the head row of each fold as-is (icon +
+  -- status + title) instead of Neovim's default `+-- N lines:` chrome.
+  vim.wo[winid].foldtext = "v:lua.require'hyprpilot.chat.render'.foldtext()"
+  if not (vim.wo[winid].fillchars or ""):match("fold:") then
+    vim.wo[winid].fillchars = vim.wo[winid].fillchars .. ",fold: "
+  end
+end
+
 ---Open the side split (idempotent — returns early when already visible).
 ---@param ui hyprpilot.ConfigUi
 ---@param bufnr integer
@@ -245,18 +272,7 @@ local function open_split(ui, bufnr)
   if not layout_manager_active() then
     vim.wo[M._winid].winfixwidth = true
   end
-  -- Manual folds: render.lua programmatically calls `:N,Mfold` when
-  -- a turn ends or a block reaches a terminal state. Foldexpr would
-  -- recompute on every motion and clobber fold open/closed state we
-  -- care about (a closed t1 fold should stay closed when t3 ends).
-  vim.wo[M._winid].foldmethod = "manual"
-  vim.wo[M._winid].foldenable = true
-  vim.wo[M._winid].foldlevel = 99
-  vim.wo[M._winid].foldcolumn = "0"
-  -- Custom foldtext renders the head row of each fold as-is (icon +
-  -- status + title) instead of Neovim's default `+-- N lines:` chrome.
-  vim.wo[M._winid].foldtext = "v:lua.require'hyprpilot.chat.render'.foldtext()"
-  vim.wo[M._winid].fillchars = vim.wo[M._winid].fillchars .. ",fold: "
+  M.apply_fold_setup(M._winid)
 
   -- Header info lives in a pinned 1-row split above the chat (see
   -- `chat.header`). The winbar architecture was abandoned because it
@@ -651,6 +667,34 @@ function M.load_older(instance_id, opts, callback)
   end
 
   require("hyprpilot.chat.events").load_older(id, opts, callback)
+end
+
+-- Re-assert the chat window's fold setup whenever a chat buffer
+-- becomes visible. A layout manager (edgy) that adopts the window
+-- after `open_split` ran will reset window-local options on
+-- adoption — including foldmethod / foldenable — and the auto-
+-- collapse-on-turn-end behaviour silently dies. Plain BufWinEnter /
+-- WinEnter on the chat ft is enough; the helper is idempotent.
+do
+  local group = vim.api.nvim_create_augroup("HyprpilotChatFolds", { clear = true })
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter", "FileType" }, {
+    group = group,
+    pattern = "hyprpilot",
+    callback = function(args)
+      local bufnr = args.buf
+      if bufnr == nil or bufnr == 0 then
+        bufnr = vim.api.nvim_get_current_buf()
+      end
+      if not vim.api.nvim_buf_is_valid(bufnr) then
+        return
+      end
+      local winid = vim.fn.bufwinid(bufnr)
+      if winid == -1 then
+        return
+      end
+      M.apply_fold_setup(winid)
+    end,
+  })
 end
 
 return M
