@@ -296,10 +296,10 @@ local defaults = {
       ended = "", -- nf-fa-stop (U+F04D) — daemon shut down
       error = "", -- nf-fa-exclamation_triangle (U+F071)
     },
-    -- Composer activity strip (single virt-text row above the
-    -- composer's first writable line). Mirrors the per-instance
-    -- activity emitted by chat events: streaming / thinking / tool /
-    -- awaiting_permission.
+    -- Per-instance activity glyphs — rendered as the trailing
+    -- `[<glyph> <label>]` segment on the chat header. Mirrors the
+    -- activity events the chat dispatcher emits: streaming /
+    -- thinking / tool / awaiting_permission.
     activity = {
       streaming = "", -- nf-fa-bolt (U+F0E7)
       thinking = "", -- nf-fa-lightbulb_o (U+F0EB)

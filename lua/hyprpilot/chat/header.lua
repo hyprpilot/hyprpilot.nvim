@@ -150,21 +150,49 @@ local function status_pill(meta)
   return state, hl
 end
 
----Shorten a cwd to `../<basename>` for the header pill. Keeps the
----last directory name (the captain's context) without burning the
----bar's width on the full path. The full cwd shows up in the
----instance preview palette when needed.
----@param cwd? string
----@return string?
-local function shorten_cwd(cwd)
-  if type(cwd) ~= "string" or cwd == "" then
-    return nil
+---Trailing activity segment — `[<glyph> <label>]` shape, with a
+---per-kind highlight (HyprpilotHeaderActivity*). Captain wanted
+---this in brackets so it visually reads as "transient state on
+---top of the static identity columns" rather than another pill.
+---Returns nil text when idle so the segment is skipped entirely.
+---@param activity? hyprpilot.Activity
+---@return string?, string  -- text, hl_group
+local function activity_pill(activity)
+  if activity == nil or activity.kind == nil or activity.kind == "idle" then
+    return nil, "HyprpilotHeaderActivity"
   end
-  local base = vim.fs.basename(cwd)
-  if base == nil or base == "" or base == "/" then
-    return cwd
+  local icons = (require("hyprpilot.config").options.icons or {}).activity or {}
+  local glyph
+  local hl
+  local label
+  if activity.kind == "tool" then
+    glyph = icons.tool
+    hl = "HyprpilotHeaderActivityTool"
+    label = (type(activity.tool_name) == "string" and activity.tool_name ~= "") and activity.tool_name or "tool"
+  elseif activity.kind == "thinking" then
+    glyph = icons.thinking
+    hl = "HyprpilotHeaderActivityThinking"
+    label = "thinking"
+  elseif activity.kind == "streaming" then
+    glyph = icons.streaming
+    hl = "HyprpilotHeaderActivityStreaming"
+    label = "streaming"
+  elseif activity.kind == "awaiting_permission" then
+    glyph = icons.permission
+    hl = "HyprpilotHeaderActivityPermission"
+    label = "awaiting permission"
+  else
+    return nil, "HyprpilotHeaderActivity"
   end
-  return "../" .. base
+  -- Bracketed: `[⚡ streaming]` / `[⚙ Bash]`. Glyph optional —
+  -- captains who clear an icon still get the bare `[label]` shape.
+  local body
+  if glyph ~= nil and glyph ~= "" then
+    body = glyph .. " " .. label
+  else
+    body = label
+  end
+  return "[" .. body .. "]", hl
 end
 
 ---Track which instances we've already kicked an `instances/info`
@@ -229,22 +257,18 @@ local function compose_segments()
 
   local meta = winbar._meta[instance_id]
 
-  -- Order (left → right): status · cwd · brand · name · profile ·
+  -- Order (left → right): status · brand · name · profile ·
   -- agent · model · mode · used/size · +N mcps. The status pill
   -- leads because it's the captain's "is this thing alive" check;
-  -- cwd is next so they orient by directory; brand / name / etc.
-  -- follow as identifying detail. Activity moved out of the header
-  -- entirely — it lives on the composer now (where the captain is
-  -- typing) for max visibility.
+  -- brand / name / etc. follow as identifying detail. Activity
+  -- moved out of the header entirely — it lives on the composer
+  -- now (where the captain is typing) for max visibility. Cwd was
+  -- pulled too: redundant with the captain's known working dir +
+  -- always shown in the instances palette preview when needed.
   local segments = {}
   local status_text, status_hl = status_pill(meta)
   if is_str(status_text) then
     table.insert(segments, { text = status_text, hl = status_hl })
-  end
-
-  local cwd_short = meta ~= nil and shorten_cwd(meta.cwd) or nil
-  if is_str(cwd_short) then
-    table.insert(segments, { text = cwd_short, hl = "HyprpilotHeaderCwd" })
   end
 
   table.insert(segments, { text = "hyprpilot", hl = "HyprpilotHeaderBrand" })
@@ -282,6 +306,18 @@ local function compose_segments()
     if (tonumber(meta.mcps_count) or 0) > 0 then
       table.insert(segments, { text = string.format("+%d mcps", meta.mcps_count), hl = "HyprpilotHeaderCount" })
     end
+  end
+
+  -- Activity comes LAST so the static identity columns (name /
+  -- profile / agent / model / mode / usage) stay positionally
+  -- stable as the agent's state changes — nothing left of the
+  -- bracket shifts when streaming / thinking / tool flips. Reads
+  -- the per-instance activity (not the global) so background
+  -- instances don't leak their state onto the foreground header.
+  local activity = require("hyprpilot.status").activity(instance_id)
+  local activity_text, activity_hl = activity_pill(activity)
+  if is_str(activity_text) then
+    table.insert(segments, { text = activity_text, hl = activity_hl })
   end
 
   return segments

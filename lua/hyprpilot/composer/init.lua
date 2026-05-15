@@ -40,24 +40,12 @@ local attachments_by_instance = {}
 M._winid = nil
 
 local INDICATOR_NS = vim.api.nvim_create_namespace("hyprpilot.composer.attachments")
---- Distinct namespace for the activity strip so attachment repaints
---- (which clear `INDICATOR_NS`) don't wipe the activity line and
---- vice-versa. One row of virt_text painted at the top of the
---- composer buffer when the bound instance is non-idle.
-local ACTIVITY_NS = vim.api.nvim_create_namespace("hyprpilot.composer.activity")
 
 ---Forward-declared so `ensure_buffer`'s TextChanged autocmd can call
 ---it (the body anchors virt_lines to the current last line, so every
 ---edit needs a reposition to keep attachments at the bottom).
 ---@type fun(instance_id: string)
 local paint_indicator
-
----Forward-declared activity painter — fires from the per-buffer
----HyprpilotActivityChanged listener and from `M.open` so a fresh
----open shows the current activity immediately rather than waiting
----for the next event tick.
----@type fun(instance_id: string)
-local paint_activity
 
 ---Resolve a config height field (`min_height` or `max_height`). The
 ---field can be `integer` (constant), a `fun(lines: number)` (passed
@@ -249,23 +237,6 @@ local function ensure_buffer(instance_id)
     end,
   })
 
-  -- Per-instance autocmd group for activity strip refresh. Filtering
-  -- on `data.instance_id == instance_id` is the key multi-instance
-  -- isolation guard: B's tool call must NOT repaint A's composer
-  -- activity strip even though both listen on the same
-  -- `User HyprpilotActivityChanged` pattern.
-  vim.api.nvim_create_autocmd("User", {
-    group = vim.api.nvim_create_augroup("HyprpilotComposerActivity:" .. instance_id, { clear = true }),
-    pattern = "HyprpilotActivityChanged",
-    callback = function(args)
-      local data = args.data or {}
-      if data.instance_id ~= instance_id then
-        return
-      end
-      paint_activity(instance_id)
-    end,
-  })
-
   buffers[instance_id] = bufnr
 
   return bufnr
@@ -340,71 +311,6 @@ end
 ---Resolve the activity glyph + label for a kind. Reads
 ---`config.icons.activity` (captain-overridable; ASCII fallbacks
 ---kick in when a key is empty / missing).
----@param kind string
----@param tool_name? string
----@return string?, string  -- text, hl_group
-local function activity_text(kind, tool_name)
-  if kind == nil or kind == "idle" then
-    return nil, "HyprpilotComposerActivity"
-  end
-  local icons = (require("hyprpilot.config").options.icons or {}).activity or {}
-  local glyph
-  local hl
-  local label
-  if kind == "tool" then
-    glyph = icons.tool
-    hl = "HyprpilotComposerActivityTool"
-    label = (type(tool_name) == "string" and tool_name ~= "") and tool_name or "tool"
-  elseif kind == "thinking" then
-    glyph = icons.thinking
-    hl = "HyprpilotComposerActivityThinking"
-    label = "thinking"
-  elseif kind == "streaming" then
-    glyph = icons.streaming
-    hl = "HyprpilotComposerActivityStreaming"
-    label = "streaming"
-  elseif kind == "awaiting_permission" then
-    glyph = icons.permission
-    hl = "HyprpilotComposerActivityPermission"
-    label = "awaiting permission"
-  else
-    return nil, "HyprpilotComposerActivity"
-  end
-  -- Glyph + label together ("⚙ tool · Bash"). Captains who clear an
-  -- icon (set to "") get the bare label so the indicator stays
-  -- legible in nerd-font-less terminals.
-  if glyph ~= nil and glyph ~= "" then
-    return glyph .. " " .. label, hl
-  end
-  return label, hl
-end
-
-paint_activity = function(instance_id)
-  local bufnr = buffers[instance_id]
-  if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
-    return
-  end
-  vim.api.nvim_buf_clear_namespace(bufnr, ACTIVITY_NS, 0, -1)
-
-  local activity = require("hyprpilot.status").activity(instance_id)
-  if activity == nil or activity.kind == "idle" then
-    return
-  end
-
-  local text, hl = activity_text(activity.kind, activity.tool_name)
-  if text == nil then
-    return
-  end
-
-  -- Anchor the activity strip at row 0, virt_lines_above = true so it
-  -- sits ABOVE the captain's first writable row. One line of virt
-  -- text — doesn't consume buffer rows, doesn't shift the cursor.
-  pcall(vim.api.nvim_buf_set_extmark, bufnr, ACTIVITY_NS, 0, 0, {
-    virt_lines = { { { text, hl } } },
-    virt_lines_above = true,
-  })
-end
-
 paint_indicator = function(instance_id)
   local bufnr = buffers[instance_id]
   if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -817,7 +723,6 @@ function M.open(opts)
     end
 
     paint_indicator(instance_id)
-    paint_activity(instance_id)
     M.resize()
     return
   end
@@ -847,7 +752,6 @@ function M.open(opts)
   vim.wo[M._winid].winfixwidth = true
 
   paint_indicator(instance_id)
-  paint_activity(instance_id)
   M.resize()
 
   if focus then
@@ -1061,12 +965,6 @@ function M.wipe(instance_id)
   if bufnr ~= nil and vim.api.nvim_buf_is_valid(bufnr) then
     pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
   end
-
-  -- Drop the per-instance activity-listener augroup so a future
-  -- `ensure_buffer(instance_id)` for the same id re-creates it
-  -- against the fresh buffer (and we don't leak listeners that
-  -- fire callbacks on a deleted bufnr).
-  pcall(vim.api.nvim_del_augroup_by_name, "HyprpilotComposerActivity:" .. instance_id)
 
   buffers[instance_id] = nil
   attachments_by_instance[instance_id] = nil
