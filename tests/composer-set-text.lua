@@ -15,7 +15,7 @@ T["composer.set_text: replaces the per-instance buffer's lines with `text`"] = f
   -- would, so `set_text` finds it without needing a chat split.
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(bufnr, "hyprpilot://composer/" .. id)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  vim.bo[bufnr].filetype = "hyprpilot_composer"
   composer._register_buffer_for_tests(id, bufnr)
 
   -- Pre-load some stale text so we can prove the replacement is
@@ -38,7 +38,7 @@ T["composer.set_text: non-string text → warns + no buffer change"] = function(
 
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(bufnr, "hyprpilot://composer/" .. id)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  vim.bo[bufnr].filetype = "hyprpilot_composer"
   composer._register_buffer_for_tests(id, bufnr)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "untouched" })
 

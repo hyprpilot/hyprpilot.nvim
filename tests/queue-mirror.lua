@@ -59,7 +59,7 @@ T["composer.set_text(opts.editing_queue_item_id) stamps edit slot + pre-fills at
   local id = helpers.unique_id()
   -- Mint composer buffer via the test seam.
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  vim.bo[bufnr].filetype = "hyprpilot_composer"
   composer._register_buffer_for_tests(id, bufnr)
 
   composer.set_text(id, "edit me", {
@@ -83,7 +83,7 @@ T["composer.submit while edit-slot is set fires queue/edit, not prompts/send"] =
   local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  vim.bo[bufnr].filetype = "hyprpilot_composer"
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "edited body" })
   composer._register_buffer_for_tests(id, bufnr)
 
@@ -119,7 +119,7 @@ T["composer.submit fires prompts/send unconditionally (no plugin-side activity g
   local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.bo[bufnr].filetype = "hyprpilot_input"
+  vim.bo[bufnr].filetype = "hyprpilot_composer"
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "while busy" })
   composer._register_buffer_for_tests(id, bufnr)
 
