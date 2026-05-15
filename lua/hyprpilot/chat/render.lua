@@ -829,12 +829,22 @@ local function append_agent_text(state, text)
         -- and the lazy `### response` subhead. Pre-pad with a blank
         -- when the row above the anchor isn't already empty so the
         -- two headings don't collide.
+        --
+        -- Trailing blank: `insert_at_prose_anchor` inserts at the
+        -- anchor row, and the anchor mark (gravity=true) sticks to
+        -- the right of the insertion — meaning the anchor's
+        -- original blank row persists below the inserted content.
+        -- That blank is the "one empty line between section
+        -- header and body" markdown wants, so we DON'T add another
+        -- trailing blank to the subhead lines (doing so produced
+        -- double-spacing between `### response` and the streamed
+        -- prose).
         local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
         local line_above = ""
         if anchor_row > 0 then
           line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
         end
-        local subhead_lines = line_above == "" and { "### response", "" } or { "", "### response", "" }
+        local subhead_lines = line_above == "" and { "### response" } or { "", "### response" }
         insert_at_prose_anchor(state, turn_id, subhead_lines)
         layout.response_header_emitted = true
       end
