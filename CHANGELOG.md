@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.4.0...hyprpilot.nvim-v1.5.0) (2026-05-15)
+
+
+### Features
+
+* **render:** turn outcome as a prose-tail marker instead of a header pill ([#89](https://github.com/hyprpilot/hyprpilot.nvim/issues/89)) ([f6a807b](https://github.com/hyprpilot/hyprpilot.nvim/commit/f6a807bfc9d2a0bc5783d6509246a81d5ed2dbd4))
+
 ## [1.4.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.3.1...hyprpilot.nvim-v1.4.0) (2026-05-15)
 
 
