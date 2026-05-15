@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.3.0...hyprpilot.nvim-v1.3.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* **palettes/sessions:** wire title/updatedAt/_meta + sort by updated desc ([#76](https://github.com/hyprpilot/hyprpilot.nvim/issues/76)) ([fcc13a9](https://github.com/hyprpilot/hyprpilot.nvim/commit/fcc13a9b0dfa21748305d5e81eac52b5da2fd653))
+
 ## [1.3.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.2.0...hyprpilot.nvim-v1.3.0) (2026-05-14)
 
 
