@@ -12,6 +12,7 @@ local M = {}
 ---@class hyprpilot.palettes.instances.Opts
 ---@field on_pick? fun(instance_id: string): nil  -- override commit (default: chat.window.switch)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
+---@field cwd? string | false                       -- filter by cwd; default `vim.fn.getcwd()`; `false` disables (every instance). Mirrors `palettes/sessions.lua`.
 
 ---Compose the row display string. Active instance gets a `* `
 ---prefix so it's visible in pickers without a "selected" indicator.
@@ -96,9 +97,27 @@ local function format_preview(item, active_id)
   return { lines = lines, ft = "markdown" }
 end
 
+---Resolve the cwd filter. Mirrors `palettes/sessions.lua`:
+---  `opts.cwd == false` → no filter (every instance)
+---  `opts.cwd == nil`   → filter by `vim.fn.getcwd()` (default)
+---  `opts.cwd == "<p>"` → filter by that path
+---@param opts hyprpilot.palettes.instances.Opts
+---@return string?
+local function resolve_cwd_filter(opts)
+  if opts.cwd == false then
+    return nil
+  end
+  if opts.cwd == nil then
+    return vim.fn.getcwd()
+  end
+  return opts.cwd
+end
+
 ---@param opts? hyprpilot.palettes.instances.Opts
 function M.open(opts)
   opts = opts or {}
+
+  local cwd_filter = resolve_cwd_filter(opts)
 
   hp_instances.list(function(err, items)
     if err ~= nil then
@@ -107,8 +126,26 @@ function M.open(opts)
     end
 
     items = items or {}
+
+    -- Cwd filter against the wire payload's `item.cwd`. The daemon
+    -- ships cwd on every `instances/list` row (`InstanceListEntry.cwd`
+    -- — added in the daemon's matching PR; until that lands every
+    -- item carries `cwd = nil` and the default filter shows nothing,
+    -- which is the right signal "you need to upgrade the daemon").
+    -- Captains who explicitly pass `cwd = false` opt out of the
+    -- filter entirely.
+    if cwd_filter ~= nil then
+      items = vim.tbl_filter(function(item)
+        return item.cwd == cwd_filter
+      end, items)
+    end
+
     if #items == 0 then
-      log.warn("palettes.instances: no instances — spawn one with `instances.spawn({})`")
+      if cwd_filter ~= nil then
+        log.warn("palettes.instances: no instances under cwd=%s — pass `{ cwd = false }` to see every instance", cwd_filter)
+      else
+        log.warn("palettes.instances: no instances — spawn one with `instances.spawn({})`")
+      end
       return
     end
 

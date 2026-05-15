@@ -225,7 +225,10 @@ T["palettes.instances: picks a row → calls instances.attach with the chosen id
     return items[2]
   end)
 
-  require("hyprpilot.palettes.instances").open()
+  -- `cwd = false` opts out of the default cwd filter — the stub
+  -- items above don't carry `cwd`, and this test exercises the pick
+  -- path, not the filter (covered by `palettes-instances-cwd-filter`).
+  require("hyprpilot.palettes.instances").open({ cwd = false })
 
   MiniTest.expect.equality(ui_calls[1].opts.kind, "hyprpilot.instances")
   MiniTest.expect.equality(attached_to, "inst-b")
