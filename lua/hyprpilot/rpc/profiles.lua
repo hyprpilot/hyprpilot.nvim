@@ -43,7 +43,8 @@ function M.list(callback)
       return
     end
 
-    callback(nil, vim.tbl_map(from_wire, result.profiles or {}))
+    local list = (type(result) == "table" and type(result.profiles) == "table") and result.profiles or {}
+    callback(nil, vim.tbl_map(from_wire, list))
   end)
 end
 

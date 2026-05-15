@@ -13,6 +13,15 @@ local BUFFER_PREFIX = "hyprpilot://"
 local _placeholder_bufnr = nil
 
 ---Open the buffer for write, run `fn`, restore read-only state.
+---
+---Errors INSIDE `fn` are now logged + swallowed instead of re-raised.
+---The previous behaviour bubbled the throw out through the
+---`events.dispatch` autocmd chain and stalled every later handler in
+---the same tick — one render-side nil-deref on a half-built turn
+---took down sibling handlers (winbar updates, status emissions, etc.)
+---across every instance. Catching here keeps the UI in a recoverable
+---state: the buffer's read-only flag is restored, the bad render
+---logs, and the next event continues to fire.
 ---@param bufnr integer
 ---@param fn fun(): nil
 function M.with_buffer(bufnr, fn)
@@ -31,7 +40,7 @@ function M.with_buffer(bufnr, fn)
   vim.bo[bufnr].readonly = true
 
   if not ok then
-    error(err)
+    log.warn("with_buffer: bufnr=%s render fn errored: %s", bufnr, tostring(err))
   end
 end
 
@@ -175,6 +184,19 @@ function M.suppress_external_ui(bufnr)
   vim.b[bufnr].miniindentscope_disable = true
 end
 
+---True when a layout manager (folke/edgy.nvim today; could expand)
+---is loaded. Multiple plugin surfaces gate their own
+---window-management — `winfixheight` / `winfixwidth` pins,
+---`nvim_win_set_height` resizes — on this so we don't fight the
+---layout manager's `apply_size` pass. Edgy patches
+---`nvim_win_set_height` globally and re-asserts its own computed
+---heights on every layout tick; our resize calls visibly flicker
+---and lose every race against it.
+---@return boolean
+function M.layout_manager_active()
+  return package.loaded["edgy"] ~= nil
+end
+
 ---Strip Neovim's stock chrome off a plugin window: hide the
 ---statusline (set to a single space — Neovim renders nothing
 ---visible), suppress numbers / fold column / sign column, and
@@ -208,6 +230,61 @@ function M.clean_window_chrome(winid)
   if not existing:match("eob:") then
     vim.wo[winid].fillchars = (existing == "" and "" or existing .. ",") .. "eob: "
   end
+end
+
+-- Re-apply window chrome cleanup whenever a plugin-owned buffer
+-- becomes visible. A peer plugin that re-hooks `WinEnter` may reset
+-- window-local options (signcolumn, statusline, etc.) after our
+-- open-time setup, letting things like gitsigns / mini.diff / lsp
+-- signs leak `+`, `>`, `~` glyphs onto the chat surface. Re-
+-- applying on `BufWinEnter` + `WinEnter` is cheap and idempotent —
+-- captures every adoption / focus path without us having to know
+-- which peer reset the option.
+--
+-- IMPORTANT: when a layout manager (folke/edgy.nvim) is loaded we
+-- back off and let it own the chrome. Edgy applies its own
+-- `winbar`, `winhighlight`, `signcolumn`, etc. on adopted windows;
+-- our re-apply was stripping those right after edgy set them, so
+-- the captain's edgy setup looked like "hyprpilot windows ignore
+-- edgy styling". The non-edgy setups (no layout manager) still
+-- get the original gitsigns-leak protection.
+do
+  local group = vim.api.nvim_create_augroup("HyprpilotBufferChrome", { clear = true })
+  local plugin_filetypes = {
+    "hyprpilot",
+    "hyprpilot_input",
+    "hyprpilot_header",
+    "hyprpilot_permission_row",
+    "hyprpilot_queue_strip",
+  }
+  vim.api.nvim_create_autocmd({ "BufWinEnter", "WinEnter", "FileType" }, {
+    group = group,
+    pattern = plugin_filetypes,
+    callback = function(args)
+      -- Skip everything when a layout manager is present — it owns
+      -- window-local options on the adopted window. Captain's
+      -- styling came through `edgy`'s slot config; we shouldn't
+      -- fight that.
+      if package.loaded["edgy"] ~= nil then
+        return
+      end
+      -- BufWinEnter / FileType pass `args.buf`; WinEnter doesn't
+      -- (it's a window event). For WinEnter we look up the bufnr
+      -- from the current window.
+      local bufnr = args.buf
+      if bufnr == nil or bufnr == 0 then
+        bufnr = vim.api.nvim_get_current_buf()
+      end
+      if not vim.api.nvim_buf_is_valid(bufnr) then
+        return
+      end
+      local winid = vim.fn.bufwinid(bufnr)
+      if winid == -1 then
+        return
+      end
+      M.clean_window_chrome(winid)
+    end,
+  })
 end
 
 ---@class hyprpilot.chat.buffer.AuxSplitOpts
@@ -270,6 +347,23 @@ function M.open_aux_split(opts)
   end
 
   M.clean_window_chrome(winid)
+
+  -- Force a layout-manager re-scan AFTER the buffer swap. The
+  -- aux-split open path is `<dir>split` (creates a scratch window
+  -- with empty filetype) → `nvim_win_set_buf` (swap to our
+  -- pre-typed buffer). Edgy's `BufWinEnter` listener fires on the
+  -- scratch buffer with empty ft → no view matches → edgy may
+  -- unhook the window. The post-swap `BufWinEnter` sometimes
+  -- doesn't trigger a fresh layout pass, leaving the now-correctly-
+  -- typed window floating in the editor area instead of in edgy's
+  -- right column. Forcing `layout()` here closes that race so
+  -- adoption happens reliably (verified via `views[i].wins` going
+  -- from 0 to 1 after this call for the header view).
+  if M.layout_manager_active() then
+    pcall(function()
+      require("edgy.layout").layout()
+    end)
+  end
 
   if opts.after ~= nil then
     local ok_after, after_err = pcall(opts.after, winid)

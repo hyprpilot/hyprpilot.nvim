@@ -21,6 +21,16 @@ local M = {}
 ---@field cwd? string                       -- working directory (default: vim.fn.getcwd())
 ---@field manual? boolean                   -- captain-triggered (true) vs typing (false)
 ---@field sources? string[]                 -- override `config.completion.sources`
+---@field associated? hyprpilot.completion.AssociatedBuffer
+--- Captain's "real" working buffer — the file they were editing
+--- before opening the chat. Forwards to daemon-side sources so a
+--- ripgrep / file source can scope its search to the captain's
+--- current file rather than `cwd`-wide. Mirrors codecompanion's
+--- `chat.buffer_context.bufnr` concept.
+
+---@class hyprpilot.completion.AssociatedBuffer
+---@field path? string         -- absolute path of the buffer the captain was in
+---@field filetype? string     -- buffer filetype (helps daemon pick a parser / scope)
 
 ---@class hyprpilot.completion.Item
 ---@field label string
@@ -63,24 +73,28 @@ end
 ---@param callback fun(err: hyprpilot.client.RpcError?, response: hyprpilot.completion.Response?): nil
 function M.query(params, callback)
   local sources = params.sources or (config.options.completion or {}).sources or { "skills" }
-  client.request(
-    "completion/query",
-    {
-      text = params.text,
-      cursor = params.cursor,
-      cwd = params.cwd or vim.fn.getcwd(),
-      manual = params.manual == true,
-      sources = sources,
-    },
-    nil,
-    function(err, result)
-      if err ~= nil then
-        callback(err, nil)
-        return
-      end
-      callback(nil, response_from_wire(result or {}))
+
+  -- `associated` (captain's last working buffer) intentionally NOT
+  -- forwarded yet — the daemon's `CompletionQueryParams` uses
+  -- `deny_unknown_fields`, so shipping it early gets the whole
+  -- query rejected with "unknown field". `chat.window.associated_bufnr()`
+  -- stays available locally; once the daemon ships matching support,
+  -- restore the lazy resolve + payload.associated assignment here.
+  local payload = {
+    text = params.text,
+    cursor = params.cursor,
+    cwd = params.cwd or vim.fn.getcwd(),
+    manual = params.manual == true,
+    sources = sources,
+  }
+
+  client.request("completion/query", payload, nil, function(err, result)
+    if err ~= nil then
+      callback(err, nil)
+      return
     end
-  )
+    callback(nil, response_from_wire(result or {}))
+  end)
 end
 
 ---Fire `completion/resolve`. Returns the lazy documentation for a

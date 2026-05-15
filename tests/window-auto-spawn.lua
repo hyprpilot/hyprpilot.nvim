@@ -35,7 +35,7 @@ T["window.show with no instances + no id calls instances.spawn({}) and reroutes"
     window.register({
       bufnr = require("hyprpilot.chat.buffer").create("auto-spawned-id"),
       instance_id = "auto-spawned-id",
-    })
+    }, { activate = true })
     if callback ~= nil then
       callback(nil, { id = "auto-spawned-id", agent_id = "claude-code" })
     end

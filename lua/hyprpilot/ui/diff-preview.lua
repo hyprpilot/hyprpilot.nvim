@@ -712,6 +712,22 @@ function M.ensure_listeners()
       end
     end,
   })
+
+  -- Close the preview when the captain switches away from the
+  -- instance that owns it. Without this, A's diff stayed visible
+  -- while the captain was reading B's chat — confusing, and the
+  -- preview's accept/reject still routes to A's request_id which
+  -- the captain may have forgotten about.
+  vim.api.nvim_create_autocmd("User", {
+    group = AUGROUP,
+    pattern = "HyprpilotInstanceChanged",
+    callback = function(args)
+      local data = args.data or {}
+      if M._state ~= nil and type(data.instance_id) == "string" and data.instance_id ~= M._state.instance_id then
+        M.close()
+      end
+    end,
+  })
 end
 
 ---Test-only reset hook. Drops state + clears the wired flag so the

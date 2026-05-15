@@ -30,10 +30,13 @@ local function tool_label(item)
   return nil
 end
 
----Translate a `transcript` event's item into an activity update.
----No-op for non-agent kinds.
+---Translate a `transcript` event's item into an activity update for
+---the addressed instance. No-op for non-agent kinds. `instance_id`
+---comes from the event envelope so concurrent instances each track
+---their own activity in isolation.
+---@param instance_id string?
 ---@param item table
-local function activity_for_transcript(item)
+local function activity_for_transcript(instance_id, item)
   if type(item) ~= "table" or type(item.kind) ~= "string" then
     return
   end
@@ -41,16 +44,26 @@ local function activity_for_transcript(item)
   local kind = item.kind
 
   if kind == "agent_text" or kind == "agent_thought" then
-    status.set_activity({ kind = "streaming" })
+    status.set_activity(instance_id, { kind = "streaming" })
   elseif kind == "tool_call" then
-    status.set_activity({ kind = "tool", tool_name = tool_label(item) })
+    status.set_activity(instance_id, { kind = "tool", tool_name = tool_label(item) })
   elseif kind == "tool_call_update" then
     if item.state == "completed" or item.state == "failed" then
-      status.set_activity({ kind = "streaming" })
+      status.set_activity(instance_id, { kind = "streaming" })
     else
-      status.set_activity({ kind = "tool", tool_name = tool_label(item) })
+      status.set_activity(instance_id, { kind = "tool", tool_name = tool_label(item) })
     end
   end
+end
+
+---Coerce `vim.NIL` (or anything non-numeric) to a clean number or nil.
+---The daemon sometimes ships JSON-null for usage / size / cost on a
+---fresh instance; without coercion `(value or 0) > 0` errors on the
+---userdata sentinel.
+---@param v any
+---@return number?
+local function to_number(v)
+  return tonumber(v)
 end
 
 local M = {}
@@ -131,103 +144,108 @@ local function dispatch(raw)
     event.rawInput = event.raw_input
   end
 
-  if event.event == "transcript" then
-    render.handle_transcript(event)
-    activity_for_transcript(event.item)
-  elseif event.event == "turn_started" then
-    render.handle_turn_started(event)
-    status.set_activity({ kind = "thinking", started_at_ms = vim.uv.now() })
-    emit_for_instance("TurnStarted", event.instanceId, {
-      turn_id = event.turnId,
-      started_at = event.startedAt or event.started_at,
-    })
-  elseif event.event == "turn_ended" then
-    render.handle_turn_ended(event)
-    status.set_activity({ kind = "idle" })
-    -- Cancel-flush: when the captain aborts a turn the queued
-    -- follow-ups are abandoned alongside the cancelled head.
-    -- Matches the desktop overlay's pilot.py-derived semantics —
-    -- captain wanted to drop this line of thought, not also fire
-    -- the queued continuations.
-    local reason = event.stopReason
-    if type(reason) == "string" and reason:lower():find("cancel", 1, true) ~= nil then
-      require("hyprpilot.composer.queue").flush(event.instanceId)
+  -- Wrap the dispatch body in pcall so one bad payload (or a render
+  -- nil-deref on a half-built turn / state) doesn't take down sibling
+  -- handlers in the same tick. Each branch's own failure logs and the
+  -- dispatch loop survives — the daemon will keep streaming events
+  -- regardless of what we drop on the floor.
+  local ok, err = pcall(function()
+    if event.event == "transcript" then
+      render.handle_transcript(event)
+      activity_for_transcript(event.instanceId, event.item)
+    elseif event.event == "turn_started" then
+      render.handle_turn_started(event)
+      status.set_activity(event.instanceId, { kind = "thinking", started_at_ms = vim.uv.now() })
+      emit_for_instance("TurnStarted", event.instanceId, {
+        turn_id = event.turnId,
+        started_at = event.startedAt or event.started_at,
+      })
+    elseif event.event == "turn_ended" then
+      render.handle_turn_ended(event)
+      status.set_activity(event.instanceId, { kind = "idle" })
+      -- Composer queue is captain-owned UI state — daemon has no
+      -- concept of it (it's a local stash of prompts typed while
+      -- the agent was busy, NOT a daemon-side prompt queue). On
+      -- cancel we deliberately KEEP the queue: the captain may
+      -- have aborted just this turn but still want their queued
+      -- follow-ups to fire next. They can drain manually via the
+      -- queue strip's keymaps if they don't.
+      emit_for_instance("TurnEnded", event.instanceId, {
+        turn_id = event.turnId,
+        ended_at = event.endedAt or event.ended_at,
+        stop_reason = event.stopReason,
+        error = event.error,
+      })
+    elseif event.event == "permission_request" then
+      render.handle_permission_request(event)
+      status.set_activity(event.instanceId, { kind = "awaiting_permission", permission_request_id = event.requestId })
+      emit_for_instance("PermissionRequested", event.instanceId, {
+        request_id = event.requestId,
+        tool = event.tool,
+        tool_kind = event.toolKind,
+        options = event.options,
+        -- Daemon-computed allow-shaped pre-selected option (see
+        -- `PermissionRequestSnapshot::default_option_id` in
+        -- `src-tauri/src/adapters/permission.rs`).
+        default_option_id = event.defaultOptionId,
+        raw_input = event.rawInput,
+      })
+    elseif event.event == "permission_resolved" then
+      render.handle_permission_resolved(event)
+      status.set_activity(event.instanceId, { kind = "streaming" })
+      emit_for_instance("PermissionResolved", event.instanceId, {
+        request_id = event.requestId,
+        option_id = event.optionId,
+      })
+    elseif event.event == "instance_meta" then
+      winbar.update_meta(event.instanceId, {
+        agent_id = event.agentId,
+        profile_id = event.profileId,
+        session_id = event.sessionId,
+        cwd = event.cwd,
+        current_mode_id = event.currentModeId,
+        current_model_id = event.currentModelId,
+        available_modes = event.availableModes,
+        available_models = event.availableModels,
+        mcps_count = event.mcpsCount,
+      })
+    elseif event.event == "current_mode_update" then
+      winbar.update_mode(event.instanceId, event.currentModeId)
+      render.handle_current_mode_update(event)
+    elseif event.event == "config_options_update" then
+      render.handle_config_options_update(event)
+    elseif event.event == "system_prompt_injected" then
+      render.handle_system_prompt_injected(event)
+    elseif event.event == "usage_update" then
+      -- Coerce numeric fields at the boundary so vim.NIL (JSON null)
+      -- never reaches arithmetic in winbar/header/render/stats.
+      winbar.update_usage(event.instanceId, to_number(event.used), to_number(event.size), to_number(event.cost))
+      render.handle_usage_update(event)
+    elseif event.event == "session_info_update" then
+      winbar.update_session(event.instanceId, event.title)
+    elseif event.event == "state" then
+      winbar.update_meta(event.instanceId, { instance_state = event.state })
+      emit_for_instance("InstanceStateChanged", event.instanceId, {
+        state = event.state,
+      })
+    elseif event.event == "terminal" then
+      render.handle_terminal(event)
+    elseif event.event == "lagged" then
+      -- Daemon dropped events on us (subscription overflow). The
+      -- correct recovery is to refetch the latest page so the local
+      -- view matches the daemon mirror again. Each tracked instance
+      -- gets re-hydrated.
+      log.warn("events.dispatch: events/lagged — re-hydrating tracked instances")
+      render.iter_states(function(instance_id, st)
+        M.hydrate(instance_id, st.bufnr)
+      end)
+    else
+      log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
     end
-    emit_for_instance("TurnEnded", event.instanceId, {
-      turn_id = event.turnId,
-      ended_at = event.endedAt or event.ended_at,
-      stop_reason = event.stopReason,
-      error = event.error,
-    })
-  elseif event.event == "permission_request" then
-    render.handle_permission_request(event)
-    status.set_activity({ kind = "awaiting_permission", permission_request_id = event.requestId })
-    emit_for_instance("PermissionRequested", event.instanceId, {
-      request_id = event.requestId,
-      tool = event.tool,
-      tool_kind = event.toolKind,
-      options = event.options,
-      -- Daemon-computed allow-shaped pre-selected option (see
-      -- `PermissionRequestSnapshot::default_option_id` in
-      -- `src-tauri/src/adapters/permission.rs`). Plugin uses it as
-      -- the row's initial focused index; captain autocmd handlers
-      -- can read it for their own approve-default workflows.
-      default_option_id = event.defaultOptionId,
-      -- `raw_input` is the agent's structured tool input (path /
-      -- old_string / new_string / content / edits[] for the edit
-      -- family). Carries through to the row + diff-preview surfaces
-      -- without a second daemon round-trip.
-      raw_input = event.rawInput,
-    })
-  elseif event.event == "permission_resolved" then
-    render.handle_permission_resolved(event)
-    status.set_activity({ kind = "streaming" })
-    emit_for_instance("PermissionResolved", event.instanceId, {
-      request_id = event.requestId,
-      option_id = event.optionId,
-    })
-  elseif event.event == "instance_meta" then
-    winbar.update_meta(event.instanceId, {
-      agent_id = event.agentId,
-      profile_id = event.profileId,
-      session_id = event.sessionId,
-      cwd = event.cwd,
-      current_mode_id = event.currentModeId,
-      current_model_id = event.currentModelId,
-      available_modes = event.availableModes,
-      available_models = event.availableModels,
-      mcps_count = event.mcpsCount,
-    })
-  elseif event.event == "current_mode_update" then
-    winbar.update_mode(event.instanceId, event.currentModeId)
-    render.handle_current_mode_update(event)
-  elseif event.event == "config_options_update" then
-    render.handle_config_options_update(event)
-  elseif event.event == "system_prompt_injected" then
-    render.handle_system_prompt_injected(event)
-  elseif event.event == "usage_update" then
-    winbar.update_usage(event.instanceId, event.used, event.size, event.cost)
-    render.handle_usage_update(event)
-  elseif event.event == "session_info_update" then
-    winbar.update_session(event.instanceId, event.title)
-  elseif event.event == "state" then
-    winbar.update_meta(event.instanceId, { instance_state = event.state })
-    emit_for_instance("InstanceStateChanged", event.instanceId, {
-      state = event.state,
-    })
-  elseif event.event == "terminal" then
-    render.handle_terminal(event)
-  elseif event.event == "lagged" then
-    -- Daemon dropped events on us (subscription overflow). The
-    -- correct recovery is to refetch the latest page so the local
-    -- view matches the daemon mirror again. Each tracked instance
-    -- gets re-hydrated.
-    log.warn("events.dispatch: events/lagged — re-hydrating tracked instances")
-    render.iter_states(function(instance_id, st)
-      M.hydrate(instance_id, st.bufnr)
-    end)
-  else
-    log.debug("events.dispatch: ignoring event=%s (no handler in v1)", event.event)
+  end)
+
+  if not ok then
+    log.warn("events.dispatch: handler for event=%s threw: %s", tostring(event.event), tostring(err))
   end
 end
 
@@ -357,5 +375,90 @@ function M._reset()
 
   subscribed = false
 end
+
+--- Full re-init after a reconnect. Wipes every per-instance UI
+--- store that could have drifted while disconnected (the daemon
+--- may have resolved permissions, finished tools, changed mode /
+--- model / state, or shut down the instance entirely while we
+--- weren't watching), then re-subscribes to the daemon stream and
+--- re-hydrates each tracked instance's chat + meta snapshots.
+---
+--- Called automatically from the `client.on_state_change` listener
+--- below when the connection comes back after a disconnect — without
+--- this, `subscribed = true` survives and `events/subscribe` is
+--- never re-fired, so zero events arrive on the new connection
+--- (silent failure mode the captain hit repeatedly).
+function M.full_reset()
+  log.info("events.full_reset: re-initialising after reconnect")
+
+  -- Local listener + flag — without this `ensure_subscribed` would
+  -- skip the re-subscribe and we'd be tied to a dead daemon-side
+  -- channel.
+  M._reset()
+
+  -- Wipe per-instance UI stores that may carry stale assumptions:
+  -- permission-row queue (daemon may have resolved while down),
+  -- attention markers (same), header name cache (fresh fetch on
+  -- next render), winbar meta (mode/model/usage drift), per-instance
+  -- activity (frozen at disconnect; turn_ended that fired while down
+  -- never demoted to idle).
+  pcall(function()
+    require("hyprpilot.chat.permission-row").reset()
+  end)
+
+  -- Walk the union of `window._instances` (registered keyset) AND
+  -- `render._states` so a meta-only instance (registered but never
+  -- emitted a transcript yet) doesn't keep stale per-instance state
+  -- past reconnect. Render-state-only iteration would miss those.
+  local known_ids = {}
+  for instance_id, _ in pairs(require("hyprpilot.chat.window")._instances) do
+    known_ids[instance_id] = true
+  end
+  for instance_id, _ in pairs(require("hyprpilot.chat.render")._states) do
+    known_ids[instance_id] = true
+  end
+  for instance_id, _ in pairs(known_ids) do
+    pcall(function()
+      require("hyprpilot.chat.header").forget(instance_id)
+    end)
+    pcall(function()
+      require("hyprpilot.chat.winbar").forget(instance_id)
+    end)
+    pcall(function()
+      require("hyprpilot.status").forget(instance_id)
+    end)
+    pcall(function()
+      require("hyprpilot.notification.attention")._clear_instance(instance_id)
+    end)
+  end
+
+  -- Re-subscribe to the daemon stream + re-hydrate every tracked
+  -- instance. The hydrate calls re-render the buffer in place so
+  -- the captain's cursor / scroll position survives — they just
+  -- see fresh content as the daemon's snapshots replay.
+  M.ensure_subscribed()
+  require("hyprpilot.chat.render").iter_states(function(instance_id, st)
+    M.hydrate(instance_id, st.bufnr)
+  end)
+end
+
+-- Wire the reconnect listener once at module load. The "was
+-- previously connected" guard avoids double-firing on the very
+-- first connect (initial setup() flow already hydrates explicitly
+-- via window.show / instances.spawn callbacks).
+local _was_connected = false
+require("hyprpilot.client").on_state_change(function(state)
+  if state == "connected" then
+    if _was_connected then
+      M.full_reset()
+    end
+    _was_connected = true
+  elseif state == "disconnected" then
+    -- Drop the subscribed flag immediately so a manual
+    -- ensure_subscribed() between disconnect + reconnect doesn't
+    -- skip the re-subscribe.
+    M._reset()
+  end
+end)
 
 return M

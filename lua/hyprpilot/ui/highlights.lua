@@ -66,6 +66,16 @@ M.LINKS = {
   HyprpilotHeaderUsage = "Number",
   HyprpilotHeaderCount = "Comment",
   HyprpilotHeaderSeparator = "NonText",
+  -- Per-instance lifecycle status pill (leftmost). Color-coded by
+  -- state so the captain reads "is this instance live, booting,
+  -- ended, or errored" at a glance — diagnostic palette mirrors
+  -- the LSP signs they're already trained on.
+  HyprpilotHeaderStatusStarting = "DiagnosticInfo",
+  HyprpilotHeaderStatusRunning = "DiagnosticOk",
+  HyprpilotHeaderStatusEnded = "Comment",
+  HyprpilotHeaderStatusError = "DiagnosticError",
+  -- Activity pills (kept for backwards compatibility — header no
+  -- longer paints them but captains may still hook the groups).
   HyprpilotHeaderActivity = "DiagnosticHint",
   HyprpilotHeaderActivityStreaming = "DiagnosticInfo",
   HyprpilotHeaderActivityThinking = "DiagnosticHint",

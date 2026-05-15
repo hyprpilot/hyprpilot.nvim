@@ -216,11 +216,35 @@ local function with_autoscroll(state, fn)
 end
 
 ---Append `lines` to the end of the buffer. Returns the line index of
+---Flatten a list of strings so no element contains an embedded
+---newline. `nvim_buf_set_lines` rejects multi-line items with
+---"'replacement string' item contains newlines"; defensively
+---splitting here lets every caller pass the daemon's wire-supplied
+---strings through without each one having to remember to split.
+---Empty input returns empty; nil-safe via the `lines or {}` guard
+---at every call site.
+---@param lines string[]
+---@return string[]
+local function flatten_lines(lines)
+  local out = {}
+  for _, line in ipairs(lines) do
+    if type(line) ~= "string" then
+      table.insert(out, "")
+    elseif line:find("\n", 1, true) == nil then
+      table.insert(out, line)
+    else
+      vim.list_extend(out, vim.split(line, "\n", { plain = true }))
+    end
+  end
+  return out
+end
+
 ---the first appended line.
 ---@param state hyprpilot.render.State
 ---@param lines string[]
 ---@return integer first_line
 local function append_lines(state, lines)
+  lines = flatten_lines(lines)
   local bufnr = state.bufnr
   local total = vim.api.nvim_buf_line_count(bufnr)
   local first_line
@@ -492,9 +516,25 @@ local function append_turn_header(state, role, turn_id)
   end)
 
   state.active_text_block = nil
+  -- Reset the per-turn streaming accumulators — a new role header
+  -- (user OR agent) means the previous turn's blocks are closed.
+  -- Next `agent_thought` / `plan` events mint fresh accumulators
+  -- against the new turn's layout instead of overwriting last
+  -- turn's content.
+  state.active_thought_block = nil
+  state.active_plan_block = nil
+
+  -- BOTH roles update `current_turn` so subsequent items
+  -- (agent_attachment, agent_thought) that route via
+  -- `state.current_turn` find the correct turn. The previous code
+  -- only set this for `agent` headers, which meant a user_prompt
+  -- mid-replay left `current_turn` pointing at the PREVIOUS turn's
+  -- agent layout — and the next agent_attachment landed in the
+  -- old turn's `### attachments` section. (This is the hydration
+  -- bug captain reported: attachments work live, drop on replay.)
+  state.current_turn = turn_id
 
   if role == "agent" then
-    state.current_turn = turn_id
     if turn_id ~= nil and state.turn_layouts[turn_id] == nil and prose_anchor_row ~= nil then
       -- section_anchor uses gravity=false so it STAYS at the topmost
       -- section row even when prose inserts at the same row (gravity-
@@ -567,11 +607,21 @@ local function repaint_pilot_header(state, layout)
 end
 
 ---Compose a section header line with the item-count pill.
+---
+---Thoughts are a special case: every chunk in a turn streams into
+---ONE accumulated block (see `render_thought` — it appends to the
+---layout-bound block instead of minting a new one), so a count
+---would always read "1 thought" / "1 thoughts". Drop the pill
+---entirely for that kind so the section reads as a clean
+---`### thoughts` header above the streaming body.
 ---@param kind string
 ---@param item_count integer
 ---@return string
 local function section_header_line(kind, item_count)
   local base = SECTION_HEADER[kind] or ("### " .. kind)
+  if kind == "thoughts" then
+    return base
+  end
   if item_count == nil or item_count <= 0 then
     return base
   end
@@ -579,8 +629,6 @@ local function section_header_line(kind, item_count)
   local unit
   if kind == "tasks" then
     unit = item_count == 1 and "plan" or "plans"
-  elseif kind == "thoughts" then
-    unit = item_count == 1 and "thought" or "thoughts"
   elseif kind == "tools" then
     unit = item_count == 1 and "call" or "calls"
   elseif kind == "attachments" then
@@ -709,10 +757,15 @@ local function insert_block_into_section(state, turn_id, kind, block_id, block_k
   -- previous block's closing `---` and the new block's header would
   -- otherwise sit on adjacent rows. The first block uses the
   -- section's own spacer row (head+1) as its leading separator.
-  local lines_to_insert = lines
+  -- Defensive flatten: any caller (tool_body_lines, render_attachment,
+  -- adapter notes) that passes a daemon-supplied string with an
+  -- embedded `\n` would crash `nvim_buf_set_lines` with the
+  -- "'replacement string' item contains newlines" error. Splitting
+  -- here is one place to fix every caller.
+  local lines_to_insert = flatten_lines(lines)
   local block_row_offset = 0
   if #section.block_ids > 0 then
-    lines_to_insert = vim.list_extend({ "" }, lines)
+    lines_to_insert = vim.list_extend({ "" }, lines_to_insert)
     block_row_offset = 1
   end
 
@@ -761,6 +814,7 @@ end
 ---@param lines string[]
 ---@return integer
 local function insert_at_prose_anchor(state, turn_id, lines)
+  lines = flatten_lines(lines)
   local layout = get_layout(state, turn_id)
   if layout == nil then
     return append_lines(state, lines)
@@ -798,13 +852,26 @@ local function append_agent_text(state, text)
       -- `response_header_emitted` is per-layout so a re-streamed
       -- turn (continuation after cancel, etc.) doesn't double up.
       if layout ~= nil and not layout.response_header_emitted then
-        -- For agent turns whose only content is prose (no preceding
-        -- `### tasks` / `### thoughts` / `### tools` section), the
-        -- agent header lays down `## pilot` immediately followed by
-        -- the prose anchor — there's no blank between `## pilot`
-        -- and the lazy `### response` subhead. Pre-pad with a blank
-        -- when the row above the anchor isn't already empty so the
-        -- two headings don't collide.
+        -- Lay down a `### response` subhead so the prose sits inside
+        -- a sibling subsection of `### tasks` / `### thoughts` /
+        -- `### tools`. Subsequent chunks stream below the subhead
+        -- via the continuation branch.
+        --
+        -- Spacing model (one blank between every adjacent element):
+        --
+        -- - leading blank pre-pads when `## pilot` (or any non-empty
+        --   row) sits directly above the anchor, so the subhead
+        --   doesn't collide with the previous element. When the row
+        --   above is already empty (e.g. a `### thoughts` section
+        --   just closed with its trailing blank), we skip the
+        --   leading to avoid double-blank stacking.
+        -- - trailing blank inserted UNCONDITIONALLY so markdown
+        --   sees one paragraph break between the subhead and the
+        --   prose. `insert_at_prose_anchor` inserts at the anchor
+        --   row and the anchor mark (gravity=true) sticks to the
+        --   right of the insertion, so the prose lands one row
+        --   below the trailing blank — exactly one blank between
+        --   `### response` and the first chunk.
         local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
         local line_above = ""
         if anchor_row > 0 then
@@ -1132,6 +1199,14 @@ local function render_tool_call(state, record)
   end
 
   block.tool_call_id = record.id
+  -- Stash the original toolKind on the block. `tool_call_update`
+  -- events from the daemon ship only the CHANGED fields (state,
+  -- formatted, output) — `toolKind` is omitted on updates. Without
+  -- this stash the update path would rebuild the header line via
+  -- `tool_icon(update.toolKind)` → nil → fallback to
+  -- `icons.tool_kind.default` (the cog), so every tool reverted to
+  -- the cog glyph the moment it finished executing.
+  block.tool_kind = record.toolKind
   state.tool_calls[record.id] = block.id
 
   -- Header gets a status colour; body intentionally has no
@@ -1171,14 +1246,21 @@ function M.handle_tool_call_update(instance_id, update)
     end)
   end
 
+  -- Merge the original toolKind back onto the update payload before
+  -- handing it to the header / body composers — daemon updates omit
+  -- toolKind because nothing about the kind ever changes during a
+  -- tool's lifecycle. The composers expect it to be present to pick
+  -- the right glyph + body language.
+  local merged = vim.tbl_extend("keep", update, { toolKind = block.tool_kind })
+
   with_autoscroll(state, function()
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row = block_range(state, block)
       local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(update) })
+      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(merged) })
     end)
 
-    replace_block_body(state, block, tool_body_lines(update.formatted, update.toolKind))
+    replace_block_body(state, block, tool_body_lines(merged.formatted, merged.toolKind))
 
     -- Re-apply highlights: header colour can flip with the new state;
     -- body has no line_hl_group (markdown highlighter handles it).
@@ -1193,11 +1275,17 @@ function M.handle_tool_call_update(instance_id, update)
   end)
 end
 
----Render an agent thought block — header + folded body so the chat
----transcript stays compact. Empty thoughts are dropped entirely (no
----placeholder, no section header) so a turn that streams an empty
----thought event doesn't get a vestigial `### thoughts` section
----hanging around with nothing inside it.
+---Render an agent thought block — every `agent_thought` chunk in
+---the same turn streams into ONE accumulating block (like
+---`append_agent_text` does for `agent_text`). The first chunk
+---mints the block (single body, no per-chunk header); each
+---subsequent chunk appends its lines below the existing body and
+---pushes the tail mark down. Result: one continuous thought
+---section per turn, body grows as the model thinks.
+---
+---Empty thoughts are dropped (no placeholder, no section header)
+---so a turn that streams an empty thought event doesn't get a
+---vestigial `### thoughts` section.
 ---@param state hyprpilot.render.State
 ---@param text string
 local function render_thought(state, text)
@@ -1208,34 +1296,89 @@ local function render_thought(state, text)
 
   state.active_text_block = nil
 
-  local body = wrap_in_rules({ vim.split(text, "\n", { plain = true }) })
-  local lines = vim.list_extend({ "* thought" }, body)
+  local chunk_lines = vim.split(text, "\n", { plain = true })
 
-  -- Route through the per-turn `### thoughts` section. Block IDs are
-  -- per-turn-counter to stay unique across re-renders that drop and
-  -- re-insert thoughts at the same row.
-  local layout = get_layout(state, state.current_turn)
-  if layout ~= nil then
-    layout._thought_seq = (layout._thought_seq or 0) + 1
+  -- Append-to-existing path: there's already an accumulating thought
+  -- block in the current turn. Splice the new lines onto the end of
+  -- the block's body and re-anchor `tail_mark` to the new last row.
+  -- Mirrors `replace_block_body`'s tail-mark dance.
+  --
+  -- Guard: if the active block belongs to a previous turn (a non-
+  -- thought item or a turn boundary slipped through without resetting
+  -- the tracker), drop it and mint a fresh accumulator below.
+  local active_id = state.active_thought_block
+  local active_block = active_id ~= nil and state.blocks[active_id] or nil
+  if active_block ~= nil and active_block.turn_id ~= state.current_turn then
+    state.active_thought_block = nil
+    active_block = nil
   end
-  local block_id = "thought:" .. (layout and layout._thought_seq or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+  if active_block ~= nil then
+    chat_buffer.with_buffer(state.bufnr, function()
+      local head_row, tail_row = block_range(state, active_block)
+      if head_row == nil or tail_row == nil then
+        -- Lost the marks (rare — buffer wipe race). The closure
+        -- captures `active_block` as an upvalue; reassigning it to
+        -- nil here propagates to the outer scope's check below
+        -- (Lua upvalues are by-reference for the lexical local).
+        state.active_thought_block = nil
+        active_block = nil
+        return
+      end
+      -- Each `agent_thought` event is its own markdown paragraph.
+      -- Splice a blank separator between the existing body's tail
+      -- and the new chunk when both ends carry content — without
+      -- this, markdown renders consecutive chunks as a single mashed
+      -- paragraph (the captain's screenshot showed this regression).
+      -- Same rule when the new chunk's first line is non-empty:
+      -- treat it as a fresh paragraph relative to the previous tail.
+      local existing_tail = vim.api.nvim_buf_get_lines(state.bufnr, tail_row, tail_row + 1, false)[1] or ""
+      local lines_to_insert
+      if existing_tail ~= "" and (chunk_lines[1] or "") ~= "" then
+        lines_to_insert = vim.list_extend({ "" }, chunk_lines)
+      else
+        lines_to_insert = chunk_lines
+      end
+      vim.api.nvim_buf_set_lines(state.bufnr, tail_row + 1, tail_row + 1, false, lines_to_insert)
+      local new_tail = tail_row + #lines_to_insert
+      vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.tail_mark)
+      active_block.tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, new_tail, 0, { right_gravity = true })
+    end)
+    if active_block ~= nil then
+      return
+    end
+  end
 
-  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", lines)
+  -- First thought in this turn — mint the accumulating block. No
+  -- `* thought` per-chunk subheader; the `### thoughts` section
+  -- header carries the role identifier on its own.
+  local layout = get_layout(state, state.current_turn)
+  local block_id = "thought:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+
+  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", chunk_lines)
 
   if first_row == nil then
     -- Fallback for spontaneous thoughts (no turn layout).
     chat_buffer.with_buffer(state.bufnr, function()
-      first_row = append_lines(state, lines)
+      first_row = append_lines(state, chunk_lines)
     end)
-    track_block(state, block_id, "agent_thought", first_row, first_row + #lines - 1)
+    track_block(state, block_id, "agent_thought", first_row, first_row + #chunk_lines - 1)
   end
 
-  -- Header gets the conceal-style highlight; body lines stay plain so
-  -- the markdown highlighter handles them (matches tool / terminal).
-  apply_line_hl(state, first_row, "HyprpilotThoughtHeader")
+  -- Track the new block as the active accumulator so subsequent
+  -- chunks append into it rather than minting fresh blocks.
+  state.active_thought_block = block_id
+
+  -- Body lines stay plain so the markdown highlighter handles them.
+  apply_line_hl(state, first_row, "HyprpilotThoughtBody")
 end
 
----Render a plan block — checklist of steps with priority annotations.
+---Render a plan block. Multiple plan updates in the same turn
+---OVERWRITE the existing block in place (the daemon ships the
+---full step list every time — appending would stack N stale
+---copies of the same plan as the captain watches it grow).
+---First plan in a turn mints the block; subsequent ones replace
+---the body of the same block via `replace_block_body` and
+---re-apply the per-step highlights.
 ---@param state hyprpilot.render.State
 ---@param record table
 local function render_plan(state, record)
@@ -1270,11 +1413,40 @@ local function render_plan(state, record)
 
   local lines = vim.list_extend({ header }, body)
 
-  local layout = get_layout(state, state.current_turn)
-  if layout ~= nil then
-    layout._plan_seq = (layout._plan_seq or 0) + 1
+  -- Replace-in-place path: the current turn already has an active
+  -- plan block — overwrite its full content (header + body) so the
+  -- captain sees one evolving plan, not a stack of revisions.
+  local active_id = state.active_plan_block
+  local active_block = active_id ~= nil and state.blocks[active_id] or nil
+  if active_block ~= nil and active_block.turn_id == state.current_turn then
+    chat_buffer.with_buffer(state.bufnr, function()
+      local head_row = block_range(state, active_block)
+      if head_row == nil then
+        -- Lost the marks (rare); fall through to mint-new path.
+        state.active_plan_block = nil
+        active_block = nil
+        return
+      end
+      -- Rewrite header line + body in one set_lines call. New body
+      -- lengths are captured via `replace_block_body` which also
+      -- re-anchors the tail mark.
+      vim.api.nvim_buf_set_lines(state.bufnr, head_row, head_row + 1, false, { header })
+      replace_block_body(state, active_block, body)
+    end)
+    if active_block ~= nil then
+      local head_row = block_range(state, active_block)
+      if head_row ~= nil then
+        apply_line_hl(state, head_row, "HyprpilotPlanHeader")
+        for i, step in ipairs(steps) do
+          apply_line_hl(state, head_row + i, plan_step_hl(step.status))
+        end
+      end
+      return
+    end
   end
-  local block_id = "plan:" .. (layout and layout._plan_seq or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+
+  local layout = get_layout(state, state.current_turn)
+  local block_id = "plan:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
   local _, first_row = insert_block_into_section(state, state.current_turn, "tasks", block_id, "plan", lines)
 
@@ -1284,6 +1456,10 @@ local function render_plan(state, record)
     end)
     track_block(state, block_id, "plan", first_row, first_row + #lines - 1)
   end
+
+  -- Track the new block as the active accumulator so subsequent
+  -- plan events overwrite it instead of stacking.
+  state.active_plan_block = block_id
 
   apply_line_hl(state, first_row, "HyprpilotPlanHeader")
   for i, step in ipairs(steps) do
@@ -1421,6 +1597,20 @@ function M.render_item(state, turn_id, item)
     chat_buffer.with_buffer(state.bufnr, function()
       append_lines(state, vim.split(item.text or "", "\n", { plain = true }))
     end)
+
+    -- Render any captain-side attachments shipped on the user prompt
+    -- (`UserPrompt { text, attachments }` from the daemon). Without
+    -- this, captain images / file attachments were silently dropped
+    -- both live and on hydrate. Each attachment is a Lua table with
+    -- the same shape `render_attachment` consumes.
+    local attachments = item.attachments
+    if type(attachments) == "table" then
+      for _, a in ipairs(attachments) do
+        if type(a) == "table" then
+          render_attachment(state, a)
+        end
+      end
+    end
   elseif kind == "agent_text" then
     append_agent_text(state, item.text or "")
   elseif kind == "agent_thought" then
@@ -1461,6 +1651,8 @@ function M.hydrate(state, snapshot)
 
   state.current_turn = nil
   state.active_text_block = nil
+  state.active_thought_block = nil
+  state.active_plan_block = nil
   state.last_seq = snapshot.latestSeq
   state.oldest_seq = snapshot.oldestSeq
   state.has_more = snapshot.hasMore == true
@@ -2168,68 +2360,22 @@ function M.state_for(instance_id)
   return M._states[instance_id]
 end
 
----Custom `foldtext` for chat windows — renders the fold's head line
----verbatim plus a trailing `▸ N` marker, instead of Neovim's default
----`+-- N lines: <line>` chrome which clobbers the head row's own
----icon / status / title we want visible at a glance.
----@return string
----Map a section `kind` to a captain-readable noun. Singular when
----there's only one entry, plural otherwise.
-local SECTION_NOUNS = {
-  thoughts = { one = "thought", many = "thoughts" },
-  tools = { one = "tool call", many = "tool calls" },
-  tasks = { one = "task", many = "tasks" },
-  attachments = { one = "attachment", many = "attachments" },
-  adapter = { one = "adapter note", many = "adapter notes" },
-}
-
----Find the section whose header extmark sits at `header_row` in
----`state.bufnr`. Returns the section table + its kind, or nil when
----no section starts there (e.g. the fold is over an arbitrary
----block, not a section header).
----@param state hyprpilot.render.State
----@param header_row integer  -- 0-indexed
----@return table?, string?
-local function find_section_at_row(state, header_row)
-  for _, layout in pairs(state.turn_layouts) do
-    if type(layout.sections) == "table" then
-      for kind, section in pairs(layout.sections) do
-        local pos = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, section.head_mark, {})
-        if pos[1] == header_row then
-          return section, kind
-        end
-      end
-    end
-  end
-  return nil, nil
-end
-
----Custom foldtext: when a fold opens on a section header row
----(`### thoughts` / `### tools` / etc.), surface the captain-
----facing item count (`### thoughts  3 thoughts`) instead of the
----raw line count Vim would otherwise tack on. Falls back to the
----bare header line + line count for non-section folds (turn
----headers, ad-hoc folds the captain creates).
+---Custom foldtext: returns the head row VERBATIM. Section headers
+---(`### thoughts` / `### tools` / etc.) and pilot turn headers
+---(`## pilot [123 in/45 out tok · $0.001]`) already carry their stat
+---pills written in-line via `repaint_section_header` /
+---`repaint_pilot_header` — appending a second `[N items]` chip in
+---the foldtext was the regression that hid stats behind a
+---duplicated count and pushed pilot pills off-screen on narrow
+---chat sidebars. Now the foldtext is the head row, untouched.
+---
+---The line-count chrome Neovim adds by default is unhelpful for our
+---use case (the body of a tool-block fold is the same content the
+---captain would expand to read; line count is meaningless context),
+---so we deliberately don't append it.
 function M.foldtext()
   local fs = vim.v.foldstart or 1
-  local fe = vim.v.foldend or fs
-  local line = vim.fn.getline(fs) or ""
-
-  local bufnr = vim.api.nvim_get_current_buf()
-  local state = M.state_for_bufnr(bufnr)
-  if state ~= nil then
-    local section, kind = find_section_at_row(state, fs - 1)
-    if section ~= nil and kind ~= nil then
-      local count = section.item_count or #(section.block_ids or {})
-      local nouns = SECTION_NOUNS[kind] or { one = kind, many = kind }
-      local noun = count == 1 and nouns.one or nouns.many
-      return string.format("%s  [%d %s]", line, count, noun)
-    end
-  end
-
-  -- Fallback: line count (the previous behaviour).
-  local count = fe - fs + 1
-  return string.format("%s  ▸ %d", line, count)
+  return vim.fn.getline(fs) or ""
 end
 
 ---Iterate every tracked state. `fn` receives `(instance_id, state)`

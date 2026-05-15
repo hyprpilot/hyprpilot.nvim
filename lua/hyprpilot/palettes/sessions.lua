@@ -233,7 +233,9 @@ function M.open(opts)
               return
             end
             local bufnr = require("hyprpilot.chat.buffer").create(info.id)
-            require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name })
+            -- Captain explicitly picked this session — activate it so
+            -- the next composer submit lands on the loaded instance.
+            require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name }, { activate = true })
             require("hyprpilot.chat.window").show(info.id)
           end)
         end)

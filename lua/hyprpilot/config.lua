@@ -227,7 +227,7 @@ local defaults = {
     -- (omnifunc, blink.cmp's `path` provider) that don't need to
     -- round-trip through the daemon. Captain can extend this list
     -- when the daemon adds more sources.
-    sources = { "skills" },
+    sources = { "skills", "commands" },
   },
   notification = {
     bell = {
@@ -285,6 +285,26 @@ local defaults = {
       ok = "", -- nf-fa-check (U+F00C)
       cancelled = "", -- nf-fa-times (captain aborted)
       error = "", -- nf-fa-exclamation_triangle
+    },
+    -- Per-instance lifecycle states (header status pill — leftmost
+    -- column). Captains override via `setup({ icons = { instance_state
+    -- = { ... } } })`. ASCII fallback aware (empty strings degrade
+    -- to the bare label in the renderer).
+    instance_state = {
+      starting = "", -- nf-fa-spinner (U+F110) — booting
+      running = "", -- nf-fa-circle (U+F111) — live / accepting prompts
+      ended = "", -- nf-fa-stop (U+F04D) — daemon shut down
+      error = "", -- nf-fa-exclamation_triangle (U+F071)
+    },
+    -- Per-instance activity glyphs — rendered as the trailing
+    -- `[<glyph> <label>]` segment on the chat header. Mirrors the
+    -- activity events the chat dispatcher emits: streaming /
+    -- thinking / tool / awaiting_permission.
+    activity = {
+      streaming = "", -- nf-fa-bolt (U+F0E7)
+      thinking = "", -- nf-fa-lightbulb_o (U+F0EB)
+      tool = "", -- nf-fa-cog (U+F013)
+      permission = "", -- nf-fa-exclamation_triangle (U+F071)
     },
   },
   composer = {

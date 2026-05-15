@@ -180,30 +180,31 @@ T["header.refresh tolerates vim.NIL in meta (JSON-null wire fields)"] = function
   reset_header()
 end
 
-T["header.refresh paints activity pill with its specific highlight group"] = function()
+T["header.refresh paints status pill in the leftmost column"] = function()
   reset_header()
   local restore_active = stub_active_instance("inst-2")
   local restore_info = stub_instances_info()
 
   local winbar = require("hyprpilot.chat.winbar")
-  winbar._meta["inst-2"] = { name = "alt", agent_id = "claude-code" }
-
-  require("hyprpilot.status").set_activity({ kind = "streaming" })
+  -- Header now reads `instance_state` for the leftmost status pill;
+  -- activity moved to the composer (per-instance virt_text strip),
+  -- not the header. Pin a known state so the pill's hl group is
+  -- deterministic.
+  winbar._meta["inst-2"] = { name = "alt", agent_id = "claude-code", instance_state = "running" }
 
   local header = require("hyprpilot.chat.header")
   header._bufnr = mint_header_buffer()
   header.refresh()
 
   local marks = vim.api.nvim_buf_get_extmarks(header._bufnr, NS, 0, -1, { details = true })
-  local has_streaming_pill = false
+  local has_status_pill = false
   for _, m in ipairs(marks) do
-    if m[4] and m[4].hl_group == "HyprpilotHeaderActivityStreaming" then
-      has_streaming_pill = true
+    if m[4] and m[4].hl_group == "HyprpilotHeaderStatusRunning" then
+      has_status_pill = true
     end
   end
-  MiniTest.expect.equality(has_streaming_pill, true)
+  MiniTest.expect.equality(has_status_pill, true)
 
-  require("hyprpilot.status").set_activity({ kind = "idle" })
   winbar._meta["inst-2"] = nil
   restore_info()
   restore_active()

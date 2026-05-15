@@ -18,8 +18,8 @@ T["window.switch drains the permission_row queue (no cross-instance leak)"] = fu
   local buffer = require("hyprpilot.chat.buffer")
   local buf_a = buffer.create(id_a)
   local buf_b = buffer.create(id_b)
-  window.register({ bufnr = buf_a, instance_id = id_a, name = "a" })
-  window.register({ bufnr = buf_b, instance_id = id_b, name = "b" })
+  window.register({ bufnr = buf_a, instance_id = id_a, name = "a" }, { activate = true })
+  window.register({ bufnr = buf_b, instance_id = id_b, name = "b" }, { activate = true })
 
   -- Force is_visible() to true without standing up the real chat
   -- split (the rest of window.show in headless test env hits
@@ -58,12 +58,19 @@ T["window.switch drains the permission_row queue (no cross-instance leak)"] = fu
   })
   MiniTest.expect.equality(#permission_row._queue, 1)
 
-  -- Trigger the switch. The F1 fix calls
-  -- `permission_row.reset()` after `nvim_win_set_buf`; the queue
-  -- must drain.
+  -- Trigger the switch. New behavior: permission entries for the
+  -- de-focused instance PERSIST in the queue (their daemon-side
+  -- resolution slot is still live; switching back surfaces them
+  -- intact). Only the rendered HEAD filters by active instance —
+  -- the queue itself stays put.
   window.switch(id_b)
 
-  MiniTest.expect.equality(#permission_row._queue, 0)
+  -- A's entry survives the switch.
+  MiniTest.expect.equality(#permission_row._queue, 1)
+  -- But B (the new active instance) has no pending — the row hides.
+  MiniTest.expect.equality(permission_row.is_visible(), false)
+  -- A's entry is still addressable for switch-back.
+  MiniTest.expect.equality(permission_row._queue[1].instance_id, id_a)
 
   -- Restore everything we stubbed.
   window.is_visible = original_is_visible

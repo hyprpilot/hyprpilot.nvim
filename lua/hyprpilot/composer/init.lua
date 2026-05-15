@@ -141,6 +141,28 @@ function M.resize()
   end
   local bufnr = vim.api.nvim_win_get_buf(M._winid)
   local target = compute_target_height(bufnr)
+
+  if require("hyprpilot.chat.buffer").layout_manager_active() then
+    -- Cooperate with edgy's apply_size pass instead of fighting it:
+    -- `vim.w[winid].edgy_height` is edgy's documented dynamic-sizing
+    -- hook (`win:dim("height")` reads this first, falls back to
+    -- view.size.height). Set the captain's expected height; edgy
+    -- redistributes leftover into the absorber view (the chat).
+    pcall(function()
+      vim.w[M._winid].edgy_height = target
+    end)
+    -- Nudge edgy to recompute on the next tick so the height takes
+    -- effect immediately (otherwise it waits for WinResized / a
+    -- layout event).
+    -- `M.layout()` triggers `edgebar:resize()` + `win:apply_size()`;
+    -- `M.update()` (the obvious-looking sibling) only refreshes the
+    -- win lists without recomputing dimensions.
+    pcall(function()
+      require("edgy.layout").layout()
+    end)
+    return
+  end
+
   if vim.api.nvim_win_get_height(M._winid) ~= target then
     pcall(vim.api.nvim_win_set_height, M._winid, target)
   end
@@ -208,12 +230,18 @@ local function ensure_buffer(instance_id)
 
   local keymaps = (config.options.composer or {}).keymaps or {}
 
+  -- Closure-capture `instance_id` at bind time — never re-resolve via
+  -- `window.active_instance()` at fire time. The composer buffer for
+  -- A could become focused while B is the active instance (manual
+  -- `:b hyprpilot://composer/<id>`, layout-manager adoption, race
+  -- between switch and a queued keystroke); without the bound id,
+  -- submit / cancel would route to the wrong instance.
   apply_action(bufnr, keymaps.submit, function()
-    M.submit()
+    M.submit(nil, { instance_id = instance_id })
   end, "submit composer prompt")
 
   apply_action(bufnr, keymaps.cancel, function()
-    M.cancel()
+    M.cancel(instance_id)
   end, "cancel in-flight turn")
 
   apply_action(bufnr, keymaps.close, function()
@@ -302,6 +330,9 @@ end
 ---No-op when the composer buffer doesn't exist yet. Triggers
 ---`M.resize` afterwards so the window grows / shrinks to fit.
 ---@param instance_id string
+---Resolve the activity glyph + label for a kind. Reads
+---`config.icons.activity` (captain-overridable; ASCII fallbacks
+---kick in when a key is empty / missing).
 paint_indicator = function(instance_id)
   local bufnr = buffers[instance_id]
   if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -449,6 +480,24 @@ end
 
 ---Convenience: attach the file backing `bufnr` (defaults to current).
 ---Skips with a warn when the buffer has no on-disk path.
+---
+---Two non-obvious bits:
+---
+---1. **Path is normalised to absolute** via `fnamemodify(:p)`. The
+---    daemon's `Attachment` struct (`src-tauri/src/adapters/transcript.rs`)
+---    uses `path` to build the `file://<...>` URI shipped to the
+---    agent and to (eventually) read the file server-side. A relative
+---    path under a different cwd would resolve to the wrong file.
+---
+---2. **Body is read from the BUFFER, not disk.** Captures the
+---    captain's unsaved edits (the buffer they're actively typing
+---    into) and sidesteps the "agent reads file → empty content"
+---    bug where the daemon receives `path` only and the agent gets
+---    `TextResourceContents { text = "", uri = "file://..." }`. We
+---    populate `body` so the agent gets the actual content; the
+---    daemon will accept it (`Attachment.body` is `#[serde(default)]
+---    String`) and use it verbatim instead of trying to read the
+---    file itself.
 ---@param bufnr? integer
 ---@param opts? { instance_id?: string, title?: string }
 ---@return hyprpilot.composer.Attachment?
@@ -459,13 +508,25 @@ function M.attach_buffer(bufnr, opts)
     return nil
   end
 
-  local path = vim.api.nvim_buf_get_name(bufnr)
-  if path == "" then
+  local raw_name = vim.api.nvim_buf_get_name(bufnr)
+  if raw_name == "" then
     log.warn("composer.attach_buffer: bufnr=%s has no name (write it first)", bufnr)
     return nil
   end
 
-  return M.attach(vim.tbl_extend("force", { path = path }, opts or {}))
+  -- Normalise to an absolute path. `nvim_buf_get_name` may return a
+  -- relative path when the buffer was opened with one, which would
+  -- resolve to the wrong file daemon-side under any other cwd.
+  local path = vim.fn.fnamemodify(raw_name, ":p")
+
+  -- Read the buffer's CURRENT contents (captures unsaved edits) and
+  -- ship as `body` so the agent receives the actual file text — the
+  -- daemon doesn't read the file itself; without `body` the agent
+  -- gets an empty `TextResourceContents`.
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local body = table.concat(lines, "\n")
+
+  return M.attach(vim.tbl_extend("force", { path = path, body = body }, opts or {}))
 end
 
 ---Convenience: when `img-clip.nvim` is installed, drop the clipboard
@@ -497,11 +558,32 @@ function M.attach_clipboard_image(opts)
     return nil
   end
 
+  -- Read the saved PNG back into base64 so the daemon can ship it
+  -- as `ImageContent.data`. Without this, the agent receives the
+  -- image as `{ data = "", uri = "file://<temp>", mimeType = ... }`
+  -- — most agents need the inline base64; few resolve via URI.
+  local fd = vim.uv.fs_open(path, "r", 438)
+  local data
+  if fd ~= nil then
+    local stat = vim.uv.fs_fstat(fd)
+    if stat ~= nil and stat.size > 0 then
+      local raw = vim.uv.fs_read(fd, stat.size, 0)
+      if type(raw) == "string" then
+        data = vim.base64.encode(raw)
+      end
+    end
+    vim.uv.fs_close(fd)
+  end
+  if data == nil then
+    log.warn("composer.attach_clipboard_image: failed to read %s for base64 encoding", path)
+  end
+
   return M.attach({
     path = path,
     instance_id = opts.instance_id,
     title = opts.title,
     mime = "image/png",
+    data = data,
   })
 end
 
@@ -682,14 +764,21 @@ function M.open(opts)
   M._winid = vim.api.nvim_get_current_win()
 
   vim.api.nvim_win_set_buf(M._winid, bufnr)
-  require("hyprpilot.chat.buffer").clean_window_chrome(M._winid)
+  local buffer_mod = require("hyprpilot.chat.buffer")
+  buffer_mod.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
-  -- `winfixheight` keeps `<C-W>=` and other equalisation passes from
-  -- redistributing space onto the composer, so our auto-resize stays
-  -- the source of truth.
-  vim.wo[M._winid].winfixheight = true
-  vim.wo[M._winid].winfixwidth = true
+  -- `winfixheight` protects against `equalalways` redistributing
+  -- height when sibling splits (permission-row, queue-strip) open
+  -- belowright. Without it, the composer gets squeezed and our
+  -- auto-resize doesn't fire (no TextChanged event on a
+  -- sibling-open). `nvim_win_set_height` still works on a
+  -- winfixheight window — the flag only blocks automatic equalize.
+  -- Skip under a layout manager (edgy owns sizing).
+  if not buffer_mod.layout_manager_active() then
+    vim.wo[M._winid].winfixheight = true
+    vim.wo[M._winid].winfixwidth = true
+  end
 
   paint_indicator(instance_id)
   M.resize()
@@ -781,11 +870,14 @@ function M.submit(text, opts)
     end
   end
 
-  -- Queue route: when the agent is busy (anything but idle), park
-  -- the prompt instead of firing it. The strip subscribes to
-  -- queue mutations and pops in automatically.
+  -- Queue route: when THIS instance's agent is busy, park the prompt
+  -- instead of firing it. Critically reads `status.activity(instance_id)`
+  -- — the per-instance activity, NOT the global flag. Without this
+  -- scoping, a long turn on instance A would cause every prompt
+  -- typed in idle instance B's composer to land in B's queue (the
+  -- old global flag was non-idle because A was running).
   if not opts.bypass_queue then
-    local activity = require("hyprpilot.status").get().activity
+    local activity = require("hyprpilot.status").activity(instance_id)
     if activity ~= nil and activity.kind ~= nil and activity.kind ~= "idle" then
       require("hyprpilot.composer.queue").enqueue(instance_id, {
         text = text,

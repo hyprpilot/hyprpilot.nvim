@@ -40,9 +40,9 @@ T["turn_started → thinking, transcript agent_text → streaming, turn_ended �
     end,
   })
 
-  status.set_activity({ kind = "thinking" })
-  status.set_activity({ kind = "streaming" })
-  status.set_activity({ kind = "idle" })
+  status.set_activity("inst-1", { kind = "thinking" })
+  status.set_activity("inst-1", { kind = "streaming" })
+  status.set_activity("inst-1", { kind = "idle" })
 
   MiniTest.expect.equality(seen[1], "thinking")
   MiniTest.expect.equality(seen[2], "streaming")
@@ -56,13 +56,13 @@ T["activity transitions through tool / awaiting_permission via dispatch flow"] =
   -- These emulate the dispatch order the live event stream would
   -- produce; we route through the same set_activity calls the
   -- dispatcher uses so the test doesn't require a daemon.
-  status.set_activity({ kind = "thinking" })
-  status.set_activity({ kind = "tool", tool_name = "bash" })
-  status.set_activity({ kind = "awaiting_permission", permission_request_id = "req-1" })
-  status.set_activity({ kind = "streaming" })
-  status.set_activity({ kind = "idle" })
+  status.set_activity("inst-1", { kind = "thinking" })
+  status.set_activity("inst-1", { kind = "tool", tool_name = "bash" })
+  status.set_activity("inst-1", { kind = "awaiting_permission", permission_request_id = "req-1" })
+  status.set_activity("inst-1", { kind = "streaming" })
+  status.set_activity("inst-1", { kind = "idle" })
 
-  MiniTest.expect.equality(status.get().activity.kind, "idle")
+  MiniTest.expect.equality(status.get("inst-1").activity.kind, "idle")
 end
 
 T["turn_ended with cancel-shaped stopReason marks the chip as cancelled on the pilot header"] = function()
@@ -184,8 +184,8 @@ T["HyprpilotInstanceChanged fires when window.switch flips the active id"] = fun
 
   -- Two registered instances; register() emits the first
   -- HyprpilotInstanceChanged for each on initial registration.
-  window.register({ bufnr = buffer.create(id_a), instance_id = id_a })
-  window.register({ bufnr = buffer.create(id_b), instance_id = id_b })
+  window.register({ bufnr = buffer.create(id_a), instance_id = id_a }, { activate = true })
+  window.register({ bufnr = buffer.create(id_b), instance_id = id_b }, { activate = true })
 
   -- Now subscribe and switch — that triggers the autocmd we want
   -- to verify under captain control.
