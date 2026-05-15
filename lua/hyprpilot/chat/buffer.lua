@@ -346,17 +346,24 @@ function M.open_aux_split(opts)
     return unwind("nvim_win_set_buf failed: " .. tostring(buf_err))
   end
 
-  -- Mark every aux split with `edgy_disable` so folke/edgy.nvim
-  -- explicitly skips them during adoption. The chat is the only
-  -- window the captain registers with edgy; header / composer /
-  -- queue strip / permission row are sub-splits we manage as
-  -- siblings of the chat. Without this marker, edgy could try to
-  -- pull them into separate views and the layout fights itself.
-  pcall(function()
-    vim.w[winid].edgy_disable = true
-  end)
-
   M.clean_window_chrome(winid)
+
+  -- Force a layout-manager re-scan AFTER the buffer swap. The
+  -- aux-split open path is `<dir>split` (creates a scratch window
+  -- with empty filetype) → `nvim_win_set_buf` (swap to our
+  -- pre-typed buffer). Edgy's `BufWinEnter` listener fires on the
+  -- scratch buffer with empty ft → no view matches → edgy may
+  -- unhook the window. The post-swap `BufWinEnter` sometimes
+  -- doesn't trigger a fresh layout pass, leaving the now-correctly-
+  -- typed window floating in the editor area instead of in edgy's
+  -- right column. Forcing `layout()` here closes that race so
+  -- adoption happens reliably (verified via `views[i].wins` going
+  -- from 0 to 1 after this call for the header view).
+  if M.layout_manager_active() then
+    pcall(function()
+      require("edgy.layout").layout()
+    end)
+  end
 
   if opts.after ~= nil then
     local ok_after, after_err = pcall(opts.after, winid)
