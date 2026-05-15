@@ -238,7 +238,7 @@ function M.ensure_listeners()
     group = group,
     callback = function(args)
       local bufnr = args.buf
-      if vim.bo[bufnr].filetype ~= "hyprpilot" then
+      if not require("hyprpilot.chat.buffer").has_filetype(bufnr, "hyprpilot") then
         return
       end
 

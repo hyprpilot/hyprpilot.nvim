@@ -645,6 +645,22 @@ function M.close()
   log.debug("diff_preview.close: request_id=%s", state.request_id)
 end
 
+---Close the preview iff it belongs to `instance_id`. Called from
+---`chat/window.lua::M.close` so closing the instance whose diff is
+---open doesn't strand `M._state` with a dead instance reference.
+---The natural auto-close paths (`HyprpilotPermissionResolved`,
+---`HyprpilotInstanceStateChanged`) don't fire on captain-driven
+---instance close; this is the missing teardown step.
+---@param instance_id string
+function M.forget(instance_id)
+  if M._state == nil then
+    return
+  end
+  if M._state.instance_id == instance_id then
+    M.close()
+  end
+end
+
 ---Toggle the preview for `entry`. Closes if currently open for the
 ---same request; opens otherwise.
 ---@param entry hyprpilot.chat.permission-row.Entry

@@ -10,10 +10,10 @@
 
 local M = {}
 
----Register every rpc handler module. Called once from `setup()`
----after `log` + `config` are wired. `client.on_notification`
----accumulates without de-duping, so don't call this twice in one
----process — `setup()` is the single registration point.
+---Register every rpc handler module. Called from `setup()` after
+---`log` + `config` are wired. Each sub-module's `register()`
+---drops its prior listeners first, so re-running `setup()`
+---(hot-reload, config swap) doesn't accumulate handlers.
 function M.register()
   require("hyprpilot.rpc.window").register()
 end

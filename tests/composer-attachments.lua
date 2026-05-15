@@ -218,6 +218,119 @@ T["attach renders virt_lines anchored to the composer's last buffer line"] = fun
   helpers.cleanup_instance(id)
 end
 
+--- Helpers for attach_file cases below — write a temp file with the
+--- given contents (and optional extension) and return its absolute
+--- path. Each test cleans up via os.remove.
+local function write_tmp(contents, ext)
+  local path = vim.fn.tempname() .. (ext or "")
+  local fd = vim.uv.fs_open(path, "w", 420)
+  vim.uv.fs_write(fd, contents, 0)
+  vim.uv.fs_close(fd)
+  return path
+end
+
+T["attach_file: text mime → ships body as readfile content"] = function()
+  local composer = require("hyprpilot.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+  composer.clear_attachments(id)
+
+  local path = write_tmp("alpha\nbeta\ngamma", ".md")
+  local entry = composer.attach_file(path)
+
+  MiniTest.expect.equality(entry ~= nil, true)
+  MiniTest.expect.equality(entry.mime, "text/markdown")
+  MiniTest.expect.equality(entry.body, "alpha\nbeta\ngamma")
+  MiniTest.expect.equality(entry.data, nil)
+
+  os.remove(path)
+  composer.clear_attachments(id)
+  helpers.cleanup_instance(id)
+end
+
+T["attach_file: binary mime → ships data as base64"] = function()
+  local composer = require("hyprpilot.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+  composer.clear_attachments(id)
+
+  -- 1×1 transparent PNG (smallest possible).
+  local png = "\137PNG\r\n\26\n\0\0\0\rIHDR\0\0\0\1\0\0\0\1\8\6\0\0\0\31\21\196\137\0\0\0\rIDATx\156c\0\1\0\0\5\0\1\13\10\45\180\0\0\0\0IEND\174B`\130"
+  local path = write_tmp(png, ".png")
+  local entry = composer.attach_file(path)
+
+  MiniTest.expect.equality(entry ~= nil, true)
+  MiniTest.expect.equality(entry.mime, "image/png")
+  MiniTest.expect.equality(entry.body, nil)
+  MiniTest.expect.equality(type(entry.data), "string")
+  MiniTest.expect.equality(#entry.data > 0, true)
+
+  os.remove(path)
+  composer.clear_attachments(id)
+  helpers.cleanup_instance(id)
+end
+
+T["attach_file: unknown extension → null-byte sniff routes text vs binary"] = function()
+  local composer = require("hyprpilot.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+  composer.clear_attachments(id)
+
+  -- Plain ASCII, unknown extension → sniff says "text" → body.
+  local text_path = write_tmp("hello world", ".unknown")
+  local text_entry = composer.attach_file(text_path)
+  MiniTest.expect.equality(text_entry.body, "hello world")
+  MiniTest.expect.equality(text_entry.data, nil)
+
+  -- Contains a null byte → sniff says "binary" → data + octet-stream.
+  local bin_path = write_tmp("AB\0CD", ".unknown")
+  local bin_entry = composer.attach_file(bin_path)
+  MiniTest.expect.equality(bin_entry.mime, "application/octet-stream")
+  MiniTest.expect.equality(bin_entry.body, nil)
+  MiniTest.expect.equality(type(bin_entry.data), "string")
+
+  os.remove(text_path)
+  os.remove(bin_path)
+  composer.clear_attachments(id)
+  helpers.cleanup_instance(id)
+end
+
+T["attach_file: rejects oversize files via composer.attach.max_bytes"] = function()
+  local composer = require("hyprpilot.composer")
+  local config = require("hyprpilot.config")
+  local id = helpers.unique_id()
+  active_instance(id)
+  composer.clear_attachments(id)
+
+  local original = config.options.composer.attach.max_bytes
+  config.options.composer.attach.max_bytes = 4 -- 4 bytes ceiling
+
+  local path = write_tmp("this is more than four bytes", ".txt")
+  local entry = composer.attach_file(path)
+
+  MiniTest.expect.equality(entry, nil)
+  MiniTest.expect.equality(#composer.attachments(id), 0)
+
+  config.options.composer.attach.max_bytes = original
+  os.remove(path)
+  composer.clear_attachments(id)
+  helpers.cleanup_instance(id)
+end
+
+T["attach_file: missing path returns nil + warn"] = function()
+  local composer = require("hyprpilot.composer")
+  local id = helpers.unique_id()
+  active_instance(id)
+  composer.clear_attachments(id)
+
+  local missing = vim.fn.tempname() .. "-does-not-exist"
+  local entry = composer.attach_file(missing)
+  MiniTest.expect.equality(entry, nil)
+
+  composer.clear_attachments(id)
+  helpers.cleanup_instance(id)
+end
+
 T["wipe drops staged attachments alongside the buffer"] = function()
   local composer = require("hyprpilot.composer")
   local id = helpers.unique_id()

@@ -130,6 +130,10 @@ local M = {}
 ---@field min_height? integer | (fun(lines: number): number?)  -- minimum / initial composer rows
 ---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for auto-grow (default 40% vh)
 ---@field keymaps? hyprpilot.ConfigComposerKeymaps
+---@field attach? hyprpilot.ConfigComposerAttach
+
+---@class hyprpilot.ConfigComposerAttach
+---@field max_bytes? integer  -- per-file size cap for `attach_file`. Larger paths are rejected with a warn (default 8 MiB)
 
 ---@class hyprpilot.ConfigComposerKeymaps
 ---@field submit? hyprpilot.ConfigComposerKeymapAction | false
@@ -328,6 +332,14 @@ local defaults = {
       -- global `<leader>` keybind. No insert-mode default; insert is
       -- typing land and `<C-d>` is already vim's de-indent.
       detach = { normal = "<localleader>d" },
+    },
+    attach = {
+      -- `attach_file` rejects paths larger than this. 8 MiB covers a
+      -- normal source file / PDF / screenshot; anything bigger is
+      -- usually a captain mistake (`attach_file("/var/log/...")`).
+      -- Captains lift the cap via `setup({ composer = { attach = {
+      -- max_bytes = ... } } })` when they really need it.
+      max_bytes = 8 * 1024 * 1024,
     },
   },
 }

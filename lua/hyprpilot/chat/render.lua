@@ -1237,9 +1237,12 @@ local function render_tool_call(state, record)
   -- over (fenced code blocks ` ```` ` get treesitter highlight).
   apply_line_hl(state, first_row, tool_status_hl(record.state))
 
-  if record.state == "completed" or record.state == "failed" then
-    fold_block(state, block)
-  end
+  -- Tool calls fold from the moment they appear and stay folded for
+  -- their entire lifecycle. Captain `zo`s explicitly when they want
+  -- to read the body. Folding only on terminal state used to flop
+  -- the layout under the cursor every time a tool finished — chat
+  -- visibly jumped as N rows of body collapsed.
+  fold_block(state, block)
 end
 
 ---Apply a tool_call_update: re-render the header line and replace the
@@ -1292,9 +1295,12 @@ function M.handle_tool_call_update(instance_id, update)
     apply_line_hl(state, head_row, tool_status_hl(update.state))
     local _ = tail_row
 
-    if update.state == "completed" or update.state == "failed" then
-      fold_block(state, block)
-    end
+    -- DO NOT re-fold here. `:N,Mfold` stacks manual folds — every
+    -- streaming chunk would push another layer onto the same range,
+    -- and the captain would need N+1 `zo`s to open a tool call. The
+    -- create-time fold from `render_tool_call` survives body
+    -- modifications (manual folds adjust their range as lines shift)
+    -- and stays closed across the whole lifecycle.
   end)
 end
 

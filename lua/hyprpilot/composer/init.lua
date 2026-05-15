@@ -7,8 +7,10 @@
 ---   `submit(text?, opts?)` — defaults `text` to the composer's contents
 ---   `cancel()` — sends `prompts/cancel` to the active instance
 ---   `attach(opts)` / `detach(slug, opts?)` / `attachments(instance_id?)`
----   `attach_buffer(bufnr?, opts?)` — attach the buffer's file path
----   `attach_clipboard_image(opts?)` — wraps img-clip (when available)
+---   `attach_buffer(bufnr?, opts?)` — attach an unsaved / open buffer
+---     (captures live edits)
+---   `attach_file(path, opts?)` — generic disk-file attach with mime
+---     + text/binary auto-detect; respects `composer.attach.max_bytes`
 ---   `clear_attachments(instance_id?)` — drop every staged attachment
 ---   `paste_buffer(bufnr?, opts?)` — append the buffer's contents as a
 ---     fenced block (header = cwd-relative path)
@@ -271,7 +273,14 @@ local function ensure_buffer(instance_id)
   -- to the current last buffer line) and re-resize the window on
   -- every edit. `paint_indicator` calls `M.resize` itself, so this
   -- one callback covers both reposition + auto-grow paths.
+  --
+  -- Per-buffer augroup with `clear = true` so adopting a same-named
+  -- buffer (post-shutdown hot-reload, see `find_by_name` branch
+  -- above) doesn't double up the autocmd — every keystroke would
+  -- otherwise fire `paint_indicator` N times after N adoptions.
+  local augroup = vim.api.nvim_create_augroup("HyprpilotComposerEdits_" .. bufnr, { clear = true })
   vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP" }, {
+    group = augroup,
     buffer = bufnr,
     callback = function()
       paint_indicator(instance_id)
@@ -548,62 +557,161 @@ function M.attach_buffer(bufnr, opts)
   return M.attach(vim.tbl_extend("force", { path = path, body = body }, opts or {}))
 end
 
----Convenience: when `img-clip.nvim` is installed, drop the clipboard
----image to a temp file and stage it. Logs a warn when img-clip isn't
----available — captains can attach via `attach({ path = ... })`
----directly using their own clipboard helper.
----@param opts? { instance_id?: string, title?: string, dir?: string }
+--- Mime types we treat as text-like — body lands as a UTF-8 string
+--- in the attachment's `body` field. Everything else (images, PDFs,
+--- archives, unknown binary) round-trips through `data` as base64.
+--- The set is deliberately tight; when the mime is nil we fall
+--- through to a null-byte sniff on the first 1 KiB.
+local TEXT_MIME_PREFIXES = { "text/" }
+local TEXT_MIME_LITERALS = {
+  ["application/json"] = true,
+  ["application/yaml"] = true,
+  ["application/toml"] = true,
+  ["application/xml"] = true,
+  ["application/x-sh"] = true,
+  ["application/javascript"] = true,
+  ["application/typescript"] = true,
+}
+
+---@param mime string?
+---@return boolean
+local function mime_is_text(mime)
+  if mime == nil or mime == "" then
+    return false
+  end
+  if TEXT_MIME_LITERALS[mime] then
+    return true
+  end
+  for _, prefix in ipairs(TEXT_MIME_PREFIXES) do
+    if mime:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
+end
+
+---Sniff the first chunk of `path` for null bytes — the canonical
+---heuristic for "is this a text file" when the mime map doesn't know
+---the extension. A single 0x00 byte in the first 1 KiB and we treat
+---it as binary; otherwise text. Cheap, sufficient for our use case
+---(agent attachments), avoids pulling a libmagic dep.
+---@param path string
+---@return boolean
+local function sniff_is_text(path)
+  local fd = vim.uv.fs_open(path, "r", 438)
+  if fd == nil then
+    return false
+  end
+  local chunk = vim.uv.fs_read(fd, 1024, 0)
+  vim.uv.fs_close(fd)
+  if type(chunk) ~= "string" or chunk == "" then
+    return true
+  end
+  return chunk:find("\0", 1, true) == nil
+end
+
+---Read `path` fully into a base64-encoded string. Used for binary
+---attachments (images, PDFs, ...) so the daemon ships them as
+---inline `ImageContent.data` / `BlobResourceContents.blob` — most
+---agents read the inline payload; few resolve `file://` URIs.
+---@param path string
+---@return string?
+local function read_as_base64(path)
+  local fd = vim.uv.fs_open(path, "r", 438)
+  if fd == nil then
+    return nil
+  end
+  local stat = vim.uv.fs_fstat(fd)
+  if stat == nil or stat.size == 0 then
+    vim.uv.fs_close(fd)
+    return nil
+  end
+  local raw = vim.uv.fs_read(fd, stat.size, 0)
+  vim.uv.fs_close(fd)
+  if type(raw) ~= "string" then
+    return nil
+  end
+  return vim.base64.encode(raw)
+end
+
+---Generic file attach: read `path` from disk, classify text vs
+---binary by mime (or null-byte sniff for unknown extensions), and
+---hand off to `M.attach` with `body` (text) or `data` (base64).
+---Captain wire:
+---
+---   require("hyprpilot.composer").attach_file("/path/to/file")
+---
+---   -- with an `img-clip` clipboard image flow:
+---   local path = vim.fn.tempname() .. ".png"
+---   require("img-clip.clipboard").save_image(path)
+---   require("hyprpilot.composer").attach_file(path, { title = "screenshot" })
+---
+---Rejects paths over `composer.attach.max_bytes` (default 8 MiB) so
+---a stray `attach_file("/var/log/syslog")` doesn't ship a 200 MB
+---base64 blob over the socket.
+---@param path string
+---@param opts? { instance_id?: string, title?: string, slug?: string, mime?: string }
 ---@return hyprpilot.composer.Attachment?
-function M.attach_clipboard_image(opts)
+function M.attach_file(path, opts)
+  if type(path) ~= "string" or path == "" then
+    log.warn("composer.attach_file: path must be a non-empty string")
+    return nil
+  end
   opts = opts or {}
 
-  local clipboard_ok, clipboard = pcall(require, "img-clip.clipboard")
-  if not clipboard_ok then
-    log.warn("composer.attach_clipboard_image: img-clip.nvim is not installed")
+  local resolved = vim.fn.fnamemodify(path, ":p")
+  if vim.fn.filereadable(resolved) ~= 1 then
+    log.warn("composer.attach_file: file not readable: %s", resolved)
     return nil
   end
 
-  if not clipboard.content_is_image() then
-    log.warn("composer.attach_clipboard_image: clipboard does not contain an image")
+  local stat = vim.uv.fs_stat(resolved)
+  if stat == nil then
+    log.warn("composer.attach_file: stat failed for %s", resolved)
     return nil
   end
 
-  local dir = opts.dir or vim.fn.tempname()
-  vim.fn.mkdir(dir, "p")
-  local path = string.format("%s/clipboard-%d.png", dir, vim.uv.hrtime())
-
-  if not clipboard.save_image(path) then
-    log.warn("composer.attach_clipboard_image: img-clip.save_image failed")
+  local max_bytes = ((config.options.composer or {}).attach or {}).max_bytes or (8 * 1024 * 1024)
+  if stat.size > max_bytes then
+    log.warn("composer.attach_file: %s is %d bytes, exceeds composer.attach.max_bytes=%d", resolved, stat.size, max_bytes)
     return nil
   end
 
-  -- Read the saved PNG back into base64 so the daemon can ship it
-  -- as `ImageContent.data`. Without this, the agent receives the
-  -- image as `{ data = "", uri = "file://<temp>", mimeType = ... }`
-  -- — most agents need the inline base64; few resolve via URI.
-  local fd = vim.uv.fs_open(path, "r", 438)
-  local data
-  if fd ~= nil then
-    local stat = vim.uv.fs_fstat(fd)
-    if stat ~= nil and stat.size > 0 then
-      local raw = vim.uv.fs_read(fd, stat.size, 0)
-      if type(raw) == "string" then
-        data = vim.base64.encode(raw)
-      end
-    end
-    vim.uv.fs_close(fd)
-  end
-  if data == nil then
-    log.warn("composer.attach_clipboard_image: failed to read %s for base64 encoding", path)
+  local mime = opts.mime or guess_mime(resolved)
+  local is_text
+  if mime ~= nil and mime ~= "" then
+    is_text = mime_is_text(mime)
+  else
+    is_text = sniff_is_text(resolved)
   end
 
-  return M.attach({
-    path = path,
+  local payload = {
+    path = resolved,
     instance_id = opts.instance_id,
     title = opts.title,
-    mime = "image/png",
-    data = data,
-  })
+    slug = opts.slug,
+    mime = mime,
+  }
+
+  if is_text then
+    local lines = vim.fn.readfile(resolved)
+    payload.body = table.concat(lines, "\n")
+  else
+    local data = read_as_base64(resolved)
+    if data == nil then
+      log.warn("composer.attach_file: failed to base64-encode %s", resolved)
+      return nil
+    end
+    payload.data = data
+    -- Daemon needs SOMETHING in mime for binary contents to route
+    -- via `BlobResourceContents`. Falling back to octet-stream when
+    -- the extension map didn't know — safe default.
+    if payload.mime == nil or payload.mime == "" then
+      payload.mime = "application/octet-stream"
+    end
+  end
+
+  return M.attach(payload)
 end
 
 ---Build a fenced code block: optional header line above the fence,

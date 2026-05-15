@@ -193,6 +193,14 @@ function M.close(instance_id)
   pcall(function()
     require("hyprpilot.chat.header").forget(id)
   end)
+  -- Diff preview holds a reference to the instance via `M._state` —
+  -- if the captain closes the instance whose preview is open, the
+  -- natural auto-close paths (`HyprpilotPermissionResolved`,
+  -- `HyprpilotInstanceStateChanged`) don't fire and the preview
+  -- lingers with a dead instance + bufnr.
+  pcall(function()
+    require("hyprpilot.ui.diff-preview").forget(id)
+  end)
 
   if M._last_active_id == id then
     M._last_active_id = next(M._instances)
@@ -533,10 +541,10 @@ vim.api.nvim_create_autocmd("BufEnter", {
     if not vim.api.nvim_buf_is_loaded(bufnr) then
       return
     end
-    local ft = vim.bo[bufnr].filetype
-    if ft == "hyprpilot" or ft == "hyprpilot_composer" or ft == "hyprpilot_header" or ft == "hyprpilot_permission_row" or ft == "hyprpilot_queue_strip" then
+    if buffer.is_plugin_buffer(bufnr) then
       return
     end
+    local ft = vim.bo[bufnr].filetype
     -- Skip unnamed scratch buffers (filetype empty + no name) — they
     -- have nothing useful to scan against. The previous association
     -- stays valid until the captain enters a real file.

@@ -49,7 +49,11 @@ end
 ---@param name string                    -- buffer name (used for `:ls` and addressability)
 local function apply_options(bufnr, name)
   vim.api.nvim_buf_set_name(bufnr, name)
-  vim.bo[bufnr].filetype = "hyprpilot"
+  -- Dotted alias: bare component is what our autocmd patterns +
+  -- equality checks match (vim ft pattern matching iterates dotted
+  -- components). Second component pulls in markdown's ftplugin +
+  -- treesitter parser for free, matching the composer's surface.
+  vim.bo[bufnr].filetype = "hyprpilot.markdown"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].bufhidden = "hide"
