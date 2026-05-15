@@ -56,6 +56,16 @@ local SPAWN_TIMEOUT_MS = 30000
 --- spawned instance for restart replay. Omitted from the wire when
 --- nil / empty / malformed (a `log.warn` fires on bad shapes so
 --- captain misuse doesn't drop silently).
+---@field with_shutdown? boolean
+--- PLUGIN-SIDE FLAG (not forwarded to the daemon). The plugin
+--- marks the spawned instance as "owned by this nvim session" —
+--- on `VimLeavePre` we fire `instances/shutdown` against it so
+--- the daemon doesn't accumulate orphan instances after the
+--- captain exits. **Default true**: instances WE spawn are
+--- typically tied to the captain's editing session. Captains who
+--- want a spawned instance to outlive nvim (long-running daemon-
+--- side agent the captain wants to attach back to from a fresh
+--- nvim) opt out with `with_shutdown = false`.
 
 ---@class hyprpilot.FocusOpts
 ---@field ensure? boolean     -- default false; true → spawn-and-rename if the slug doesn't resolve
@@ -70,6 +80,11 @@ local SPAWN_TIMEOUT_MS = 30000
 --- Same shape as `SpawnOpts.with_config`; only honoured on the
 --- ensure-spawn path (a focus that resolves to a live instance
 --- ignores it).
+---@field with_shutdown? boolean
+--- Same plugin-side flag as `SpawnOpts.with_shutdown` (default
+--- true). Only meaningful on the ensure-spawn path — a focus that
+--- resolves to a pre-existing live instance does NOT mark it
+--- owned (we didn't spawn it; not ours to clean up).
 
 ---@class hyprpilot.InstanceMeta
 ---@field profile_id? string
@@ -148,12 +163,24 @@ local with_config = require("hyprpilot.rpc.with-config")
 ---the existing active instance in place rather than silently flipping
 ---`_last_active_id` and rerouting the next composer submit. Shown
 ---spawns flip active as part of the explicit `window.show` below.
+---
+---`with_shutdown` (when true) stamps the registry state so the
+---`VimLeavePre` cleanup hook below knows we own this instance and
+---should fire `instances/shutdown` on exit. Only spawn / focus-
+---ensure-spawn paths set it; attaches to pre-existing daemon
+---instances leave it nil (we didn't spawn it; not ours to clean up).
 ---@param instance hyprpilot.Instance
 ---@param show_after boolean
-local function attach(instance, show_after)
+---@param with_shutdown? boolean
+local function attach(instance, show_after, with_shutdown)
   local bufnr = buffer.create(instance.id)
 
-  window.register({ bufnr = bufnr, instance_id = instance.id, name = instance.name }, { activate = show_after })
+  window.register({
+    bufnr = bufnr,
+    instance_id = instance.id,
+    name = instance.name,
+    spawned_with_shutdown = with_shutdown == true,
+  }, { activate = show_after })
 
   if show_after then
     window.show(instance.id)
@@ -301,6 +328,13 @@ function M.spawn(opts, callback)
 
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
+  -- Plugin-side ownership flag — stays out of the wire payload.
+  -- Default TRUE: instances we spawn are tied to the captain's
+  -- nvim session. The VimLeavePre hook below uses the stamped
+  -- registry state to fire `instances/shutdown` on exit. Captains
+  -- who want a spawned instance to outlive nvim opt out via
+  -- `with_shutdown = false`.
+  local with_shutdown = opts.with_shutdown ~= false
 
   local params = {
     profileId = opts.profile_id,
@@ -324,7 +358,7 @@ function M.spawn(opts, callback)
     end
 
     local instance = { id = result.instanceId, cwd = cwd }
-    attach(instance, show_after)
+    attach(instance, show_after, with_shutdown)
 
     if callback ~= nil then
       callback(nil, instance)
@@ -343,6 +377,16 @@ function M.focus(instance_id, opts, callback)
 
   local cwd = opts.cwd or vim.fn.getcwd()
   local show_after = opts.show ~= false
+  -- Only stamp ownership when ensure-spawn ACTUALLY spawned. A
+  -- focus that resolved to a pre-existing live instance returns
+  -- the same id back; we didn't spawn it so it's not ours to
+  -- clean up. The daemon doesn't tell us whether the response
+  -- was "spawned now" vs "found existing", so as a conservative
+  -- approximation we mark only when the captain explicitly
+  -- requested ensure-spawn (`ensure = true`) AND didn't opt out
+  -- via `with_shutdown = false`. A pure focus on a pre-existing
+  -- instance never sets ownership regardless of the flag.
+  local with_shutdown = opts.with_shutdown ~= false and opts.ensure == true
 
   local params = {
     instanceId = instance_id,
@@ -368,7 +412,7 @@ function M.focus(instance_id, opts, callback)
     end
 
     local instance = { id = result.instanceId, name = result.name, cwd = cwd }
-    attach(instance, show_after)
+    attach(instance, show_after, with_shutdown)
 
     if callback ~= nil then
       callback(nil, instance)
@@ -539,5 +583,45 @@ function M.set_option(instance_id, config_id, value, callback)
     end
   end)
 end
+
+-- VimLeavePre cleanup — fire `instances/shutdown` for every live
+-- instance the registry marks as `spawned_with_shutdown = true`.
+-- Captains who passed `with_shutdown = true` on spawn opted in to
+-- "this instance is tied to my nvim lifetime"; cleaning up here
+-- prevents the daemon from accumulating orphans across exit /
+-- relaunch cycles.
+--
+-- Choice of `VimLeavePre` over `VimLeave`: VimLeavePre fires
+-- BEFORE the channel teardown sequence, so `client.request` still
+-- reaches the daemon. We DON'T wait for the response — the daemon
+-- processes the request out-of-band and the captain doesn't care
+-- about the reply (we're exiting anyway). Fire-and-forget keeps
+-- exit snappy.
+--
+-- Owned instances the captain already shut down via the palette
+-- get dropped from `_instances` by `window.close`, so the
+-- iteration here naturally skips them.
+vim.api.nvim_create_autocmd("VimLeavePre", {
+  group = vim.api.nvim_create_augroup("HyprpilotInstancesCleanup", { clear = true }),
+  callback = function()
+    local owned = {}
+    for id, state in pairs(window._instances) do
+      if state.spawned_with_shutdown == true then
+        table.insert(owned, id)
+      end
+    end
+    if #owned == 0 then
+      return
+    end
+    log.debug("instances.cleanup: shutting down %d owned instance(s) on VimLeavePre", #owned)
+    for _, id in ipairs(owned) do
+      -- Fire-and-forget: response (if any) lands after we've
+      -- already exited; nothing here would consume it. The
+      -- daemon's `instances/shutdown` handler is idempotent for
+      -- already-dead instances.
+      pcall(client.request, "instances/shutdown", { instanceId = id }, nil, function() end)
+    end
+  end,
+})
 
 return M
