@@ -152,5 +152,4 @@ T["cleanup_owned fires instances/shutdown for owned instances only"] = function(
   restore_client()
 end
 
-
 return T

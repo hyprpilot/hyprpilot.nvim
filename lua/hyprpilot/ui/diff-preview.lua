@@ -16,6 +16,7 @@
 ---   - Editing the buffer auto-closes the preview (stale).
 ---   - Permission resolution from anywhere closes the preview too.
 
+local chat_buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local permissions = require("hyprpilot.rpc.permissions")
@@ -185,37 +186,33 @@ local function compute_hunks(old_lines, new_lines)
   return out
 end
 
----Pick a window to host the preview. Ladder:
----   1. `ui.window._prev_winid` if valid AND not a hyprpilot chrome window
----   2. First non-chrome window in the current tabpage
----   3. Fresh vsplit
----@return integer winid
+---Pick a window to host the preview. Returns `(winid, owned)` where
+---`owned = true` means we created the window fresh — the close path
+---uses that to tear it down again instead of leaving an empty
+---surface behind.
+---
+---Ladder:
+---   1. `ui.window._prev_winid` if valid AND not a plugin-owned window
+---   2. First non-plugin, non-floating window via the shared
+---      `chat_buffer.find_editor_winid` helper (same routing logic
+---      `mcp/editor.lua` uses for `editor_file_open` / `jump`)
+---   3. Fresh `topleft new` split — flagged `owned = true` so close
+---      can wipe it once the captain accepts / rejects
+---@return integer winid, boolean owned
 local function resolve_host_window()
   local ui_window = package.loaded["hyprpilot.ui.window"]
   local prev = ui_window and ui_window._prev_winid or nil
-  if prev ~= nil and vim.api.nvim_win_is_valid(prev) then
-    -- Don't drive the diff preview back into a hyprpilot chrome
-    -- window (chat / composer / header / etc.) — those use
-    -- `hyprpilot*` filetypes which we filter against.
-    local prev_buf = vim.api.nvim_win_get_buf(prev)
-    local prev_ft = vim.bo[prev_buf].filetype
-    if not vim.startswith(prev_ft, "hyprpilot") then
-      return prev
-    end
+  if prev ~= nil and vim.api.nvim_win_is_valid(prev) and not chat_buffer.is_plugin_window(prev) then
+    return prev, false
   end
 
-  for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if vim.api.nvim_win_is_valid(winid) then
-      local bufnr = vim.api.nvim_win_get_buf(winid)
-      local ft = vim.bo[bufnr].filetype
-      if not vim.startswith(ft, "hyprpilot") then
-        return winid
-      end
-    end
+  local found = chat_buffer.find_editor_winid()
+  if found ~= nil then
+    return found, false
   end
 
-  vim.cmd("vsplit")
-  return vim.api.nvim_get_current_win()
+  vim.cmd("topleft new")
+  return vim.api.nvim_get_current_win(), true
 end
 
 ---Load `path` into a buffer (using the existing one if loaded;
@@ -581,7 +578,7 @@ function M.open(entry)
     hunks = compute_hunks(current_lines, new_lines)
   end
 
-  local host_win = resolve_host_window()
+  local host_win, host_owned = resolve_host_window()
   -- pcall around the BufEnter-firing focus call: a third-party plugin
   -- that throws on its `BufEnter` (third-party markdown decorator
   -- without a markdown parser, etc.) should not abort the
@@ -616,6 +613,7 @@ function M.open(entry)
     instance_id = entry.instance_id,
     bufnr = target_bufnr,
     winid = host_win,
+    host_owned = host_owned,
     path = path,
     is_scratch = is_scratch,
     hunks = hunks,
@@ -624,11 +622,22 @@ function M.open(entry)
   local unwire_autocmds = install_autocmds(target_bufnr)
   state.unwire = function()
     pcall(vim.api.nvim_buf_clear_namespace, target_bufnr, NS, 0, -1)
+    -- Tear-down order: unwire keymaps + autocmds FIRST so the
+    -- BufWipeout autocmd we install on the target buffer can't
+    -- fire a re-entrant `M.close` while we delete the scratch.
+    unwire_keymaps()
+    unwire_autocmds()
     if is_scratch and vim.api.nvim_buf_is_valid(target_bufnr) then
       pcall(vim.api.nvim_buf_delete, target_bufnr, { force = true })
     end
-    unwire_keymaps()
-    unwire_autocmds()
+    -- We created the host window fresh because no editor surface
+    -- was visible at open time — close it again so the captain
+    -- doesn't end up with an empty `[No Name]` split sitting where
+    -- the preview was. Skip when the window was an existing
+    -- editor surface (the captain's working file lives there).
+    if host_owned and vim.api.nvim_win_is_valid(host_win) and #vim.api.nvim_list_wins() > 1 then
+      pcall(vim.api.nvim_win_close, host_win, true)
+    end
   end
   M._state = state
   log.debug("diff_preview.open: request_id=%s path=%s hunks=%d", entry.request_id, path, #hunks)

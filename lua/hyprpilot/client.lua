@@ -50,6 +50,42 @@ local listeners = {}
 ---@type hyprpilot.client.StateHandler[]
 local state_listeners = {}
 
+--- Counter of consecutive request timeouts. Bumped in the per-request
+--- timeout path; reset on every successful reply (`dispatch_payload`).
+--- A daemon that's hung but hasn't closed the socket reads as a
+--- string of timeouts to us; passing the threshold flips us into
+--- reconnect-recovery mode (force-close the channel + try to redial).
+local timeout_streak = 0
+local STALE_TIMEOUT_THRESHOLD = 3
+
+--- True while an auto-reconnect is queued (defer_fn'd) so a flood of
+--- timeouts / EOF callbacks doesn't enqueue N parallel reconnects.
+--- Cleared by the deferred callback right before it actually runs.
+local auto_reconnect_pending = false
+
+---Force-close the channel + schedule a reconnect attempt. Called
+---from EOF detection (daemon closed the socket) and from the
+---stale-streak guard. No-op when a reconnect is already pending.
+---@param reason string
+local function schedule_auto_reconnect(reason)
+  if auto_reconnect_pending then
+    return
+  end
+  auto_reconnect_pending = true
+  local cfg = config.options.client or {}
+  local delay_ms = cfg.retry_delay_ms or 1000
+  log.warn("client: auto-reconnect scheduled (reason=%s, delay=%dms)", reason, delay_ms)
+  vim.defer_fn(function()
+    auto_reconnect_pending = false
+    -- Skip if the captain explicitly disconnected in the meantime,
+    -- or if we already reconnected via some other path.
+    if state == "connected" or state == "connecting" then
+      return
+    end
+    M.connect()
+  end, delay_ms)
+end
+
 ---Generate a UUIDv4 string. Used for JSON-RPC ids.
 ---@return string
 local function uuid4()
@@ -171,6 +207,11 @@ local function dispatch_payload(payload)
     pcall(entry.timer.stop, entry.timer)
     pcall(entry.timer.close, entry.timer)
 
+    -- A live reply (success OR rpc error from the daemon) means the
+    -- channel is healthy. Reset the stale-detector counter so a
+    -- previously-bad streak doesn't carry over.
+    timeout_streak = 0
+
     if payload.error ~= nil then
       pcall(entry.callback, {
         kind = "rpc",
@@ -206,6 +247,22 @@ local function on_data(_chan, data, _name)
   -- back the same way. That keeps the line boundaries we need to
   -- pass JSON-RPC frames to the dispatcher.
   if type(data) ~= "table" or #data == 0 then
+    return
+  end
+
+  -- EOF marker: vim invokes the channel callback once with `{ "" }`
+  -- when the peer closes the socket (`:h channel-callback`). The
+  -- daemon dying / restarting / dropping the connection arrives here.
+  -- Tear down the in-flight state with a clean transport error and
+  -- queue an auto-reconnect so a daemon restart self-heals without
+  -- the captain noticing.
+  if #data == 1 and data[1] == "" then
+    if state == "connected" then
+      log.warn("client: peer closed the channel (EOF on socket)")
+      teardown("daemon closed connection")
+      set_state("disconnected", "peer EOF")
+      schedule_auto_reconnect("peer EOF")
+    end
     return
   end
 
@@ -368,6 +425,20 @@ function M.request(method, params, opts, callback)
         kind = "timeout",
         message = string.format("client: %s timed out after %dms", method, timeout_ms),
       }, nil)
+
+      -- Stale-detector: a daemon that's hung but hasn't closed the
+      -- socket reads as a string of timeouts (no EOF, no replies).
+      -- After N consecutive timeouts force a reconnect — daemon
+      -- restart self-heals; daemon truly gone re-enters the connect
+      -- retry loop and surfaces a clean disconnected state.
+      timeout_streak = timeout_streak + 1
+      if timeout_streak >= STALE_TIMEOUT_THRESHOLD and state == "connected" then
+        log.warn("client: %d consecutive timeouts — channel looks stale, forcing reconnect", timeout_streak)
+        timeout_streak = 0
+        teardown("stale channel")
+        set_state("disconnected", "stale (timeout streak)")
+        schedule_auto_reconnect("stale channel")
+      end
     end)
   end)
 
@@ -452,6 +523,8 @@ function M._reset()
   inflight = {}
   listeners = {}
   state_listeners = {}
+  timeout_streak = 0
+  auto_reconnect_pending = false
 end
 
 return M
