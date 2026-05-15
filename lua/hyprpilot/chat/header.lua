@@ -396,7 +396,16 @@ function M.refresh()
   local line, ranges = render_line(segments)
 
   buffer.with_buffer(M._bufnr, function()
-    vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, { line })
+    -- Defence-in-depth: even after `render_line` strips `\r\n`
+    -- from each segment, the assembled line could carry a
+    -- newline if some future composer slips through (e.g. an
+    -- activity_pill that renders `vim.inspect` of a structured
+    -- payload). `nvim_buf_set_lines` rejects multi-line entries
+    -- with "'replacement string' item contains newlines"; one
+    -- final gsub here keeps the write safe regardless of who
+    -- contributed to the line.
+    local safe_line = line:gsub("[\r\n]", " ")
+    vim.api.nvim_buf_set_lines(M._bufnr, 0, -1, false, { safe_line })
     vim.api.nvim_buf_clear_namespace(M._bufnr, NS, 0, -1)
     -- Background fill for the whole row + per-segment highlights on
     -- top. `line_hl_group` sets the trailing background so the bar

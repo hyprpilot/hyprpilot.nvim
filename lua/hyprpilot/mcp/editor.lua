@@ -278,6 +278,320 @@ M.tools.files = {
   end,
 }
 
+---Resolve the buffer the action should target. Search order:
+---  1. `bufnr` (if provided + valid)
+---  2. `path` (open / adopt by absolute path)
+---  3. current buffer
+---Returns `(bufnr, err)`.
+---@param args { bufnr?: integer, path?: string }
+---@return integer?, string?
+local function resolve_target_bufnr(args)
+  if type(args.bufnr) == "number" and vim.api.nvim_buf_is_valid(args.bufnr) then
+    return args.bufnr, nil
+  end
+  if type(args.path) == "string" and args.path ~= "" then
+    local resolved = abs_path(args.path)
+    local existing = vim.fn.bufnr(resolved)
+    if existing ~= -1 then
+      return existing, nil
+    end
+    -- Adopt-by-add: bufadd creates a hidden buffer for the path
+    -- without focusing it. The caller's "open / focus" verbs run
+    -- their own `nvim_set_current_buf` afterward.
+    if vim.fn.filereadable(resolved) ~= 1 then
+      return nil, "file not readable: " .. resolved
+    end
+    local bufnr = vim.fn.bufadd(resolved)
+    if not vim.api.nvim_buf_is_loaded(bufnr) then
+      vim.fn.bufload(bufnr)
+    end
+    return bufnr, nil
+  end
+  return vim.api.nvim_get_current_buf(), nil
+end
+
+M.tools.status = {
+  name = "editor_status",
+  description = "Captain's full editor snapshot: current mode, focused buffer (path / filetype / cursor / line count / modified), and every loaded listed buffer. One round-trip to orient the agent before any read / jump.",
+  schema = {
+    type = "object",
+    properties = {
+      include_unlisted = {
+        type = "boolean",
+        description = "Include unlisted buffers in the `buffers` list. Defaults to false.",
+      },
+    },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    local include_unlisted = args.include_unlisted == true
+    local winid = vim.api.nvim_get_current_win()
+    local bufnr = vim.api.nvim_win_get_buf(winid)
+    local cursor = vim.api.nvim_win_get_cursor(winid)
+
+    local buffers = {}
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(b) then
+        local listed = vim.bo[b].buflisted
+        local buftype = vim.bo[b].buftype
+        if (listed or include_unlisted) and buftype == "" then
+          table.insert(buffers, {
+            bufnr = b,
+            path = vim.api.nvim_buf_get_name(b),
+            filetype = vim.bo[b].filetype,
+            modified = vim.bo[b].modified,
+            visible = vim.fn.bufwinid(b) ~= -1,
+          })
+        end
+      end
+    end
+
+    return {
+      json = {
+        mode = vim.api.nvim_get_mode().mode,
+        cwd = vim.fn.getcwd(),
+        focused = {
+          bufnr = bufnr,
+          path = vim.api.nvim_buf_get_name(bufnr),
+          filetype = vim.bo[bufnr].filetype,
+          modified = vim.bo[bufnr].modified,
+          line = cursor[1] - 1,
+          character = cursor[2],
+          line_count = vim.api.nvim_buf_line_count(bufnr),
+        },
+        buffers = buffers,
+      },
+    }
+  end,
+}
+
+---Center the cursor on screen + open any folds that hide the row.
+---Mirror of the `zz` mapping the captain reaches for after a jump.
+---@param winid integer
+local function center_cursor(winid)
+  vim.api.nvim_win_call(winid, function()
+    pcall(vim.cmd, "normal! zvzz")
+  end)
+end
+
+M.tools.file_open = {
+  name = "editor_file_open",
+  description = "Open a file in the captain's window. Reuses an existing buffer if the path is already loaded; loads + focuses otherwise. Optional `line` (1-indexed) + `character` (0-indexed) jump the cursor on arrival.",
+  schema = {
+    type = "object",
+    properties = {
+      path = {
+        type = "string",
+        description = "Absolute or cwd-relative file path.",
+      },
+      line = {
+        type = "integer",
+        description = "1-indexed line to jump to. Clamped to the file's line count. Optional.",
+      },
+      character = {
+        type = "integer",
+        description = "0-indexed column to jump to. Defaults to 0. Ignored without `line`.",
+      },
+    },
+    required = { "path" },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    local target, why = resolve_target_bufnr({ path = args.path })
+    if target == nil then
+      return err(why or "could not resolve target buffer")
+    end
+
+    local winid = vim.api.nvim_get_current_win()
+    pcall(vim.api.nvim_win_set_buf, winid, target)
+
+    local jumped_line, jumped_col
+    if type(args.line) == "number" then
+      local max_lines = vim.api.nvim_buf_line_count(target)
+      jumped_line = math.max(1, math.min(args.line, max_lines))
+      jumped_col = math.max(0, args.character or 0)
+      pcall(vim.api.nvim_win_set_cursor, winid, { jumped_line, jumped_col })
+      center_cursor(winid)
+    end
+
+    return {
+      json = {
+        bufnr = target,
+        path = vim.api.nvim_buf_get_name(target),
+        line = jumped_line and (jumped_line - 1) or nil,
+        character = jumped_col,
+      },
+    }
+  end,
+}
+
+M.tools.jump = {
+  name = "editor_jump",
+  description = "Move the cursor to a line / column in a buffer. Defaults to the current buffer; `path` or `bufnr` overrides. Doesn't load files that aren't already buffers (use `editor_file_open` for that).",
+  schema = {
+    type = "object",
+    properties = {
+      line = {
+        type = "integer",
+        description = "1-indexed line. Clamped to the buffer's line count.",
+      },
+      character = {
+        type = "integer",
+        description = "0-indexed column. Defaults to 0.",
+      },
+      path = {
+        type = "string",
+        description = "Target by file path (absolute or cwd-relative). Optional.",
+      },
+      bufnr = {
+        type = "integer",
+        description = "Target by bufnr. Takes precedence over `path` when both are given.",
+      },
+    },
+    required = { "line" },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    local target, why = resolve_target_bufnr(args)
+    if target == nil then
+      return err(why or "could not resolve target buffer")
+    end
+
+    local winid = vim.api.nvim_get_current_win()
+    if vim.api.nvim_win_get_buf(winid) ~= target then
+      pcall(vim.api.nvim_win_set_buf, winid, target)
+    end
+
+    local max_lines = vim.api.nvim_buf_line_count(target)
+    local line = math.max(1, math.min(args.line, max_lines))
+    local col = math.max(0, args.character or 0)
+    pcall(vim.api.nvim_win_set_cursor, winid, { line, col })
+    center_cursor(winid)
+
+    return {
+      json = {
+        bufnr = target,
+        path = vim.api.nvim_buf_get_name(target),
+        line = line - 1,
+        character = col,
+      },
+    }
+  end,
+}
+
+M.tools.select = {
+  name = "editor_select",
+  description = "Visually select an inclusive range of lines (line-wise visual mode). Defaults to the current buffer; `path` or `bufnr` overrides.",
+  schema = {
+    type = "object",
+    properties = {
+      start_line = {
+        type = "integer",
+        description = "1-indexed first line of the selection.",
+      },
+      end_line = {
+        type = "integer",
+        description = "1-indexed last line of the selection (inclusive).",
+      },
+      path = {
+        type = "string",
+        description = "Target by file path. Optional.",
+      },
+      bufnr = {
+        type = "integer",
+        description = "Target by bufnr. Takes precedence over `path` when both are given.",
+      },
+    },
+    required = { "start_line", "end_line" },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    local target, why = resolve_target_bufnr(args)
+    if target == nil then
+      return err(why or "could not resolve target buffer")
+    end
+
+    local winid = vim.api.nvim_get_current_win()
+    if vim.api.nvim_win_get_buf(winid) ~= target then
+      pcall(vim.api.nvim_win_set_buf, winid, target)
+    end
+
+    local max_lines = vim.api.nvim_buf_line_count(target)
+    local start_line = math.max(1, math.min(args.start_line, max_lines))
+    local end_line = math.max(start_line, math.min(args.end_line, max_lines))
+
+    -- Drive line-wise visual selection from the start row, then move
+    -- the cursor down to the end row inside the visual mode. `nvim_*`
+    -- doesn't expose a direct "select range" call, so we rely on the
+    -- normal-mode `V` keystroke. `vzv` opens any folds the range is
+    -- hidden under.
+    vim.api.nvim_win_call(winid, function()
+      pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
+      pcall(vim.cmd, "normal! Vzv")
+      pcall(vim.api.nvim_win_set_cursor, winid, { end_line, 0 })
+    end)
+
+    return {
+      json = {
+        bufnr = target,
+        path = vim.api.nvim_buf_get_name(target),
+        start_line = start_line - 1,
+        end_line = end_line - 1,
+      },
+    }
+  end,
+}
+
+M.tools.format = {
+  name = "editor_format",
+  description = "Format a buffer via attached LSP (`vim.lsp.buf.format`, synchronous). Defaults to the current buffer; `path` or `bufnr` overrides. No-op when no LSP client supports formatting on the buffer.",
+  schema = {
+    type = "object",
+    properties = {
+      path = {
+        type = "string",
+        description = "Target by file path. Optional.",
+      },
+      bufnr = {
+        type = "integer",
+        description = "Target by bufnr. Takes precedence over `path` when both are given.",
+      },
+      timeout_ms = {
+        type = "integer",
+        description = "Format request timeout in milliseconds. Default 2000.",
+      },
+    },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    local target, why = resolve_target_bufnr(args)
+    if target == nil then
+      return err(why or "could not resolve target buffer")
+    end
+
+    -- Synchronous format — `async = false` so the response we return
+    -- reflects the post-format state of the buffer. Captures any
+    -- formatter throw via pcall so a misconfigured LSP doesn't take
+    -- the bridge down.
+    local ok, format_err = pcall(vim.lsp.buf.format, {
+      bufnr = target,
+      async = false,
+      timeout_ms = args.timeout_ms or 2000,
+    })
+    if not ok then
+      return err("format failed: " .. tostring(format_err))
+    end
+
+    return {
+      json = {
+        bufnr = target,
+        path = vim.api.nvim_buf_get_name(target),
+        modified = vim.bo[target].modified,
+      },
+    }
+  end,
+}
+
 ---Register every tool in `M.tools`. Idempotent.
 function M.register_all()
   for _, tool in pairs(M.tools) do
