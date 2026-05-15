@@ -209,10 +209,11 @@ function M.turn_pills(turn)
     end
   end
 
-  local stop_chip = M.format_stop_chip(turn.stop_reason, turn.stop_error)
-  if stop_chip ~= nil then
-    table.insert(labels, stop_chip)
-  end
+  -- Stop reason intentionally NOT emitted here. The pilot header is
+  -- the streaming-stats surface (tokens / cost / elapsed) — easy to
+  -- miss when the captain has scrolled past it. Turn outcome lives
+  -- as an explicit one-line marker at the prose tail instead — see
+  -- `render.handle_turn_ended` → `_emit_turn_end_marker`.
 
   return labels
 end

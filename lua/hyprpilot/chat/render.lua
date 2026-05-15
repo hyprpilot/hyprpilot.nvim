@@ -2037,12 +2037,11 @@ function M.handle_turn_ended(event)
   end
 
   -- Stamp the turn's end timestamp + stop reason on the layout, then
-  -- repaint the pilot header so the elapsed chip freezes at its
-  -- final value AND the `[ok end_turn]` / `[cancelled <reason>]` /
-  -- `[error: <msg>]` chip lands on the header alongside the other
-  -- stat pills (same pill format, same place — captain reads turn
-  -- outcome at a glance from the header instead of scrolling to the
-  -- end of the prose).
+  -- repaint the pilot header so the elapsed pill freezes at its
+  -- final value. The stop reason itself is NOT emitted as a header
+  -- pill anymore — it lives as a one-line marker at the prose tail
+  -- (see the `_emit_turn_end_marker` step below) where the captain's
+  -- eyes already are after reading the response.
   local layout = state.turn_layouts[effective_turn_id]
   if layout ~= nil then
     local ended_at = event.endedAt or event.ended_at or (os.time() * 1000)
@@ -2054,27 +2053,49 @@ function M.handle_turn_ended(event)
     end
     repaint_pilot_header(state, layout)
 
-    -- Inline error block: when the turn ended with an error
-    -- (limit-reached, internal error, transport hiccup, etc.) the
-    -- chip on the pilot header surfaces it at-a-glance, but
-    -- captains scrolled away from the header miss it. Drop a
-    -- prominent markdown-quoted block at the prose tail with the
-    -- error message verbatim — same place the captain's eyes
-    -- already are when reading the response. Idempotent per turn
-    -- via `layout.error_block_emitted`.
-    if event.error ~= nil and not layout.error_block_emitted then
-      layout.error_block_emitted = true
-      local raw = tostring(event.error)
-      local error_lines = { "", "> [!error] turn ended with error" }
-      for _, line in ipairs(vim.split(raw, "\n", { plain = true })) do
-        table.insert(error_lines, "> " .. line)
+    -- Drop a one-line outcome marker at the prose tail. Verbatim
+    -- daemon text — no `"ok " .. reason` humanisation — because
+    -- the daemon is the source of truth for the wording and
+    -- forcing a translation here means we drift from whatever the
+    -- desktop UI shows. Highlight by category (ok / cancelled /
+    -- error) via the existing `HyprpilotTurnEnd*` groups.
+    -- Idempotent per turn via `layout.end_marker_emitted` so a
+    -- replayed event doesn't stack duplicate markers.
+    if not layout.end_marker_emitted then
+      layout.end_marker_emitted = true
+
+      local hl, body
+      if event.error ~= nil then
+        hl = "HyprpilotTurnEndError"
+        body = tostring(event.error)
+      elseif event.stopReason ~= nil then
+        local reason = tostring(event.stopReason)
+        body = reason
+        if reason:lower():find("cancel", 1, true) ~= nil then
+          hl = "HyprpilotTurnEndCancelled"
+        else
+          hl = "HyprpilotTurnEndOk"
+        end
       end
-      table.insert(error_lines, "")
-      local first_row = insert_at_prose_anchor(state, effective_turn_id, error_lines)
-      -- Apply error highlight to the lead row + every body row of
-      -- the block. `apply_line_hl` is one-row-at-a-time.
-      for i = 0, #error_lines - 2 do
-        apply_line_hl(state, first_row + i, "HyprpilotTurnEndError")
+
+      if body ~= nil then
+        -- Markdown blockquote prefix for the visual band; same shape
+        -- as the legacy error block so existing styling carries
+        -- over. Multi-line bodies (e.g. errors with stack traces)
+        -- get one quote prefix per line.
+        local marker_lines = { "" }
+        for _, line in ipairs(vim.split(body, "\n", { plain = true })) do
+          table.insert(marker_lines, "> " .. line)
+        end
+        table.insert(marker_lines, "")
+        local first_row
+        chat_buffer.with_buffer(state.bufnr, function()
+          first_row = insert_at_prose_anchor(state, effective_turn_id, marker_lines)
+        end)
+        -- Highlight the body rows (skip the leading + trailing blanks).
+        for i = 1, #marker_lines - 2 do
+          apply_line_hl(state, first_row + i, hl)
+        end
       end
     end
   end

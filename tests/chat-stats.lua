@@ -80,16 +80,30 @@ T["turn_pills omits chips that have no data"] = function()
   MiniTest.expect.equality(pills[1], "234ms")
 end
 
-T["turn_pills appends stop_reason / stop_error as the trailing chip"] = function()
+T["turn_pills no longer emits a stop chip — outcome lives at the prose tail"] = function()
   local stats = require("hyprpilot.chat.stats")
-  local ok = stats.turn_pills({ started_at_ms = 1000, ended_at_ms = 1100, stop_reason = "end_turn" })
-  MiniTest.expect.equality(ok[#ok], "ok end_turn")
 
-  local cancelled = stats.turn_pills({ stop_reason = "cancelled_by_user" })
-  MiniTest.expect.equality(cancelled[1], "cancelled cancelled_by_user")
+  -- Pre-existing tokens / cost / elapsed pills still land. The stop
+  -- reason / error are intentionally NOT pilled here anymore — the
+  -- captain reads the outcome from the `> end_turn` / `> error: ...`
+  -- marker `render.handle_turn_ended` writes at the prose tail.
+  local pills = stats.turn_pills({
+    started_at_ms = 1000,
+    ended_at_ms = 1100,
+    stop_reason = "end_turn",
+    stop_error = nil,
+  })
+  for _, label in ipairs(pills) do
+    MiniTest.expect.equality(label:find("end_turn", 1, true), nil)
+    MiniTest.expect.equality(label:find("ok ", 1, true), nil)
+    MiniTest.expect.equality(label:find("cancelled", 1, true), nil)
+    MiniTest.expect.equality(label:find("error", 1, true), nil)
+  end
 
   local errored = stats.turn_pills({ stop_error = "boom" })
-  MiniTest.expect.equality(errored[1], "error: boom")
+  for _, label in ipairs(errored) do
+    MiniTest.expect.equality(label:find("boom", 1, true), nil)
+  end
 end
 
 T["format_pills wraps labels in single-space-joined brackets"] = function()
