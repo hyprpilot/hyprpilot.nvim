@@ -216,6 +216,21 @@ local function with_autoscroll(state, fn)
 end
 
 ---Append `lines` to the end of the buffer. Returns the line index of
+---Strip embedded newlines from a single string. Used at every
+---`nvim_buf_set_text` call site (which requires single-line
+---replacement and rejects multi-line entries with "'replacement
+---string' item contains newlines"). Daemon-supplied tool titles
+---/ pilot header pills occasionally carry a `\n`; one byte-for-
+---byte strip keeps the write safe.
+---@param s any
+---@return string
+local function flatten_text(s)
+  if type(s) ~= "string" then
+    return ""
+  end
+  return (s:gsub("[\r\n]", " "))
+end
+
 ---Flatten a list of strings so no element contains an embedded
 ---newline. `nvim_buf_set_lines` rejects multi-line items with
 ---"'replacement string' item contains newlines"; defensively
@@ -443,6 +458,7 @@ end
 ---@param block hyprpilot.render.Block
 ---@param body_lines string[]
 local function replace_block_body(state, block, body_lines)
+  body_lines = flatten_lines(body_lines)
   chat_buffer.with_buffer(state.bufnr, function()
     local head_row, tail_row = block_range(state, block)
     vim.api.nvim_buf_set_lines(state.bufnr, head_row + 1, tail_row + 1, false, body_lines)
@@ -602,7 +618,7 @@ local function repaint_pilot_header(state, layout)
   end
 
   chat_buffer.with_buffer(state.bufnr, function()
-    vim.api.nvim_buf_set_text(state.bufnr, row, 0, row, #existing, { new_line })
+    vim.api.nvim_buf_set_text(state.bufnr, row, 0, row, #existing, { flatten_text(new_line) })
   end)
 end
 
@@ -660,7 +676,7 @@ local function repaint_section_header(state, kind, section)
   end
 
   chat_buffer.with_buffer(state.bufnr, function()
-    vim.api.nvim_buf_set_text(state.bufnr, row, 0, row, #existing, { new_line })
+    vim.api.nvim_buf_set_text(state.bufnr, row, 0, row, #existing, { flatten_text(new_line) })
   end)
 end
 
@@ -902,7 +918,14 @@ local function append_agent_text(state, text)
     end
 
     local last_line = vim.api.nvim_buf_get_lines(bufnr, last_prose_row, last_prose_row + 1, false)[1] or ""
-    vim.api.nvim_buf_set_lines(bufnr, last_prose_row, last_prose_row + 1, false, { last_line .. chunks[1] })
+    -- Token-streaming concat: chunk boundaries from the daemon are
+    -- arbitrary (mid-word, mid-sentence). Daemon-shipped `\n\n` for
+    -- paragraph breaks already lands as `["", "next para"]` after
+    -- the split above; the `chunks[2:]` insert below preserves the
+    -- blank. So we only concat the FIRST chunk-line onto the
+    -- previous tail (token streaming); subsequent split lines stay
+    -- as-inserted (paragraph-aware).
+    vim.api.nvim_buf_set_lines(bufnr, last_prose_row, last_prose_row + 1, false, { flatten_text(last_line .. chunks[1]) })
 
     if #chunks > 1 then
       insert_at_prose_anchor(state, turn_id, vim.list_slice(chunks, 2))
@@ -1257,7 +1280,7 @@ function M.handle_tool_call_update(instance_id, update)
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row = block_range(state, block)
       local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { tool_header_line(merged) })
+      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { flatten_text(tool_header_line(merged)) })
     end)
 
     replace_block_body(state, block, tool_body_lines(merged.formatted, merged.toolKind))
@@ -1338,6 +1361,7 @@ local function render_thought(state, text)
       else
         lines_to_insert = chunk_lines
       end
+      lines_to_insert = flatten_lines(lines_to_insert)
       vim.api.nvim_buf_set_lines(state.bufnr, tail_row + 1, tail_row + 1, false, lines_to_insert)
       local new_tail = tail_row + #lines_to_insert
       vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.tail_mark)
@@ -1430,7 +1454,7 @@ local function render_plan(state, record)
       -- Rewrite header line + body in one set_lines call. New body
       -- lengths are captured via `replace_block_body` which also
       -- re-anchors the tail mark.
-      vim.api.nvim_buf_set_lines(state.bufnr, head_row, head_row + 1, false, { header })
+      vim.api.nvim_buf_set_lines(state.bufnr, head_row, head_row + 1, false, { flatten_text(header) })
       replace_block_body(state, active_block, body)
     end)
     if active_block ~= nil then

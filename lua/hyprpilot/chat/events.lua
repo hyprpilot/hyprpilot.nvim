@@ -163,13 +163,11 @@ local function dispatch(raw)
     elseif event.event == "turn_ended" then
       render.handle_turn_ended(event)
       status.set_activity(event.instanceId, { kind = "idle" })
-      -- Composer queue is captain-owned UI state — daemon has no
-      -- concept of it (it's a local stash of prompts typed while
-      -- the agent was busy, NOT a daemon-side prompt queue). On
-      -- cancel we deliberately KEEP the queue: the captain may
-      -- have aborted just this turn but still want their queued
-      -- follow-ups to fire next. They can drain manually via the
-      -- queue strip's keymaps if they don't.
+      -- Daemon owns the queue (single mailbox, per-instance) and
+      -- pins the contract: `prompts/cancel` never flushes.
+      -- Cancel-during-dispatch loses the popped item; the daemon
+      -- does NOT auto-dispatch the head on TurnEnded — captain
+      -- drives drainage explicitly via the queue strip.
       emit_for_instance("TurnEnded", event.instanceId, {
         turn_id = event.turnId,
         ended_at = event.endedAt or event.ended_at,
@@ -230,6 +228,13 @@ local function dispatch(raw)
       })
     elseif event.event == "terminal" then
       render.handle_terminal(event)
+    elseif event.event == "queue_changed" then
+      -- Daemon owns the per-instance prompt queue; this event
+      -- ships the FULL snapshot (no deltas, idempotent on lossy
+      -- broadcast). Forward to the queue strip's mirror so it
+      -- repaints and the composer's edit-slot stays in sync.
+      local rpc_queue = require("hyprpilot.rpc.queue")
+      require("hyprpilot.chat.queue-strip").handle_queue_changed(event.instanceId, rpc_queue.items_from_wire(event.items))
     elseif event.event == "lagged" then
       -- Daemon dropped events on us (subscription overflow). The
       -- correct recovery is to refetch the latest page so the local
