@@ -90,10 +90,13 @@ T["focus: second call from inside chrome → jumps back to stashed previous"] = 
   -- the test in a clean mode-less state.
   vim.cmd("stopinsert")
 
-  -- Second call: cursor is inside chrome, should jump back to home.
+  -- Second call: cursor is inside chrome (the target — composer),
+  -- toggle back to home. `_prev_winid` stays valid; the WinLeave
+  -- autocmd re-pins it on every move, so we don't nil it after
+  -- toggle-back.
   require("hyprpilot.ui.window").focus()
   MiniTest.expect.equality(vim.api.nvim_get_current_win(), home)
-  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, nil)
+  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, home)
 
   restore_chrome(prev_chat, prev_composer)
   teardown_windows({ chat, composer })
@@ -316,8 +319,39 @@ T["focus: from the target window itself → toggles back to prev"] = function()
 
   require("hyprpilot.ui.window").focus({ target = "composer" })
 
+  -- Captain lands back in home. `_prev_winid` stays valid (the
+  -- WinLeave autocmd manages the slot on every move; no need to
+  -- nil it after toggle-back). Next focus call will re-pin it
+  -- when the captain leaves home again.
   MiniTest.expect.equality(vim.api.nvim_get_current_win(), home)
-  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, nil)
+
+  restore_chrome(prev_chat, prev_composer)
+  teardown_windows({ chat, composer })
+end
+
+T["WinLeave autocmd: records non-hyprpilot window, skips hyprpilot surfaces"] = function()
+  -- Direct test of the autocmd. Captain navigates editor → chat
+  -- → composer → editor without using focus. After the trip,
+  -- `_prev_winid` should pin to the last non-hyprpilot window.
+  local home, chat, composer = mint_window_triple()
+  local prev_chat = require("hyprpilot.chat.window")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
+  setup_chrome(chat, composer)
+  require("hyprpilot.ui.window")._prev_winid = nil
+
+  -- editor (home) → chat: WinLeave on editor fires, autocmd records.
+  vim.api.nvim_set_current_win(home)
+  vim.api.nvim_set_current_win(chat)
+  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, home)
+
+  -- chat → composer: both chrome; autocmd skips, slot unchanged.
+  vim.api.nvim_set_current_win(composer)
+  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, home)
+
+  -- composer → home: composer is chrome (skipped), slot unchanged.
+  -- (Captain still sees home as the toggle-back target.)
+  vim.api.nvim_set_current_win(home)
+  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, home)
 
   restore_chrome(prev_chat, prev_composer)
   teardown_windows({ chat, composer })
