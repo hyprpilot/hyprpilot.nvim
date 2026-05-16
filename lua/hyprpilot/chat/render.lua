@@ -1235,7 +1235,11 @@ local function tool_body_lines(formatted, tool_kind)
   -- field is the same change projected as a unified-patch we can
   -- fence with the `diff` language so treesitter colours adds /
   -- removes naturally.
-  local diff_text = cap_tool_text(formatted.diff)
+  -- `diff` ships uncapped — a truncated patch is a broken patch
+  -- (hunk headers + context lines are load-bearing). `output` and
+  -- `description` are free-form text where the tail carries the
+  -- meaningful content (errors, completion lines, last-state).
+  local diff_text = formatted.diff
   local description_text = cap_tool_text(formatted.description)
   local output_text = cap_tool_text(formatted.output)
 
