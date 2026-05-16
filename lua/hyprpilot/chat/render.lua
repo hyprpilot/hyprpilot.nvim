@@ -2347,26 +2347,44 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
     term._block = block
   end
 
+  -- Cap the cumulative output at 256 KB. Without this, a long-
+  -- running tool (cargo build, npm install, etc.) grows `term.output`
+  -- unbounded — every chunk concatenated AND every chunk triggers
+  -- a full body re-render via `replace_block_body` (O(N²) buffer
+  -- churn). Capping keeps the tail (most recent — errors / completion
+  -- are what the captain wants to see) and marks the truncated bytes.
+  local TERMINAL_OUTPUT_MAX_BYTES = 256 * 1024
+  local body_changed = false
+
   if chunk.kind == "output" then
     if type(chunk.data) == "string" and chunk.data ~= "" then
       term.output = term.output .. chunk.data
+      if #term.output > TERMINAL_OUTPUT_MAX_BYTES then
+        local elided = #term.output - TERMINAL_OUTPUT_MAX_BYTES
+        term.output = string.format("[%d earlier bytes elided]\n", elided) .. term.output:sub(-TERMINAL_OUTPUT_MAX_BYTES)
+      end
+      body_changed = true
     end
   elseif chunk.kind == "exit" then
     term.exit_code = chunk.exitCode
     term.signal = chunk.signal
+    -- Body content doesn't change on exit; just the header. Skip the
+    -- expensive body re-render below.
   end
 
-  local body
-  if term.output == "" then
-    body = wrap_in_rules({ { "(no output yet)" } })
-  else
-    local out_para = { "````console" }
-    vim.list_extend(out_para, vim.split(term.output, "\n", { plain = true }))
-    table.insert(out_para, "````")
-    body = wrap_in_rules({ out_para })
+  if body_changed then
+    local body
+    if term.output == "" then
+      body = wrap_in_rules({ { "(no output yet)" } })
+    else
+      local out_para = { "````console" }
+      vim.list_extend(out_para, vim.split(term.output, "\n", { plain = true }))
+      table.insert(out_para, "````")
+      body = wrap_in_rules({ out_para })
+    end
+    replace_block_body(state, term._block, body)
   end
 
-  replace_block_body(state, term._block, body)
   local head_row, tail_row = block_range(state, term._block)
 
   -- Re-apply highlights: only the header gets a status colour; body
@@ -2385,6 +2403,12 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
 
   if chunk.kind == "exit" then
     fold_block(state, term._block)
+    -- Terminal is done. The visible body lives in the buffer; the
+    -- in-memory `term.output` string was only there to feed re-
+    -- renders on subsequent output chunks. Drop it so a long-running
+    -- session (many terminals over time) doesn't keep megabytes of
+    -- already-rendered output strings alive on the state table.
+    term.output = ""
   end
 end
 
