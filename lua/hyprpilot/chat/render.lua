@@ -179,11 +179,25 @@ end
 ---Drop the render state for an instance (used when the buffer is wiped).
 ---@param instance_id string
 function M.forget(instance_id)
-  if M._states[instance_id] == nil then
+  local state = M._states[instance_id]
+  if state == nil then
     return
   end
 
   log.debug("render.forget: instance=%s", instance_id)
+
+  -- Cancel any pending per-block coalesce timers so callbacks
+  -- scheduled before the forget don't fire against a nil state. The
+  -- timer callbacks ALSO nil-check at fire time, but cancelling
+  -- here is the cheaper + cleaner path.
+  for _, block in pairs(state.blocks or {}) do
+    if block._coalesce_timer ~= nil then
+      pcall(block._coalesce_timer.stop, block._coalesce_timer)
+      pcall(block._coalesce_timer.close, block._coalesce_timer)
+      block._coalesce_timer = nil
+      block._pending_update = nil
+    end
+  end
 
   M._states[instance_id] = nil
 end
@@ -1157,6 +1171,27 @@ end
 ---@param formatted? table
 ---@param tool_kind? string
 ---@return string[]
+--- Cap a daemon-shipped free-form text field (output / diff /
+--- description) at 256 KB. Truncates from the FRONT (captain cares
+--- about the tail — errors / completion / final hunks) with an
+--- `[N earlier bytes elided]` marker. Pure function; safe to call
+--- per render — `tool_body_lines` is invoked per update and the
+--- cap is the line of defence against the daemon shipping a 10 MB
+--- `formatted.output` from a single tool result.
+---@param raw string?
+---@return string?
+local function cap_tool_text(raw)
+  if type(raw) ~= "string" or raw == "" then
+    return raw
+  end
+  local MAX = 256 * 1024
+  if #raw <= MAX then
+    return raw
+  end
+  local elided = #raw - MAX
+  return string.format("[%d earlier bytes elided]\n", elided) .. raw:sub(-MAX)
+end
+
 local function tool_body_lines(formatted, tool_kind)
   if type(formatted) ~= "table" then
     return wrap_in_rules({})
@@ -1200,19 +1235,23 @@ local function tool_body_lines(formatted, tool_kind)
   -- field is the same change projected as a unified-patch we can
   -- fence with the `diff` language so treesitter colours adds /
   -- removes naturally.
-  if type(formatted.diff) == "string" and formatted.diff ~= "" then
+  local diff_text = cap_tool_text(formatted.diff)
+  local description_text = cap_tool_text(formatted.description)
+  local output_text = cap_tool_text(formatted.output)
+
+  if type(diff_text) == "string" and diff_text ~= "" then
     local diff_para = { "````diff" }
-    vim.list_extend(diff_para, vim.split(formatted.diff, "\n", { plain = true }))
+    vim.list_extend(diff_para, vim.split(diff_text, "\n", { plain = true }))
     table.insert(diff_para, "````")
     table.insert(paragraphs, diff_para)
-  elseif type(formatted.description) == "string" and formatted.description ~= "" then
-    table.insert(paragraphs, vim.split(formatted.description, "\n", { plain = true }))
+  elseif type(description_text) == "string" and description_text ~= "" then
+    table.insert(paragraphs, vim.split(description_text, "\n", { plain = true }))
   end
 
-  if type(formatted.output) == "string" and formatted.output ~= "" then
+  if type(output_text) == "string" and output_text ~= "" then
     local output_lang = tool_output_lang(tool_kind)
     local output_para = { "````" .. output_lang }
-    vim.list_extend(output_para, vim.split(formatted.output, "\n", { plain = true }))
+    vim.list_extend(output_para, vim.split(output_text, "\n", { plain = true }))
     table.insert(output_para, "````")
     table.insert(paragraphs, output_para)
   end
@@ -1343,9 +1382,154 @@ local function render_tool_call(state, record)
   fold_block(state, block)
 end
 
----Apply a tool_call_update: re-render the header line and replace the
----body in place. The caller's payload merges with the prior record's
----fields where possible (the daemon already does that for `formatted`).
+--- Coalesce window for tool_call_update bursts. The daemon ships
+--- per-token updates with cumulative `formatted.output`; rendering
+--- every chunk does O(N²) buffer work (full body re-write per
+--- chunk over growing output). Folding bursts into one render every
+--- 50ms drops the work to ~20 renders/sec under any chunk-rate,
+--- invisible to humans, with a fast-path that flushes terminal
+--- states (`completed` / `failed` / `cancelled`) synchronously so
+--- the captain sees the final state crisp.
+local TOOL_CALL_COALESCE_MS = 50
+
+---@type table<string, boolean>
+local TOOL_CALL_TERMINAL_STATES = { completed = true, failed = true, cancelled = true }
+
+---Cancel + close the per-block coalesce timer. Idempotent.
+---@param block hyprpilot.render.Block
+local function cancel_tool_call_timer(block)
+  local timer = block._coalesce_timer
+  if timer == nil then
+    return
+  end
+  block._coalesce_timer = nil
+  pcall(timer.stop, timer)
+  pcall(timer.close, timer)
+end
+
+---Do the actual tool_call_update render. Called either from the
+---coalesce timer (deferred path) or synchronously for terminal
+---states. Skip-if-unchanged guards short-circuit each subexpression:
+--- - body re-render (the expensive one) skipped when output / diff /
+---   description / kind / state / stats all match the prior render
+--- - header `set_text` skipped when the new header string equals
+---   what's already on the row
+--- - line_hl clear+reapply skipped when state hasn't transitioned
+---@param state hyprpilot.render.State
+---@param block hyprpilot.render.Block
+---@param update table
+local function render_tool_call_update_now(state, block, update)
+  if state.blocks[block.id] ~= block then
+    -- Block was dropped (instance close, hydrate, late timer fire);
+    -- rendered state is definitively stale. Bail.
+    return
+  end
+  if not vim.api.nvim_buf_is_valid(state.bufnr) then
+    return
+  end
+
+  local merged = vim.tbl_extend("keep", update, { toolKind = block.tool_kind })
+
+  -- Refresh per-block stats from the merged payload so the section
+  -- aggregate stays accurate as durations / diffs grow during the
+  -- tool's lifecycle. Wholesale replacement (no merge) — daemon
+  -- ships running totals.
+  block.stats = (merged.formatted and merged.formatted.stats) or block.stats
+
+  local output_text = (merged.formatted and merged.formatted.output) or ""
+  local diff_text = (merged.formatted and merged.formatted.diff) or ""
+  local description_text = (merged.formatted and merged.formatted.description) or ""
+  local kind = merged.toolKind or ""
+  local state_str = merged.state or ""
+
+  -- Skip body re-render when nothing the body depends on has
+  -- changed — the dominant CPU win under daemon re-shipping. Stats
+  -- get a reference compare (daemon usually ships a fresh table per
+  -- update, so this only short-circuits the truly-idle case).
+  local body_needs_render = block._last_output ~= output_text
+    or block._last_diff ~= diff_text
+    or block._last_description ~= description_text
+    or block._last_kind ~= kind
+    or block._last_state ~= state_str
+    or block._last_stats ~= block.stats
+
+  local state_transitioned = block._last_state ~= state_str
+
+  with_autoscroll(state, function()
+    local new_header = flatten_text(tool_header_line(merged))
+    chat_buffer.with_buffer(state.bufnr, function()
+      local head_row = block_range(state, block)
+      local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
+      if existing ~= new_header then
+        vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { new_header })
+      end
+    end)
+
+    if body_needs_render then
+      replace_block_body(state, block, tool_body_lines(merged.formatted, merged.toolKind))
+    end
+
+    -- Bubble the refreshed stats up to the section header.
+    -- `repaint_section_header` already skips when the line is
+    -- unchanged, so this is cheap on no-op repaints.
+    local layout = get_layout(state, block.turn_id)
+    local tools_section = layout and layout.sections and layout.sections.tools or nil
+    if tools_section ~= nil then
+      recompute_section_aggregate(state, tools_section)
+      repaint_section_header(state, "tools", tools_section)
+    end
+
+    -- Only clear+reapply line highlights when the state badge colour
+    -- actually flipped. Under streaming this is per-tool-lifecycle,
+    -- not per-chunk — saves an extmark churn per update.
+    if state_transitioned then
+      local head_row, tail_row = block_range(state, block)
+      clear_range_hl(state, head_row, tail_row)
+      apply_line_hl(state, head_row, tool_status_hl(state_str))
+      local _ = tail_row
+    end
+
+    -- DO NOT re-fold here. `:N,Mfold` stacks manual folds — every
+    -- streaming chunk would push another layer onto the same range,
+    -- and the captain would need N+1 `zo`s to open a tool call. The
+    -- create-time fold from `render_tool_call` survives body
+    -- modifications (manual folds adjust their range as lines shift)
+    -- and stays closed across the whole lifecycle.
+  end)
+
+  -- Stash what we just rendered for the next skip-if-unchanged
+  -- comparison. Strings are immutable in Lua so the reference is
+  -- the cheapest "what did we render" cache.
+  block._last_output = output_text
+  block._last_diff = diff_text
+  block._last_description = description_text
+  block._last_kind = kind
+  block._last_state = state_str
+  block._last_stats = block.stats
+end
+
+---Flush a pending coalesce timer for `block` synchronously. Safe
+---to call when no timer / no pending update. Used by both the
+---terminal-state fast path and by `handle_turn_ended` so folded
+---turns don't lock in a stale (pre-flush) body snapshot.
+---@param state hyprpilot.render.State
+---@param block hyprpilot.render.Block
+local function flush_tool_call_timer(state, block)
+  cancel_tool_call_timer(block)
+  local pending = block._pending_update
+  if pending == nil then
+    return
+  end
+  block._pending_update = nil
+  render_tool_call_update_now(state, block, pending)
+end
+
+---Apply a tool_call_update: schedule a coalesced re-render. The
+---daemon ships streaming updates with cumulative `formatted.output`;
+---without coalescing we'd do a full `replace_block_body` per chunk
+---(O(N²) in stream size). The timer folds bursts into at most one
+---render per 50ms window. Terminal states (`completed` / `failed` /
+---`cancelled`) bypass the coalesce and render immediately.
 ---@param instance_id string
 ---@param update table
 function M.handle_tool_call_update(instance_id, update)
@@ -1370,51 +1554,61 @@ function M.handle_tool_call_update(instance_id, update)
     end)
   end
 
-  -- Merge the original toolKind back onto the update payload before
-  -- handing it to the header / body composers — daemon updates omit
-  -- toolKind because nothing about the kind ever changes during a
-  -- tool's lifecycle. The composers expect it to be present to pick
-  -- the right glyph + body language.
-  local merged = vim.tbl_extend("keep", update, { toolKind = block.tool_kind })
+  -- Always stash the LATEST update — the timer reads from here at
+  -- fire time. This avoids the "stale closure capture" trap: a
+  -- timer scheduled at t=0 with update A must NOT render A when a
+  -- newer update B arrived at t=25ms; the timer at t=50ms should
+  -- render B.
+  block._pending_update = update
 
-  -- Refresh per-block stats from the merged payload so the section
-  -- aggregate stays accurate as durations / diffs grow during the
-  -- tool's lifecycle. Wholesale replacement (no merge) — daemon
-  -- ships running totals.
-  block.stats = (merged.formatted and merged.formatted.stats) or block.stats
+  if TOOL_CALL_TERMINAL_STATES[update.state] == true then
+    -- Terminal — flush immediately so the captain sees the final
+    -- state without a coalesce-window delay. Cancels any pending
+    -- timer so it can't fire a duplicate render after this one.
+    cancel_tool_call_timer(block)
+    block._pending_update = nil
+    render_tool_call_update_now(state, block, update)
+    return
+  end
 
-  with_autoscroll(state, function()
-    chat_buffer.with_buffer(state.bufnr, function()
-      local head_row = block_range(state, block)
-      local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-      vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { flatten_text(tool_header_line(merged)) })
+  if block._coalesce_timer ~= nil then
+    -- Timer already armed; the latest update is now in
+    -- `_pending_update`. Let the existing timer fire.
+    return
+  end
+
+  local timer = vim.uv.new_timer()
+  block._coalesce_timer = timer
+  timer:start(
+    TOOL_CALL_COALESCE_MS,
+    0,
+    vim.schedule_wrap(function()
+      -- Re-resolve at fire time: the instance + block may have been
+      -- torn down during the coalesce window. State may also have
+      -- been dropped via `M.forget`.
+      local live_state = M._states[instance_id]
+      if live_state == nil or live_state.blocks[block.id] ~= block then
+        cancel_tool_call_timer(block)
+        return
+      end
+      -- Mark the timer as not-pending BEFORE rendering — the render
+      -- path could fire fresh events that need to schedule a new
+      -- timer; we don't want them to short-circuit on a stale handle.
+      block._coalesce_timer = nil
+      pcall(timer.stop, timer)
+      pcall(timer.close, timer)
+
+      local pending = block._pending_update
+      if pending == nil then
+        return
+      end
+      block._pending_update = nil
+      render_tool_call_update_now(live_state, block, pending)
     end)
-
-    replace_block_body(state, block, tool_body_lines(merged.formatted, merged.toolKind))
-
-    -- Bubble the refreshed stats up to the section header.
-    local layout = get_layout(state, block.turn_id)
-    local tools_section = layout and layout.sections and layout.sections.tools or nil
-    if tools_section ~= nil then
-      recompute_section_aggregate(state, tools_section)
-      repaint_section_header(state, "tools", tools_section)
-    end
-
-    -- Re-apply highlights: header colour can flip with the new state;
-    -- body has no line_hl_group (markdown highlighter handles it).
-    local head_row, tail_row = block_range(state, block)
-    clear_range_hl(state, head_row, tail_row)
-    apply_line_hl(state, head_row, tool_status_hl(update.state))
-    local _ = tail_row
-
-    -- DO NOT re-fold here. `:N,Mfold` stacks manual folds — every
-    -- streaming chunk would push another layer onto the same range,
-    -- and the captain would need N+1 `zo`s to open a tool call. The
-    -- create-time fold from `render_tool_call` survives body
-    -- modifications (manual folds adjust their range as lines shift)
-    -- and stays closed across the whole lifecycle.
-  end)
+  )
 end
+
+M._flush_tool_call_timer = flush_tool_call_timer
 
 ---Render an agent thought block — every `agent_thought` chunk in
 ---the same turn streams into ONE accumulating block (like
@@ -2123,6 +2317,17 @@ function M.handle_turn_ended(event)
     state.current_turn = nil
   end
 
+  -- Flush every per-block coalesce timer in this turn before the
+  -- fold / section-repaint / stats-aggregate pass below. Without
+  -- this the folded section captures a stale body snapshot (the
+  -- pending update from the last 50ms-window chunk hasn't landed
+  -- yet) and the section-aggregate misses the final stats values.
+  for _, block in pairs(state.blocks) do
+    if block.turn_id == effective_turn_id and (block._coalesce_timer ~= nil or block._pending_update ~= nil) then
+      flush_tool_call_timer(state, block)
+    end
+  end
+
   -- Stamp the turn's end timestamp + stop reason on the layout, then
   -- repaint the pilot header so the elapsed pill freezes at its
   -- final value. The stop reason itself is NOT emitted as a header
@@ -2437,19 +2642,29 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
 
   local head_row, tail_row = block_range(state, term._block)
 
-  -- Re-apply highlights: only the header gets a status colour; body
-  -- relies on markdown treesitter for its fenced code block highlight.
-  clear_range_hl(state, head_row, tail_row)
-  local header_hl = chunk.kind == "exit" and (term.exit_code == 0 and "HyprpilotToolStatusOk" or "HyprpilotToolStatusFail") or "HyprpilotToolStatusRunning"
-  apply_line_hl(state, head_row, header_hl)
-  local _ = tail_row
+  -- Header rewrite + line-hl reapply only fire when the header
+  -- content actually changed (status: running ↔ ok/fail). For
+  -- output-only chunks BEFORE exit, the header still reads
+  -- "running" and any subsequent output chunk doesn't change it —
+  -- skip the buf_set_text + clear/apply_line_hl churn. For output
+  -- chunks AFTER exit (late events, race), the header already
+  -- locked in its final state — skip too (idempotent).
+  local header_needs_repaint = chunk.kind == "exit" or term._header_painted ~= true
+  if header_needs_repaint then
+    term._header_painted = true
+    clear_range_hl(state, head_row, tail_row)
+    local header_hl = term.exit_code ~= nil and (term.exit_code == 0 and "HyprpilotToolStatusOk" or "HyprpilotToolStatusFail") or "HyprpilotToolStatusRunning"
+    apply_line_hl(state, head_row, header_hl)
 
-  -- Refresh the header with the latest exit/signal status.
-  chat_buffer.with_buffer(state.bufnr, function()
-    local new_header = terminal_header_line(terminal_id, term.exit_code, term.signal)
-    local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
-    vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { new_header })
-  end)
+    chat_buffer.with_buffer(state.bufnr, function()
+      local new_header = terminal_header_line(terminal_id, term.exit_code, term.signal)
+      local existing = vim.api.nvim_buf_get_lines(state.bufnr, head_row, head_row + 1, false)[1] or ""
+      if existing ~= new_header then
+        vim.api.nvim_buf_set_text(state.bufnr, head_row, 0, head_row, #existing, { new_header })
+      end
+    end)
+  end
+  local _ = tail_row
 
   if chunk.kind == "exit" then
     fold_block(state, term._block)
