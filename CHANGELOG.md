@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.6.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.6.0...hyprpilot.nvim-v1.6.1) (2026-05-16)
+
+
+### Bug Fixes
+
+* **chat:** cap terminal output + disable undo on plugin buffers (memory leak) ([#94](https://github.com/hyprpilot/hyprpilot.nvim/issues/94)) ([56ab44b](https://github.com/hyprpilot/hyprpilot.nvim/commit/56ab44b6a25864074247bc97bc996dc010e82e6b))
+* **render:** drop per-block wire payloads after turn_ended ([#95](https://github.com/hyprpilot/hyprpilot.nvim/issues/95)) ([2d960c0](https://github.com/hyprpilot/hyprpilot.nvim/commit/2d960c03385a4b1a04eda6b8bc8e61a6c9609a0e))
+
 ## [1.6.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.5.0...hyprpilot.nvim-v1.6.0) (2026-05-15)
 
 
