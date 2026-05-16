@@ -126,7 +126,17 @@ function M.focus(opts)
   end
 
   local current = vim.api.nvim_get_current_win()
-  if is_hyprpilot_window(current) then
+
+  -- Toggle-back fires only when the captain is ALREADY in the
+  -- target window (e.g., focus(composer) while in composer). Being
+  -- in a different hyprpilot surface (e.g., focus(composer) while
+  -- in chat, or focus(permission) while in composer) means the
+  -- captain wants to JUMP to the target, not bounce back to the
+  -- stale `_prev_winid`. The earlier shape conflated all hyprpilot
+  -- windows and ate a chunk of captain navigations: manually
+  -- moving into chat / queue strip / etc. and then asking for
+  -- composer focus sent them back to the editor instead.
+  if current == target_winid then
     if M._prev_winid ~= nil and vim.api.nvim_win_is_valid(M._prev_winid) then
       vim.api.nvim_set_current_win(M._prev_winid)
       M._prev_winid = nil
@@ -136,7 +146,14 @@ function M.focus(opts)
     return
   end
 
-  M._prev_winid = current
+  -- Don't overwrite `_prev_winid` when the current window is a
+  -- hyprpilot surface — the captain's "back" target should stay
+  -- pinned to the most recent EDITOR window, not to whichever
+  -- chrome window they manually nudged into. Without this guard,
+  -- in-chrome navigation pollutes the toggle-back history.
+  if not is_hyprpilot_window(current) then
+    M._prev_winid = current
+  end
   jump_to(target_winid, composer_winid)
 end
 

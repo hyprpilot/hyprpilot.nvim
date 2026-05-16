@@ -275,4 +275,52 @@ T["focus: target = 'permission' with no permission row visible → warn-only no-
   teardown_windows({ chat, composer })
 end
 
+T["focus: from a non-target hyprpilot window → JUMPS to target (no stale toggle-back)"] = function()
+  -- Captain hits focus(composer) from inside the chat window. Old
+  -- behaviour: bounced back to the stashed editor (toggle-back
+  -- triggered on "any hyprpilot window"). New behaviour: jumps to
+  -- composer; toggle-back only fires when current == target.
+  local home, chat, composer = mint_window_triple()
+  local prev_chat = require("hyprpilot.chat.window")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
+  setup_chrome(chat, composer)
+
+  -- Seed: captain previously focused from `home`, then manually
+  -- nudged into the chat window without using the focus keybind.
+  require("hyprpilot.ui.window")._prev_winid = home
+  vim.api.nvim_set_current_win(chat)
+
+  require("hyprpilot.ui.window").focus({ target = "composer" })
+
+  -- Captain wanted composer, gets composer (not bounced back to home).
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), composer)
+  -- `_prev_winid` is untouched — chat is a hyprpilot surface, not a
+  -- meaningful "back" target. Home stays pinned as the toggle-back.
+  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, home)
+
+  restore_chrome(prev_chat, prev_composer)
+  teardown_windows({ chat, composer })
+end
+
+T["focus: from the target window itself → toggles back to prev"] = function()
+  -- Regression guard for the toggle-back path. Same setup as
+  -- above, but cursor is in composer (the target) when focus
+  -- fires — toggle back to the stashed editor.
+  local home, chat, composer = mint_window_triple()
+  local prev_chat = require("hyprpilot.chat.window")._winid
+  local prev_composer = require("hyprpilot.composer")._winid
+  setup_chrome(chat, composer)
+
+  require("hyprpilot.ui.window")._prev_winid = home
+  vim.api.nvim_set_current_win(composer)
+
+  require("hyprpilot.ui.window").focus({ target = "composer" })
+
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), home)
+  MiniTest.expect.equality(require("hyprpilot.ui.window")._prev_winid, nil)
+
+  restore_chrome(prev_chat, prev_composer)
+  teardown_windows({ chat, composer })
+end
+
 return T
