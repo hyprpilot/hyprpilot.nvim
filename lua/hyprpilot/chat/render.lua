@@ -2254,6 +2254,56 @@ function M.handle_turn_ended(event)
     end
   end
 
+  -- Post-render cleanup. Once the turn is folded + the section
+  -- pills are frozen at their final values, the per-block wire
+  -- payloads (`block.stats`) and per-section aggregates
+  -- (`section.aggregated_stats`) are render-input we'll never need
+  -- again — `tool_call_update` doesn't fire on closed turns, the
+  -- section header text was already painted by the freeze loop
+  -- above. Tool_kind is the only post-end consumer (header rebuild
+  -- on update) so it goes too. Drop them so a long session with
+  -- hundreds of tool calls doesn't keep their cumulative wire-
+  -- payload garbage alive on the state table.
+  --
+  -- KEEP per block: id, kind, turn_id, head_mark, tail_mark — the
+  -- jump keymaps + the orphan-fold fallback above already ran for
+  -- this turn, but extmarks anchor buffer positions vim needs for
+  -- the manual folds we just created (deleting them is safe; vim
+  -- folds persist by range, not by extmark, but keeping them is
+  -- cheap and protects any future "scroll to block" surface).
+  --
+  -- KEEP per section: head_mark, tail_mark, started_at_ms,
+  -- ended_at_ms — the jump keymaps walk `### tasks` / `thoughts` /
+  -- `tools` head marks for `[s` / `]s`.
+  if layout ~= nil then
+    for _, section in pairs(layout.sections) do
+      for _, block_id in ipairs(section.block_ids) do
+        local block = state.blocks[block_id]
+        if block ~= nil then
+          block.stats = nil
+          block.tool_kind = nil
+        end
+      end
+      section.aggregated_stats = nil
+      -- We've already iterated `block_ids` for the orphan-fold
+      -- pass above; no more callers for this turn's sections.
+      section.block_ids = {}
+    end
+  end
+
+  -- `tool_calls[id] = block_id` is the routing table for
+  -- `handle_tool_call_update`. The daemon won't fire updates after
+  -- `turn_ended`, so the entries for this turn's tool calls are
+  -- dead. Walk the table once + drop the matching keys. (We can't
+  -- just iterate the section's block_ids and reverse-lookup —
+  -- already cleared above.)
+  for tool_call_id, block_id in pairs(state.tool_calls) do
+    local block = state.blocks[block_id]
+    if block ~= nil and block.turn_id == effective_turn_id then
+      state.tool_calls[tool_call_id] = nil
+    end
+  end
+
   -- Mark every fenced code block in the buffer as foldable (open by
   -- default). Streaming chunks may have completed multiple code
   -- blocks across the turn; sweep once on turn-end to catch them
