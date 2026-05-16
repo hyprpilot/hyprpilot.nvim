@@ -56,6 +56,13 @@ local function apply_options(bufnr, name)
   vim.bo[bufnr].filetype = "hyprpilot.markdown"
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].swapfile = false
+  -- Plugin buffers are render-from-source; the captain doesn't
+  -- author content here. `buftype = "nofile"` does NOT disable
+  -- undo on its own — vim still builds an undo tree for every
+  -- `set_lines` call. With streaming tool output (`replace_block_body`
+  -- on every chunk) the undo tree balloons fast. `undolevels = -1`
+  -- skips the tree entirely and recovers the memory.
+  vim.bo[bufnr].undolevels = -1
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].buflisted = false
   vim.bo[bufnr].modifiable = false
