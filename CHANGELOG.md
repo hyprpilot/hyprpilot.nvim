@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.6.1...hyprpilot.nvim-v1.6.2) (2026-05-16)
+
+
+### Bug Fixes
+
+* **render:** coalesce tool_call_update + cap output + skip unchanged renders ([#97](https://github.com/hyprpilot/hyprpilot.nvim/issues/97)) ([dd7fcb7](https://github.com/hyprpilot/hyprpilot.nvim/commit/dd7fcb7e28e70e623c169121f5548e5505e26073))
+
 ## [1.6.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.6.0...hyprpilot.nvim-v1.6.1) (2026-05-16)
 
 
