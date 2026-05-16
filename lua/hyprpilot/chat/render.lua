@@ -1582,6 +1582,15 @@ function M.handle_tool_call_update(instance_id, update)
   end
 
   local timer = vim.uv.new_timer()
+  if timer == nil then
+    -- uv resource exhaustion (rare). Fall back to a synchronous
+    -- render so the update isn't silently dropped until the next
+    -- terminal-state event flushes `_pending_update`.
+    log.warn("render.tool_call_update: vim.uv.new_timer() returned nil — falling back to sync render")
+    block._pending_update = nil
+    render_tool_call_update_now(state, block, update)
+    return
+  end
   block._coalesce_timer = timer
   timer:start(
     TOOL_CALL_COALESCE_MS,
@@ -2657,7 +2666,11 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
   if header_needs_repaint then
     term._header_painted = true
     clear_range_hl(state, head_row, tail_row)
-    local header_hl = term.exit_code ~= nil and (term.exit_code == 0 and "HyprpilotToolStatusOk" or "HyprpilotToolStatusFail") or "HyprpilotToolStatusRunning"
+    -- Gate on chunk.kind, NOT on `term.exit_code ~= nil`: a process
+    -- killed by signal ships `{kind="exit", exitCode=nil,
+    -- signal="SIGTERM"}` — exit_code is nil but the run DID fail.
+    -- The `nil == 0` short-circuit picks the Fail branch correctly.
+    local header_hl = chunk.kind == "exit" and (term.exit_code == 0 and "HyprpilotToolStatusOk" or "HyprpilotToolStatusFail") or "HyprpilotToolStatusRunning"
     apply_line_hl(state, head_row, header_hl)
 
     chat_buffer.with_buffer(state.bufnr, function()
