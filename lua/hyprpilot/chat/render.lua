@@ -663,7 +663,7 @@ end
 ---@param kind string
 ---@param section hyprpilot.render.Section?
 ---@return string
-local function section_header_line(kind, section)
+local function section_header_line(kind, section, state)
   local base = SECTION_HEADER[kind] or ("### " .. kind)
   local item_count = section and section.item_count or 0
 
@@ -686,6 +686,25 @@ local function section_header_line(kind, section)
 
   if item_count <= 0 then
     return base
+  end
+
+  -- Tasks section: one plan per turn (`render_plan` overwrites in
+  -- place, with an adoption fallback for replay paths). The
+  -- section header surfaces the plan's checklist stats directly
+  -- (`[done/total done]`) instead of the unhelpful `[1 plan]` —
+  -- captain spec, since with exactly one plan the count carries
+  -- no information. `state` is threaded by `repaint_section_header`
+  -- so we can resolve `block_ids` → block.checklist; the initial-
+  -- mint call from `ensure_section` passes nil → falls through to
+  -- the bare label.
+  if kind == "tasks" and section ~= nil and state ~= nil then
+    for _, block_id in ipairs(section.block_ids) do
+      local plan_block = state.blocks[block_id]
+      if plan_block ~= nil and plan_block.kind == "plan" and type(plan_block.checklist) == "table" then
+        local cl = plan_block.checklist
+        return base .. stats.format_pills({ string.format("%d/%d done", cl.done or 0, cl.total or 0) })
+      end
+    end
   end
 
   local unit
@@ -738,7 +757,7 @@ local function repaint_section_header(state, kind, section)
   end
 
   local existing = vim.api.nvim_buf_get_lines(state.bufnr, row, row + 1, false)[1] or ""
-  local new_line = section_header_line(kind, section)
+  local new_line = section_header_line(kind, section, state)
   if new_line == existing then
     return
   end
@@ -1797,8 +1816,30 @@ local function render_plan(state, record)
   -- Replace-in-place path: the current turn already has an active
   -- plan block — overwrite its full content (header + body) so the
   -- captain sees one evolving plan, not a stack of revisions.
+  -- Adoption fallback: when `active_plan_block` is nil (post-
+  -- hydrate / replay / late event after a header reset) but the
+  -- turn's tasks section already carries a plan-kind block, adopt
+  -- THAT block as the active accumulator and overwrite it. Without
+  -- this, a plan event after hydrate would mint a fresh block and
+  -- stack two `# plan` headers in the same section — captain saw
+  -- duplicate blocks under `### tasks` after a re-show.
   local active_id = state.active_plan_block
   local active_block = active_id ~= nil and state.blocks[active_id] or nil
+  if active_block == nil or active_block.turn_id ~= state.current_turn then
+    local turn_layout = get_layout(state, state.current_turn)
+    local tasks_section = turn_layout and turn_layout.sections and turn_layout.sections.tasks or nil
+    if tasks_section ~= nil then
+      for _, candidate_id in ipairs(tasks_section.block_ids) do
+        local candidate = state.blocks[candidate_id]
+        if candidate ~= nil and candidate.kind == "plan" then
+          state.active_plan_block = candidate_id
+          active_id = candidate_id
+          active_block = candidate
+          break
+        end
+      end
+    end
+  end
   if active_block ~= nil and active_block.turn_id == state.current_turn then
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row = block_range(state, active_block)
@@ -1815,12 +1856,18 @@ local function render_plan(state, record)
       replace_block_body(state, active_block, body)
     end)
     if active_block ~= nil then
+      active_block.checklist = { done = done, total = total }
       local head_row = block_range(state, active_block)
       if head_row ~= nil then
         apply_line_hl(state, head_row, "HyprpilotPlanHeader")
         for i, step in ipairs(steps) do
           apply_line_hl(state, head_row + i, plan_step_hl(step.status))
         end
+      end
+      local turn_layout = get_layout(state, active_block.turn_id)
+      local tasks_section = turn_layout and turn_layout.sections and turn_layout.sections.tasks or nil
+      if tasks_section ~= nil then
+        repaint_section_header(state, "tasks", tasks_section)
       end
       return
     end
@@ -1829,22 +1876,33 @@ local function render_plan(state, record)
   local layout = get_layout(state, state.current_turn)
   local block_id = "plan:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
-  local _, first_row = insert_block_into_section(state, state.current_turn, "tasks", block_id, "plan", lines)
+  local block, first_row = insert_block_into_section(state, state.current_turn, "tasks", block_id, "plan", lines)
 
   if first_row == nil then
     chat_buffer.with_buffer(state.bufnr, function()
       first_row = append_lines(state, lines)
     end)
-    track_block(state, block_id, "plan", first_row, first_row + #lines - 1)
+    block = track_block(state, block_id, "plan", first_row, first_row + #lines - 1)
   end
 
   -- Track the new block as the active accumulator so subsequent
   -- plan events overwrite it instead of stacking.
   state.active_plan_block = block_id
+  if block ~= nil then
+    block.checklist = { done = done, total = total }
+  end
 
   apply_line_hl(state, first_row, "HyprpilotPlanHeader")
   for i, step in ipairs(steps) do
     apply_line_hl(state, first_row + i, plan_step_hl(step.status))
+  end
+
+  -- Repaint the section header so the new `[done/total done]` pill
+  -- reflects this plan's stats — section header reads checklist
+  -- stats off the lone plan block in the section.
+  local tasks_section = layout and layout.sections and layout.sections.tasks or nil
+  if tasks_section ~= nil then
+    repaint_section_header(state, "tasks", tasks_section)
   end
 end
 
