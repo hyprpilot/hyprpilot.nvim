@@ -21,7 +21,7 @@ require("hyprpilot.config").setup({
 
 local T = MiniTest.new_set()
 
-T["hydrate renders user prompt under `## captain` + `### request`"] = function()
+T["hydrate wraps user prompt with --- rules under ## captain"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -35,36 +35,40 @@ T["hydrate renders user prompt under `## captain` + `### request`"] = function()
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   MiniTest.expect.equality(helpers.has_line(lines, "ship it"), true)
   MiniTest.expect.equality(helpers.has_line(lines, "## captain"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "### request"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "---"), true)
+  -- Old `### request` subhead is gone (replaced by --- wrappers).
+  MiniTest.expect.equality(helpers.has_line(lines, "### request"), false)
 
-  -- Order: `## captain` heads the turn, `### request` is its
-  -- subheader, prompt text follows below.
-  local captain_idx, request_idx, prompt_idx
+  -- Order: ## captain → opening --- → prompt → closing ---
+  local captain_idx, open_rule_idx, prompt_idx, close_rule_idx
   for i, l in ipairs(lines) do
     if l == "## captain" then
       captain_idx = i
-    elseif l == "### request" then
-      request_idx = i
+    elseif l == "---" and open_rule_idx == nil then
+      open_rule_idx = i
     elseif l == "ship it" then
       prompt_idx = i
+    elseif l == "---" and prompt_idx ~= nil and close_rule_idx == nil then
+      close_rule_idx = i
     end
   end
-  MiniTest.expect.equality(captain_idx < request_idx, true)
-  MiniTest.expect.equality(request_idx < prompt_idx, true)
+  MiniTest.expect.equality(captain_idx < open_rule_idx, true)
+  MiniTest.expect.equality(open_rule_idx < prompt_idx, true)
+  MiniTest.expect.equality(prompt_idx < close_rule_idx, true)
 
   helpers.cleanup_instance(id)
 end
 
-T["agent_text prose lands under a `### response` subheader"] = function()
+T["agent_text prose wraps with --- rules (no ### response subhead)"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
   local bufnr = buffer.create(id)
   local state = render.state(id, bufnr)
 
-  -- A pilot turn with thoughts + tools + prose. `### response`
-  -- must appear AFTER the other sections (it lands at the prose
-  -- anchor, below section_anchor) and BEFORE the prose itself.
+  -- A pilot turn with thoughts + tools + prose. The opening ---
+  -- lands at the prose anchor, AFTER the sections; closing --- is
+  -- emitted by handle_turn_ended.
   render.hydrate(state, {
     items = {
       { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
@@ -83,36 +87,55 @@ T["agent_text prose lands under a `### response` subheader"] = function()
       { turnId = "t1", item = { kind = "agent_text", text = "here's the answer" } },
     },
   })
+  render.handle_turn_ended({ instanceId = id, turnId = "t1", stopReason = "end_turn" })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  MiniTest.expect.equality(helpers.has_line(lines, "### response"), true)
+  -- Old subheader is gone.
+  MiniTest.expect.equality(helpers.has_line(lines, "### response"), false)
 
-  local thoughts_idx, tools_idx, response_idx, prose_idx
+  -- Locate the prose, then find the IMMEDIATE `---` rules
+  -- bracketing it. Tool blocks use `wrap_in_rules` internally
+  -- which also emits `---` lines; a naive global rule-count would
+  -- conflate them with the response wrappers.
+  local prose_idx, thoughts_idx, tools_idx
   for i, l in ipairs(lines) do
     if l:find("^### thoughts") then
       thoughts_idx = i
     elseif l:find("^### tools") then
       tools_idx = i
-    elseif l == "### response" then
-      response_idx = i
     elseif l == "here's the answer" then
       prose_idx = i
     end
   end
-
   MiniTest.expect.equality(thoughts_idx ~= nil, true)
   MiniTest.expect.equality(tools_idx ~= nil, true)
-  MiniTest.expect.equality(response_idx ~= nil, true)
   MiniTest.expect.equality(prose_idx ~= nil, true)
-  -- thoughts → tools → response → prose
+
+  -- Closest `---` BEFORE prose = opener; closest `---` AFTER = closer.
+  local opener_idx, closer_idx
+  for i = prose_idx - 1, 1, -1 do
+    if lines[i] == "---" then
+      opener_idx = i
+      break
+    end
+  end
+  for i = prose_idx + 1, #lines do
+    if lines[i] == "---" then
+      closer_idx = i
+      break
+    end
+  end
+  MiniTest.expect.equality(opener_idx ~= nil, true)
+  MiniTest.expect.equality(closer_idx ~= nil, true)
+  -- Opener sits after the tools section header (sections render
+  -- BEFORE the response wrapper).
   MiniTest.expect.equality(thoughts_idx < tools_idx, true)
-  MiniTest.expect.equality(tools_idx < response_idx, true)
-  MiniTest.expect.equality(response_idx < prose_idx, true)
+  MiniTest.expect.equality(tools_idx < opener_idx, true)
 
   helpers.cleanup_instance(id)
 end
 
-T["agent_text emits `### response` only once per turn"] = function()
+T["agent_text opens --- wrapper only once per turn"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -120,7 +143,9 @@ T["agent_text emits `### response` only once per turn"] = function()
   local state = render.state(id, bufnr)
 
   -- Two streamed chunks within the same turn must produce exactly
-  -- one `### response` subhead, not two.
+  -- one OPENING `---` (the response wrap), not two. Identify the
+  -- opener as the closest `---` BEFORE the prose lines (avoiding
+  -- conflation with `wrap_in_rules` markers other blocks emit).
   render.hydrate(state, {
     items = {
       { turnId = "t1", item = { kind = "user_prompt", text = "hi" } },
@@ -130,13 +155,33 @@ T["agent_text emits `### response` only once per turn"] = function()
   })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local response_count = 0
-  for _, l in ipairs(lines) do
-    if l == "### response" then
-      response_count = response_count + 1
+  local prose_idx
+  for i, l in ipairs(lines) do
+    if l:find("first", 1, true) ~= nil then
+      prose_idx = i
+      break
     end
   end
-  MiniTest.expect.equality(response_count, 1)
+  MiniTest.expect.equality(prose_idx ~= nil, true)
+
+  -- Walk back from the prose; the FIRST `---` should be the opener
+  -- and there should be only one between it and `## pilot`.
+  local pilot_idx
+  for i = prose_idx - 1, 1, -1 do
+    if lines[i] == "## pilot" then
+      pilot_idx = i
+      break
+    end
+  end
+  MiniTest.expect.equality(pilot_idx ~= nil, true)
+
+  local openers_between = 0
+  for i = pilot_idx + 1, prose_idx - 1 do
+    if lines[i] == "---" then
+      openers_between = openers_between + 1
+    end
+  end
+  MiniTest.expect.equality(openers_between, 1)
 
   helpers.cleanup_instance(id)
 end

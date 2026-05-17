@@ -108,14 +108,7 @@ function M.focus()
   if not M.is_visible() then
     return false
   end
-
-  local ok, err = pcall(vim.api.nvim_set_current_win, M._winid)
-  if not ok then
-    log.warn("window.focus: nvim_set_current_win failed: %s", err)
-    return false
-  end
-
-  return true
+  return buffer.safe_set_current_win(M._winid)
 end
 
 ---Register an instance state entry. Used by `instances.spawn` /
@@ -267,7 +260,7 @@ local function open_split(ui, bufnr)
 
   M._winid = vim.api.nvim_get_current_win()
 
-  vim.api.nvim_win_set_buf(M._winid, bufnr)
+  buffer.safe_win_set_buf(M._winid, bufnr)
   buffer.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
@@ -392,7 +385,12 @@ function M.show(instance_id)
   local bufnr = resolve_target_buffer(instance_id)
 
   if M.is_visible() then
-    vim.api.nvim_win_set_buf(M._winid, bufnr)
+    if not buffer.safe_win_set_buf(M._winid, bufnr) then
+      -- Window or buffer went invalid mid-call (e.g., concurrent
+      -- close cascade). The plugin can't safely chain show/focus
+      -- on a wedged window; bail rather than crash downstream.
+      return
+    end
     -- Use the pcall-wrapped focus helper instead of a raw
     -- `nvim_set_current_win` — same BufEnter / treesitter risk class
     -- as the auxiliary windows have on their open paths.
@@ -420,33 +418,32 @@ function M.show(instance_id)
     require("hyprpilot.status").emit_instance_changed(M._last_active_id)
   end
 
-  -- Auxiliary windows around the chat — header above, composer below.
-  -- Both are skipped for the placeholder (no instance to drive them).
-  require("hyprpilot.chat.header").ensure_listeners()
-  require("hyprpilot.chat.header").open()
-  -- Queue strip auto-pops above the composer when the active
-  -- instance has parked prompts. Subscriber wiring lives in
-  -- `ensure_listeners`; the strip stays hidden when the queue is
-  -- empty.
-  require("hyprpilot.chat.queue-strip").ensure_listeners()
-  -- Daemon-mirror queue: pull a fresh `instance/snapshot/queue` so
-  -- the strip carries the daemon's current items even on a chat
-  -- re-show without a fresh boot. Cache populates async; refresh
-  -- runs immediately + repaints again when the snapshot lands.
+  -- Auxiliary surfaces. Each step is pcall-wrapped so a single
+  -- failing module (third-party autocmd throwing on the chat
+  -- buffer, treesitter parser miss, edgy adoption race) doesn't
+  -- cascade and leave the captain with half the chrome open.
+  -- Sequencing: header first (carries instance-state pill the
+  -- other surfaces read), queue-strip next (so permission-row's
+  -- `refresh_if_queued` sees the latest items), composer last
+  -- (focuses by default, captain lands ready to type).
+  pcall(function()
+    require("hyprpilot.chat.header").ensure_listeners()
+    require("hyprpilot.chat.header").open()
+  end)
+  pcall(function()
+    require("hyprpilot.chat.queue-strip").ensure_listeners()
+    if resolved_id ~= nil then
+      require("hyprpilot.chat.queue-strip").hydrate(resolved_id)
+    end
+    require("hyprpilot.chat.queue-strip").refresh()
+  end)
+  pcall(function()
+    require("hyprpilot.chat.permission-row").refresh_if_queued()
+  end)
   if resolved_id ~= nil then
-    require("hyprpilot.chat.queue-strip").hydrate(resolved_id)
-  end
-  require("hyprpilot.chat.queue-strip").refresh()
-  -- Permission row mirrors the same pattern — when the chat
-  -- re-appears (after a `:q`-driven WinClosed cascade or a
-  -- captain-driven `hp.hide()` + `hp.show()`), surface any still-
-  -- pending permissions that are sitting in the local queue. The
-  -- daemon-side resolution slot lives until something resolves it,
-  -- so this never replays a stale prompt.
-  require("hyprpilot.chat.permission-row").refresh_if_queued()
-
-  if resolved_id ~= nil then
-    require("hyprpilot.composer").open()
+    pcall(function()
+      require("hyprpilot.composer").open()
+    end)
   end
 
   log.debug("window.show: instance=%s bufnr=%s", resolved_id or "<placeholder>", bufnr)
@@ -593,7 +590,12 @@ function M.switch(instance_id)
   M._last_active_id = instance_id
 
   if M.is_visible() then
-    vim.api.nvim_win_set_buf(M._winid, state.bufnr)
+    if not buffer.safe_win_set_buf(M._winid, state.bufnr) then
+      -- Switched-to buffer / chat window invalidated mid-call. Bail
+      -- so we don't chain hydrate + permission_row refresh on a
+      -- wedged window.
+      return
+    end
 
     -- Re-hydrate the switched-to instance's meta snapshot — it may
     -- have drifted (mode change, usage update, daemon-side rename)

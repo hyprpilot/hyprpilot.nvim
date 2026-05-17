@@ -155,7 +155,8 @@ function M.resize()
   local bufnr = vim.api.nvim_win_get_buf(M._winid)
   local target = compute_target_height(bufnr)
 
-  if require("hyprpilot.chat.buffer").layout_manager_active() then
+  local buffer_mod = require("hyprpilot.chat.buffer")
+  if buffer_mod.layout_manager_active() then
     -- Cooperate with edgy's apply_size pass instead of fighting it:
     -- `vim.w[winid].edgy_height` is edgy's documented dynamic-sizing
     -- hook (`win:dim("height")` reads this first, falls back to
@@ -164,15 +165,10 @@ function M.resize()
     pcall(function()
       vim.w[M._winid].edgy_height = target
     end)
-    -- Nudge edgy to recompute on the next tick so the height takes
-    -- effect immediately (otherwise it waits for WinResized / a
-    -- layout event).
-    -- `M.layout()` triggers `edgebar:resize()` + `win:apply_size()`;
-    -- `M.update()` (the obvious-looking sibling) only refreshes the
-    -- win lists without recomputing dimensions.
-    pcall(function()
-      require("edgy.layout").layout()
-    end)
+    -- Nudge edgy to recompute, debounced so a keystroke burst
+    -- doesn't fire N full-layout passes per second (the captain
+    -- saw UI thrash + occasional hangs from the un-debounced path).
+    buffer_mod.nudge_edgy_layout()
     return
   end
 
@@ -915,22 +911,22 @@ function M.open(opts)
 
   local bufnr = ensure_buffer(instance_id)
 
+  local buffer_mod = require("hyprpilot.chat.buffer")
+
   if M.is_visible() then
     -- Already open — re-bind to the active instance's composer buffer
     -- (handles the switch() case where the chat flipped instances).
     if vim.api.nvim_win_get_buf(M._winid) ~= bufnr then
-      vim.api.nvim_win_set_buf(M._winid, bufnr)
+      if not buffer_mod.safe_win_set_buf(M._winid, bufnr) then
+        -- Composer window invalidated between is_visible and now;
+        -- bail rather than chain focus + paint on a dead handle.
+        return
+      end
     end
 
     if focus then
-      -- Same BufEnter risk as the open-fresh path below — pcall the
-      -- focus so a third-party autocmd that throws on the composer
-      -- buffer can't take out the open path.
-      local ok, err = pcall(vim.api.nvim_set_current_win, M._winid)
-      if ok then
-        vim.cmd("startinsert")
-      else
-        log.warn("composer.open: nvim_set_current_win failed: %s", err)
+      if buffer_mod.safe_set_current_win(M._winid) then
+        pcall(vim.cmd, "startinsert")
       end
     end
 
@@ -953,8 +949,10 @@ function M.open(opts)
 
   M._winid = vim.api.nvim_get_current_win()
 
-  vim.api.nvim_win_set_buf(M._winid, bufnr)
-  local buffer_mod = require("hyprpilot.chat.buffer")
+  if not buffer_mod.safe_win_set_buf(M._winid, bufnr) then
+    log.warn("composer.open: safe_win_set_buf failed; bailing out of open path")
+    return
+  end
   buffer_mod.clean_window_chrome(M._winid)
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
@@ -1138,6 +1136,15 @@ function M.submit(text, opts)
         pattern = "HyprpilotPromptQueued",
         data = { instance_id = instance_id, bufnr = bufnr },
       })
+      -- Defensive snapshot refresh — the daemon SHOULD emit a
+      -- `queue_changed` event when the prompt lands on the tail,
+      -- but if the event misses (debounce drop, partition, race
+      -- with a turn-end), the strip stays stale. Wholesale-replace
+      -- semantics make the duplicate refresh free when the event
+      -- DOES land.
+      pcall(function()
+        require("hyprpilot.chat.queue-strip").hydrate(instance_id)
+      end)
     end
 
     pcall(vim.api.nvim_exec_autocmds, "User", {

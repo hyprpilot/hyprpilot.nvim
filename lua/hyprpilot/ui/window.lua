@@ -84,13 +84,19 @@ end
 
 ---Jump the cursor to `target_winid`; enter insert mode when that
 ---happens to be the composer (so the captain lands ready to type).
+---Returns false when the focus call bailed — caller can short-circuit
+---instead of charging into a wedged state.
 ---@param target_winid integer
 ---@param composer_winid integer?
+---@return boolean ok
 local function jump_to(target_winid, composer_winid)
-  vim.api.nvim_set_current_win(target_winid)
-  if target_winid == composer_winid then
-    vim.cmd("startinsert")
+  if not require("hyprpilot.chat.buffer").safe_set_current_win(target_winid) then
+    return false
   end
+  if target_winid == composer_winid then
+    pcall(vim.cmd, "startinsert")
+  end
+  return true
 end
 
 ---Toggle the captain's focus between a hyprpilot chrome window and
@@ -148,7 +154,7 @@ function M.focus(opts)
   -- composer focus sent them back to the editor instead.
   if current == target_winid then
     if M._prev_winid ~= nil and vim.api.nvim_win_is_valid(M._prev_winid) then
-      vim.api.nvim_set_current_win(M._prev_winid)
+      require("hyprpilot.chat.buffer").safe_set_current_win(M._prev_winid)
     else
       log.debug("ui.window.focus: no previous window stashed; staying put")
     end
