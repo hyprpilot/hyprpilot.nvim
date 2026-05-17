@@ -1978,17 +1978,21 @@ function M.render_item(state, turn_id, item)
     chat_buffer.with_buffer(state.bufnr, function()
       append_lines(state, vim.split(item.text or "", "\n", { plain = true }))
       -- Close the captain-prompt `---` wrapper opened by
-      -- `append_turn_header(user)`. Trailing blank gives any
-      -- attachments (rendered below) one paragraph break before
-      -- they land — matches the captain's spec:
+      -- `append_turn_header(user)`. Leading blank gives the
+      -- closing rule one space above the prompt body; trailing
+      -- blank gives any attachments (rendered below) one
+      -- paragraph break before they land. Captain spec: every
+      -- chat-bubble `---` separator carries one space top + one
+      -- space bottom — matches the desktop UI's bubble chrome.
       --   ## captain
       --
       --   ---
       --   <prompt>
+      --
       --   ---
       --
       --   <attachments>
-      append_lines(state, { "---", "" })
+      append_lines(state, { "", "---", "" })
     end)
 
     -- Render any captain-side attachments shipped on the user prompt
@@ -2399,11 +2403,14 @@ function M.handle_turn_ended(event)
     -- Close the response `---` wrapper opened by `append_agent_text`
     -- (only when opened — empty pilot turns without prose skip
     -- this). Lands at the prose anchor, which by now sits AFTER the
-    -- last prose line. Idempotent via the same `end_marker_emitted`
-    -- flag so a replayed event doesn't stack duplicates.
+    -- last prose line. Leading blank keeps the closing rule one
+    -- space below the prose tail — captain's bubble-chrome spec
+    -- (every `---` carries one space top + one space bottom).
+    -- Idempotent via the same `end_marker_emitted` flag so a
+    -- replayed event doesn't stack duplicates.
     if not layout.end_marker_emitted and layout.response_wrap_emitted then
       chat_buffer.with_buffer(state.bufnr, function()
-        insert_at_prose_anchor(state, effective_turn_id, { "---", "" })
+        insert_at_prose_anchor(state, effective_turn_id, { "", "---", "" })
       end)
     end
 

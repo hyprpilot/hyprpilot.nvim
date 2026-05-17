@@ -369,9 +369,23 @@ paint_indicator = function(instance_id)
 
   local list = attachments_by_instance[instance_id] or {}
   if #list ~= 0 then
+    -- Match the chat-side `render_attachment` format
+    -- (`@ <title|slug> · <mime> · <path>`) so the captain reads
+    -- staged composer attachments with the same shape they'll
+    -- appear under the submitted prompt in the chat buffer.
+    -- Mime / path are conditional — composer attachments minted
+    -- from `attach_buffer` (unsaved scratch) won't carry a path,
+    -- so the segment list collapses gracefully.
     local virt_lines = vim.tbl_map(function(a)
-      local label = a.title ~= nil and a.title ~= "" and a.title or a.slug
-      return { { "  - " .. label, "HyprpilotComposerAttachments" } }
+      local label = (a.title ~= nil and a.title ~= "") and a.title or a.slug
+      local parts = { "@ " .. tostring(label) }
+      if a.mime ~= nil and a.mime ~= "" then
+        table.insert(parts, tostring(a.mime))
+      end
+      if a.path ~= nil and a.path ~= "" then
+        table.insert(parts, tostring(a.path))
+      end
+      return { { "  " .. table.concat(parts, " · "), "HyprpilotComposerAttachments" } }
     end, list)
 
     local last_line = math.max(0, vim.api.nvim_buf_line_count(bufnr) - 1)
