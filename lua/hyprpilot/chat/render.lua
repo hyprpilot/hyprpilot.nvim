@@ -663,7 +663,7 @@ end
 ---@param kind string
 ---@param section hyprpilot.render.Section?
 ---@return string
-local function section_header_line(kind, section)
+local function section_header_line(kind, section, state)
   local base = SECTION_HEADER[kind] or ("### " .. kind)
   local item_count = section and section.item_count or 0
 
@@ -686,6 +686,25 @@ local function section_header_line(kind, section)
 
   if item_count <= 0 then
     return base
+  end
+
+  -- Tasks section: one plan per turn (`render_plan` overwrites in
+  -- place, with an adoption fallback for replay paths). The
+  -- section header surfaces the plan's checklist stats directly
+  -- (`[done/total done]`) instead of the unhelpful `[1 plan]` —
+  -- captain spec, since with exactly one plan the count carries
+  -- no information. `state` is threaded by `repaint_section_header`
+  -- so we can resolve `block_ids` → block.checklist; the initial-
+  -- mint call from `ensure_section` passes nil → falls through to
+  -- the bare label.
+  if kind == "tasks" and section ~= nil and state ~= nil then
+    for _, block_id in ipairs(section.block_ids) do
+      local plan_block = state.blocks[block_id]
+      if plan_block ~= nil and plan_block.kind == "plan" and type(plan_block.checklist) == "table" then
+        local cl = plan_block.checklist
+        return base .. stats.format_pills({ string.format("%d/%d done", cl.done or 0, cl.total or 0) })
+      end
+    end
   end
 
   local unit
@@ -738,7 +757,7 @@ local function repaint_section_header(state, kind, section)
   end
 
   local existing = vim.api.nvim_buf_get_lines(state.bufnr, row, row + 1, false)[1] or ""
-  local new_line = section_header_line(kind, section)
+  local new_line = section_header_line(kind, section, state)
   if new_line == existing then
     return
   end
@@ -922,7 +941,12 @@ end
 ---@param state hyprpilot.render.State
 ---@param text string
 local function append_agent_text(state, text)
-  if text == "" then
+  -- Same whitespace guard as `render_thought` — a chunk that's
+  -- just `\n` / `\n\n` would split to `["", ""]` / `["", "", ""]`
+  -- and inserting both adds a spurious blank row at the prose
+  -- tail. Daemon's paragraph-break prefix bakes the boundary into
+  -- the NEXT non-empty chunk; filler-only chunks are no-ops here.
+  if text:match("^%s*$") then
     return
   end
 
@@ -1655,8 +1679,14 @@ local function render_thought(state, text)
   -- chunk (header already there, falls through idempotently).
   ensure_section(state, state.current_turn, "thoughts")
 
-  if text == "" then
-    log.debug("render_thought: empty text — kept section header, no body")
+  -- Treat whitespace-only chunks (Opus sometimes emits bare `"\n"`
+  -- / `"\n\n"` as filler between thinking blocks) the same as
+  -- fully-empty: keep the section header (the elapsed-pill anchor)
+  -- but add no body rows. Without this the whitespace lands as one
+  -- or more blank rows and stacks vertical empty space the captain
+  -- never asked for.
+  if text:match("^%s*$") then
+    log.debug("render_thought: empty / whitespace-only text — kept section header, no body")
     return
   end
 
@@ -1688,23 +1718,27 @@ local function render_thought(state, text)
         active_block = nil
         return
       end
-      -- Each `agent_thought` event is its own markdown paragraph.
-      -- Splice a blank separator between the existing body's tail
-      -- and the new chunk when both ends carry content — without
-      -- this, markdown renders consecutive chunks as a single mashed
-      -- paragraph (the captain's screenshot showed this regression).
-      -- Same rule when the new chunk's first line is non-empty:
-      -- treat it as a fresh paragraph relative to the previous tail.
+      -- Token-streaming concat — mirrors `append_agent_text` at the
+      -- pilot-prose path. Daemon-supplied chunks are concatenation-
+      -- safe (the daemon's `paragraph_break_prefix` bakes `\n` /
+      -- `\n\n` onto chunks so verbatim concat produces well-formed
+      -- markdown); the FIRST split-line is the tail of the in-
+      -- progress row and concats onto the existing tail in place,
+      -- remaining split-lines become fresh rows. Without this the
+      -- previous "prepend `''` when both ends non-empty" heuristic
+      -- doubled the wire's `\n\n` paragraph break into TWO blank
+      -- rows (`vim.split("\n\npara2", "\n") = ["", "", "para2"]`
+      -- inserted whole below a non-empty tail = two blanks); now
+      -- the leading `""` concats onto the tail (no visual change)
+      -- and the inner `""` becomes the SINGLE blank between
+      -- paragraphs the captain (and the Tauri overlay) expects.
       local existing_tail = vim.api.nvim_buf_get_lines(state.bufnr, tail_row, tail_row + 1, false)[1] or ""
-      local lines_to_insert
-      if existing_tail ~= "" and (chunk_lines[1] or "") ~= "" then
-        lines_to_insert = vim.list_extend({ "" }, chunk_lines)
-      else
-        lines_to_insert = chunk_lines
+      vim.api.nvim_buf_set_lines(state.bufnr, tail_row, tail_row + 1, false, { flatten_text(existing_tail .. chunk_lines[1]) })
+      local remaining = #chunk_lines > 1 and flatten_lines(vim.list_slice(chunk_lines, 2)) or {}
+      if #remaining > 0 then
+        vim.api.nvim_buf_set_lines(state.bufnr, tail_row + 1, tail_row + 1, false, remaining)
       end
-      lines_to_insert = flatten_lines(lines_to_insert)
-      vim.api.nvim_buf_set_lines(state.bufnr, tail_row + 1, tail_row + 1, false, lines_to_insert)
-      local new_tail = tail_row + #lines_to_insert
+      local new_tail = tail_row + #remaining
       vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.tail_mark)
       active_block.tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, new_tail, 0, { right_gravity = true })
     end)
@@ -1715,11 +1749,19 @@ local function render_thought(state, text)
 
   -- First thought in this turn — mint the accumulating block. No
   -- `* thought` per-chunk subheader; the `### thoughts` section
-  -- header carries the role identifier on its own.
+  -- header carries the role identifier on its own. The block's
+  -- body opens with a `---` horizontal rule so the thoughts
+  -- region reads as a contained bubble (matches the captain /
+  -- pilot prose wrappers). The closer `---` lands at
+  -- `handle_turn_ended` via the `thoughts_wrap_emitted` flag.
   local layout = get_layout(state, state.current_turn)
   local block_id = "thought:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
-  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", chunk_lines)
+  local wrapped_chunk = vim.list_extend({ "---", "" }, chunk_lines)
+  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", wrapped_chunk)
+  if layout ~= nil then
+    layout.thoughts_wrap_emitted = true
+  end
 
   if first_row == nil then
     -- Fallback for spontaneous thoughts (no turn layout).
@@ -1734,7 +1776,12 @@ local function render_thought(state, text)
   state.active_thought_block = block_id
 
   -- Body lines stay plain so the markdown highlighter handles them.
-  apply_line_hl(state, first_row, "HyprpilotThoughtBody")
+  -- The block opens with `["---", ""]` (wrap-opener) when a layout
+  -- exists, so the first BODY line sits at first_row + 2. Orphan
+  -- thoughts (no layout, fallback append path) have no wrap, so
+  -- the body is at first_row directly.
+  local body_offset = (layout ~= nil) and 2 or 0
+  apply_line_hl(state, first_row + body_offset, "HyprpilotThoughtBody")
 end
 
 ---Render a plan block. Multiple plan updates in the same turn
@@ -1797,8 +1844,30 @@ local function render_plan(state, record)
   -- Replace-in-place path: the current turn already has an active
   -- plan block — overwrite its full content (header + body) so the
   -- captain sees one evolving plan, not a stack of revisions.
+  -- Adoption fallback: when `active_plan_block` is nil (post-
+  -- hydrate / replay / late event after a header reset) but the
+  -- turn's tasks section already carries a plan-kind block, adopt
+  -- THAT block as the active accumulator and overwrite it. Without
+  -- this, a plan event after hydrate would mint a fresh block and
+  -- stack two `# plan` headers in the same section — captain saw
+  -- duplicate blocks under `### tasks` after a re-show.
   local active_id = state.active_plan_block
   local active_block = active_id ~= nil and state.blocks[active_id] or nil
+  if active_block == nil or active_block.turn_id ~= state.current_turn then
+    local turn_layout = get_layout(state, state.current_turn)
+    local tasks_section = turn_layout and turn_layout.sections and turn_layout.sections.tasks or nil
+    if tasks_section ~= nil then
+      for _, candidate_id in ipairs(tasks_section.block_ids) do
+        local candidate = state.blocks[candidate_id]
+        if candidate ~= nil and candidate.kind == "plan" then
+          state.active_plan_block = candidate_id
+          active_id = candidate_id
+          active_block = candidate
+          break
+        end
+      end
+    end
+  end
   if active_block ~= nil and active_block.turn_id == state.current_turn then
     chat_buffer.with_buffer(state.bufnr, function()
       local head_row = block_range(state, active_block)
@@ -1815,12 +1884,18 @@ local function render_plan(state, record)
       replace_block_body(state, active_block, body)
     end)
     if active_block ~= nil then
+      active_block.checklist = { done = done, total = total }
       local head_row = block_range(state, active_block)
       if head_row ~= nil then
         apply_line_hl(state, head_row, "HyprpilotPlanHeader")
         for i, step in ipairs(steps) do
           apply_line_hl(state, head_row + i, plan_step_hl(step.status))
         end
+      end
+      local turn_layout = get_layout(state, active_block.turn_id)
+      local tasks_section = turn_layout and turn_layout.sections and turn_layout.sections.tasks or nil
+      if tasks_section ~= nil then
+        repaint_section_header(state, "tasks", tasks_section)
       end
       return
     end
@@ -1829,22 +1904,33 @@ local function render_plan(state, record)
   local layout = get_layout(state, state.current_turn)
   local block_id = "plan:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
-  local _, first_row = insert_block_into_section(state, state.current_turn, "tasks", block_id, "plan", lines)
+  local block, first_row = insert_block_into_section(state, state.current_turn, "tasks", block_id, "plan", lines)
 
   if first_row == nil then
     chat_buffer.with_buffer(state.bufnr, function()
       first_row = append_lines(state, lines)
     end)
-    track_block(state, block_id, "plan", first_row, first_row + #lines - 1)
+    block = track_block(state, block_id, "plan", first_row, first_row + #lines - 1)
   end
 
   -- Track the new block as the active accumulator so subsequent
   -- plan events overwrite it instead of stacking.
   state.active_plan_block = block_id
+  if block ~= nil then
+    block.checklist = { done = done, total = total }
+  end
 
   apply_line_hl(state, first_row, "HyprpilotPlanHeader")
   for i, step in ipairs(steps) do
     apply_line_hl(state, first_row + i, plan_step_hl(step.status))
+  end
+
+  -- Repaint the section header so the new `[done/total done]` pill
+  -- reflects this plan's stats — section header reads checklist
+  -- stats off the lone plan block in the section.
+  local tasks_section = layout and layout.sections and layout.sections.tasks or nil
+  if tasks_section ~= nil then
+    repaint_section_header(state, "tasks", tasks_section)
   end
 end
 
@@ -1978,17 +2064,21 @@ function M.render_item(state, turn_id, item)
     chat_buffer.with_buffer(state.bufnr, function()
       append_lines(state, vim.split(item.text or "", "\n", { plain = true }))
       -- Close the captain-prompt `---` wrapper opened by
-      -- `append_turn_header(user)`. Trailing blank gives any
-      -- attachments (rendered below) one paragraph break before
-      -- they land — matches the captain's spec:
+      -- `append_turn_header(user)`. Leading blank gives the
+      -- closing rule one space above the prompt body; trailing
+      -- blank gives any attachments (rendered below) one
+      -- paragraph break before they land. Captain spec: every
+      -- chat-bubble `---` separator carries one space top + one
+      -- space bottom — matches the desktop UI's bubble chrome.
       --   ## captain
       --
       --   ---
       --   <prompt>
+      --
       --   ---
       --
       --   <attachments>
-      append_lines(state, { "---", "" })
+      append_lines(state, { "", "---", "" })
     end)
 
     -- Render any captain-side attachments shipped on the user prompt
@@ -2399,11 +2489,33 @@ function M.handle_turn_ended(event)
     -- Close the response `---` wrapper opened by `append_agent_text`
     -- (only when opened — empty pilot turns without prose skip
     -- this). Lands at the prose anchor, which by now sits AFTER the
-    -- last prose line. Idempotent via the same `end_marker_emitted`
-    -- flag so a replayed event doesn't stack duplicates.
+    -- last prose line. Leading blank keeps the closing rule one
+    -- space below the prose tail — captain's bubble-chrome spec
+    -- (every `---` carries one space top + one space bottom).
+    -- Idempotent via the same `end_marker_emitted` flag so a
+    -- replayed event doesn't stack duplicates.
     if not layout.end_marker_emitted and layout.response_wrap_emitted then
       chat_buffer.with_buffer(state.bufnr, function()
-        insert_at_prose_anchor(state, effective_turn_id, { "---", "" })
+        insert_at_prose_anchor(state, effective_turn_id, { "", "---", "" })
+      end)
+    end
+
+    -- Close the thoughts `---` wrapper opened by `render_thought`
+    -- (first thought in this turn prepended `["---", ""]` to its
+    -- block body). Lands at the thoughts section's tail anchor —
+    -- which sits at the trailing blank below the section, so the
+    -- inserted `["", "---"]` produces `<thought>` / blank / `---`
+    -- / trailing-blank with one space above + below the rule.
+    -- Idempotent: gated by `thoughts_wrap_closed` so a replayed
+    -- `turn_ended` event doesn't stack duplicate rules.
+    local thoughts_section = layout.sections and layout.sections.thoughts or nil
+    if thoughts_section ~= nil and layout.thoughts_wrap_emitted and not layout.thoughts_wrap_closed then
+      layout.thoughts_wrap_closed = true
+      chat_buffer.with_buffer(state.bufnr, function()
+        local tail_row = section_end_row(state, thoughts_section)
+        if tail_row ~= nil then
+          vim.api.nvim_buf_set_lines(state.bufnr, tail_row, tail_row, false, { "", "---" })
+        end
       end)
     end
 

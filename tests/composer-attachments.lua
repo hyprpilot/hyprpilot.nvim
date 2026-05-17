@@ -207,8 +207,12 @@ T["attach renders virt_lines anchored to the composer's last buffer line"] = fun
   -- the bottom of the visible composer.
   MiniTest.expect.equality(row, vim.api.nvim_buf_line_count(cbuf) - 1)
   MiniTest.expect.equality(#details.virt_lines, 2)
-  MiniTest.expect.equality(details.virt_lines[1][1][1], "  - Architecture")
-  MiniTest.expect.equality(details.virt_lines[2][1][1], "  - notes.md")
+  -- Indicator mirrors the chat-side `render_attachment` shape
+  -- (`@ <title|slug> · <mime> · <path>`) so staged attachments
+  -- read the same in the composer as they will under the
+  -- submitted prompt in the chat buffer.
+  MiniTest.expect.equality(details.virt_lines[1][1][1], "  @ Architecture · image/png · /tmp/diagram.png")
+  MiniTest.expect.equality(details.virt_lines[2][1][1], "  @ notes.md · text/markdown · /tmp/notes.md")
 
   composer.clear_attachments(id)
   -- After clear, the namespace should hold no extmarks.
