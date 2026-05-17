@@ -156,6 +156,17 @@ local function dispatch(raw)
     elseif event.event == "turn_started" then
       render.handle_turn_started(event)
       status.set_activity(event.instanceId, { kind = "thinking", started_at_ms = vim.uv.now() })
+      -- Defensive queue resync — the daemon may have just popped
+      -- the head as part of dispatching this turn. The strip's
+      -- `queue_changed` subscription usually catches it, but on
+      -- restart-window edges (events arrive out of order with the
+      -- snapshot read) the cache can lag. Wholesale-replace
+      -- semantics make this free when it's already accurate.
+      if type(event.instanceId) == "string" then
+        pcall(function()
+          require("hyprpilot.chat.queue-strip").hydrate(event.instanceId)
+        end)
+      end
       emit_for_instance("TurnStarted", event.instanceId, {
         turn_id = event.turnId,
         started_at = event.startedAt or event.started_at,
@@ -168,6 +179,16 @@ local function dispatch(raw)
       -- Cancel-during-dispatch loses the popped item; the daemon
       -- does NOT auto-dispatch the head on TurnEnded — captain
       -- drives drainage explicitly via the queue strip.
+      --
+      -- Defensive queue resync — same rationale as `turn_started`
+      -- above. Turn-end is the most common point where the queue
+      -- visibly drifts (the captain sees the row count "stuck"
+      -- after the prompt resolves).
+      if type(event.instanceId) == "string" then
+        pcall(function()
+          require("hyprpilot.chat.queue-strip").hydrate(event.instanceId)
+        end)
+      end
       emit_for_instance("TurnEnded", event.instanceId, {
         turn_id = event.turnId,
         ended_at = event.endedAt or event.ended_at,

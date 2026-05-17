@@ -208,6 +208,81 @@ function M.layout_manager_active()
   return package.loaded["edgy"] ~= nil
 end
 
+--- Debounce window for `M.nudge_edgy_layout`. 100 ms feels invisible
+--- to humans and absorbs an entire keystroke burst into one layout
+--- pass — without this, fast typing or streaming events triggered
+--- N layout calls per second, each iterating every edgy view.
+--- Under heavy load that thrashed the screen / fought captain's
+--- cursor / occasionally hung the UI.
+local _edgy_layout_pending = false
+
+---Nudge edgy to recompute the layout on the next tick. Coalesces
+---bursts of calls — at most one `edgy.layout.layout()` runs per
+---100 ms window regardless of caller count. Safe to call when
+---edgy is not loaded (no-op). The captain prefers a fix over a
+---blanket disable; this is it.
+function M.nudge_edgy_layout()
+  if not M.layout_manager_active() then
+    return
+  end
+  if _edgy_layout_pending then
+    return
+  end
+  _edgy_layout_pending = true
+  vim.defer_fn(function()
+    _edgy_layout_pending = false
+    pcall(function()
+      require("edgy.layout").layout()
+    end)
+  end, 100)
+end
+
+---Guarded `nvim_set_current_win`. Returns true on success, false on
+---any failure path (invalid winid, BufEnter autocmd throw, etc.).
+---Callers that chain a follow-on mutation (`nvim_win_set_buf`,
+---`startinsert`) MUST check the return and bail on false — leaving
+---a focus chain wedged on an invalid window is the single most
+---common nvim-crash class in this plugin.
+---@param winid integer?
+---@return boolean ok
+function M.safe_set_current_win(winid)
+  if winid == nil or not vim.api.nvim_win_is_valid(winid) then
+    log.debug("buffer.safe_set_current_win: invalid winid=%s", tostring(winid))
+    return false
+  end
+  local ok, err = pcall(vim.api.nvim_set_current_win, winid)
+  if not ok then
+    log.warn("buffer.safe_set_current_win: failed for winid=%s: %s", tostring(winid), tostring(err))
+    return false
+  end
+  return true
+end
+
+---Guarded `nvim_win_set_buf`. Returns true on success, false when
+---either handle is invalid or the API call throws (third-party
+---`BufEnter` autocmd faulting on the new buffer's ft, etc.). Same
+---contract as `safe_set_current_win`: callers chaining further
+---mutations must check the return.
+---@param winid integer?
+---@param bufnr integer?
+---@return boolean ok
+function M.safe_win_set_buf(winid, bufnr)
+  if winid == nil or not vim.api.nvim_win_is_valid(winid) then
+    log.debug("buffer.safe_win_set_buf: invalid winid=%s", tostring(winid))
+    return false
+  end
+  if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
+    log.debug("buffer.safe_win_set_buf: invalid bufnr=%s", tostring(bufnr))
+    return false
+  end
+  local ok, err = pcall(vim.api.nvim_win_set_buf, winid, bufnr)
+  if not ok then
+    log.warn("buffer.safe_win_set_buf: failed for winid=%s bufnr=%s: %s", tostring(winid), tostring(bufnr), tostring(err))
+    return false
+  end
+  return true
+end
+
 ---Strip Neovim's stock chrome off a plugin window: hide the
 ---statusline (set to a single space — Neovim renders nothing
 ---visible), suppress numbers / fold column / sign column, and
@@ -437,22 +512,22 @@ function M.open_aux_split(opts)
 
   M.clean_window_chrome(winid)
 
-  -- Force a layout-manager re-scan AFTER the buffer swap. The
-  -- aux-split open path is `<dir>split` (creates a scratch window
-  -- with empty filetype) → `nvim_win_set_buf` (swap to our
-  -- pre-typed buffer). Edgy's `BufWinEnter` listener fires on the
-  -- scratch buffer with empty ft → no view matches → edgy may
-  -- unhook the window. The post-swap `BufWinEnter` sometimes
-  -- doesn't trigger a fresh layout pass, leaving the now-correctly-
-  -- typed window floating in the editor area instead of in edgy's
-  -- right column. Forcing `layout()` here closes that race so
-  -- adoption happens reliably (verified via `views[i].wins` going
-  -- from 0 to 1 after this call for the header view).
-  if M.layout_manager_active() then
-    pcall(function()
-      require("edgy.layout").layout()
-    end)
-  end
+  -- Nudge edgy to re-scan AFTER the buffer swap. The aux-split
+  -- open path is `<dir>split` (creates a scratch window with
+  -- empty filetype) → `nvim_win_set_buf` (swap to our pre-typed
+  -- buffer). Edgy's `BufWinEnter` listener fires on the scratch
+  -- buffer with empty ft → no view matches → edgy may unhook
+  -- the window; the post-swap `BufWinEnter` doesn't always
+  -- re-fire a fresh layout pass, leaving the now-correctly-typed
+  -- window floating in the editor area instead of in edgy's
+  -- column. Routed through the debounced helper so a burst of
+  -- aux-split opens during `window.show()` collapses to one
+  -- layout pass — calling `edgy.layout.layout()` synchronously
+  -- inside the open path could re-enter buffer-attach autocmds
+  -- (`WinEnter` / `BufWinEnter`) on the same tick, which under
+  -- a sibling-collapse race produced the "infinite layout
+  -- restore" the captain saw.
+  M.nudge_edgy_layout()
 
   if opts.after ~= nil then
     local ok_after, after_err = pcall(opts.after, winid)

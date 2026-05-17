@@ -130,12 +130,19 @@ T["composer.submit fires prompts/send unconditionally (no plugin-side activity g
 
   local restore_client, calls = helpers.stub_client_with({
     ["prompts/send"] = { result = { accepted = true, disposition = "queued" } },
+    -- Submit-queued fires a defensive snapshot (via
+    -- queue-strip.hydrate) so the strip reflects the dropped prompt
+    -- even if the daemon's `queue_changed` event misses.
+    ["instance/snapshot/queue"] = { result = { items = {} } },
   })
 
   composer.submit(nil, { instance_id = id })
 
-  MiniTest.expect.equality(#calls, 1)
+  -- prompts/send fires first; instance/snapshot/queue follows from
+  -- the queued-branch resync.
+  MiniTest.expect.equality(#calls, 2)
   MiniTest.expect.equality(calls[1].method, "prompts/send")
+  MiniTest.expect.equality(calls[2].method, "instance/snapshot/queue")
 
   require("hyprpilot.status").set_activity(id, { kind = "idle" })
   composer.wipe(id)

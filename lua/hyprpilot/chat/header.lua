@@ -432,7 +432,7 @@ function M.open()
 
   if M.is_visible() then
     if vim.api.nvim_win_get_buf(M._winid) ~= bufnr then
-      vim.api.nvim_win_set_buf(M._winid, bufnr)
+      require("hyprpilot.chat.buffer").safe_win_set_buf(M._winid, bufnr)
     end
     M.refresh()
     return
@@ -452,10 +452,11 @@ function M.open()
         pcall(function()
           vim.w[w].edgy_height = 1
         end)
-        -- `layout()` triggers resize + apply_size; `update()` doesn't.
-        pcall(function()
-          require("edgy.layout").layout()
-        end)
+        -- Debounced — shared helper coalesces with composer / queue
+        -- strip / permission row resize nudges into one layout pass
+        -- per 100ms window. Header height is static (1 row) so this
+        -- mostly fires once at open and stays put.
+        require("hyprpilot.chat.buffer").nudge_edgy_layout()
       else
         -- Lock to one row. `winfixheight` protects against
         -- `equalalways` redistributing height when sibling splits

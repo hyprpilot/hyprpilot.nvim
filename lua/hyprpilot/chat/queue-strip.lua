@@ -245,9 +245,11 @@ function M.refresh()
       pcall(function()
         vim.w[M._winid].edgy_height = target
       end)
-      pcall(function()
-        require("edgy.layout").layout()
-      end)
+      -- Debounced nudge — under streaming events the queue strip
+      -- can re-render many times per second; the shared helper
+      -- coalesces across composer + queue strip so we don't run
+      -- N+M layout passes for every burst.
+      buffer.nudge_edgy_layout()
     elseif vim.api.nvim_win_get_height(M._winid) ~= target then
       pcall(vim.api.nvim_win_set_height, M._winid, target)
     end

@@ -411,10 +411,9 @@ function M.refresh()
       pcall(function()
         vim.w[M._winid].edgy_height = target
       end)
-      -- `layout()` triggers resize + apply_size; `update()` doesn't.
-      pcall(function()
-        require("edgy.layout").layout()
-      end)
+      -- Debounced — shared with composer / queue-strip so burst
+      -- events collapse to one layout pass per 100ms.
+      require("hyprpilot.chat.buffer").nudge_edgy_layout()
     elseif vim.api.nvim_win_get_height(M._winid) ~= target then
       pcall(vim.api.nvim_win_set_height, M._winid, target)
     end

@@ -124,7 +124,10 @@ T["plan applies header + per-step highlights"] = function()
     },
   })
 
-  local header_row = row_of(bufnr, "plan ·")
+  -- Header format changed from `# plan · N/M done` (mid-dot inline)
+  -- to `# plan [N/M done]` (stat-pill) to match the per-tool /
+  -- section-header convention.
+  local header_row = row_of(bufnr, "# plan ")
   MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotPlanHeader")
   MiniTest.expect.equality(line_hl(bufnr, row_of(bufnr, "[x] A")), "HyprpilotPlanStepDone")
   MiniTest.expect.equality(line_hl(bufnr, row_of(bufnr, "[~] B")), "HyprpilotPlanStepInProgress")

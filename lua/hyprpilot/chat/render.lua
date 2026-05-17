@@ -69,7 +69,7 @@ local rescan_code_block_folds
 ---@class hyprpilot.render.TurnLayout
 ---@field turn_id string
 ---@field pilot_header_mark integer             -- extmark on the `## pilot` header row so we can re-render stats
----@field response_header_emitted? boolean      -- set true after the lazy `### response` subhead lands on first agent_text
+---@field response_wrap_emitted? boolean        -- set true after the opening `---` prose wrapper lands on first agent_text (handle_turn_ended closes it)
 ---@field section_anchor_mark integer           -- new sections insert at this row; stays put when prose grows
 ---@field prose_anchor_mark integer             -- agent_text appends at this extmark; moves down as prose grows
 ---@field sections table<string, hyprpilot.render.Section>  -- "tasks" | "thoughts" | "tools" → section
@@ -538,9 +538,16 @@ local function append_turn_header(state, role, turn_id)
     -- `### response` subhead) insert above it. For captain turns
     -- we inline the `### request` subhead right under the header
     -- so the user prompt that appends afterwards sits inside it.
+    --
+    -- Captain headers wrap the user-prompt body in `---` horizontal
+    -- rules instead of the older `### request` subhead — the rules
+    -- visually bracket the captain's text without claiming a
+    -- markdown heading slot. Pilot turns rely on the lazy `---`
+    -- prose wrapper laid down by `append_agent_text` on the first
+    -- agent_text chunk (sections render in between).
     local lines
     if role == "user" then
-      lines = prepend_blank and { "", "## " .. label, "", "### request", "" } or { "## " .. label, "", "### request", "" }
+      lines = prepend_blank and { "", "## " .. label, "", "---", "" } or { "## " .. label, "", "---", "" }
     else
       lines = prepend_blank and { "", "## " .. label, "" } or { "## " .. label, "" }
     end
@@ -927,42 +934,30 @@ local function append_agent_text(state, text)
     local chunks = vim.split(text, "\n", { plain = true })
 
     if state.active_text_block == nil then
-      -- First chunk of prose for this turn. Before laying the text
-      -- down, drop a `### response` subhead so the prose sits inside
-      -- a sibling subsection of `### tasks` / `### thoughts` /
-      -- `### tools`. Subsequent chunks stream below the subhead via
-      -- the continuation branch — no need to track per-chunk state.
-      -- `response_header_emitted` is per-layout so a re-streamed
-      -- turn (continuation after cancel, etc.) doesn't double up.
-      if layout ~= nil and not layout.response_header_emitted then
-        -- Lay down a `### response` subhead so the prose sits inside
-        -- a sibling subsection of `### tasks` / `### thoughts` /
-        -- `### tools`. Subsequent chunks stream below the subhead
-        -- via the continuation branch.
-        --
-        -- Spacing model (one blank between every adjacent element):
-        --
-        -- - leading blank pre-pads when `## pilot` (or any non-empty
-        --   row) sits directly above the anchor, so the subhead
-        --   doesn't collide with the previous element. When the row
-        --   above is already empty (e.g. a `### thoughts` section
-        --   just closed with its trailing blank), we skip the
-        --   leading to avoid double-blank stacking.
-        -- - trailing blank inserted UNCONDITIONALLY so markdown
-        --   sees one paragraph break between the subhead and the
-        --   prose. `insert_at_prose_anchor` inserts at the anchor
-        --   row and the anchor mark (gravity=true) sticks to the
-        --   right of the insertion, so the prose lands one row
-        --   below the trailing blank — exactly one blank between
-        --   `### response` and the first chunk.
+      -- First chunk of prose for this turn. Drop an OPENING `---`
+      -- horizontal rule (replacing the older `### response`
+      -- subhead) so the prose sits inside an explicit visual
+      -- wrapper between the sections (`### tasks` / `### thoughts`
+      -- / `### tools`) and the turn-end marker that
+      -- `handle_turn_ended` writes below.
+      --
+      -- Spacing: leading blank pre-pads when the row immediately
+      -- above is non-empty (e.g. `## pilot` header). The opening
+      -- `---` is followed by a trailing blank so markdown sees a
+      -- paragraph break between the rule and the first chunk.
+      -- The CLOSING `---` lands when `handle_turn_ended` fires;
+      -- it inserts at the prose anchor (which by then sits after
+      -- the last prose line), then drops the turn-result marker
+      -- below.
+      if layout ~= nil and not layout.response_wrap_emitted then
         local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
         local line_above = ""
         if anchor_row > 0 then
           line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
         end
-        local subhead_lines = line_above == "" and { "### response", "" } or { "", "### response", "" }
-        insert_at_prose_anchor(state, turn_id, subhead_lines)
-        layout.response_header_emitted = true
+        local opener_lines = line_above == "" and { "---", "" } or { "", "---", "" }
+        insert_at_prose_anchor(state, turn_id, opener_lines)
+        layout.response_wrap_emitted = true
       end
       insert_at_prose_anchor(state, turn_id, chunks)
       state.active_text_block = { kind = "agent_text", turn_id = turn_id }
@@ -1292,10 +1287,15 @@ local function recompute_section_aggregate(state, section)
   section.aggregated_stats = { added = added, removed = removed, duration_ms = duration_ms }
 end
 
----Compose the header line for a tool-call block. Drops empty
----glyph slots before joining so a captain who clears
----`icons.tool_kind.default` (or any specific kind) doesn't end up
----with a doubled space at the start of the header.
+---Compose the header line for a tool-call block. Shape:
+---`<status> <tool_kind> · <title> · [stat] [stat]` — status pill
+---leads (captain's "is this running / done / failed" check),
+---tool-kind glyph follows, then `·` separators bracket the title
+---so glyphs / title / stats read as three visually distinct
+---units. Drops empty glyph slots so a captain who clears
+---`icons.tool_kind.default` (or any specific status) doesn't end
+---up with a doubled space or a leading `·`; drops the trailing
+---`·` when the tool has no stats so the line doesn't trail off.
 ---@param record table
 ---@return string
 local function tool_header_line(record)
@@ -1306,13 +1306,23 @@ local function tool_header_line(record)
     pill_labels = stats.from_wire_stats(record.formatted.stats)
   end
 
-  local parts = {}
-  for _, piece in ipairs({ tool_icon(record.toolKind), tool_status_badge(record.state), title }) do
+  local glyph_parts = {}
+  for _, piece in ipairs({ tool_status_badge(record.state), tool_icon(record.toolKind) }) do
     if type(piece) == "string" and piece ~= "" then
-      table.insert(parts, piece)
+      table.insert(glyph_parts, piece)
     end
   end
-  return table.concat(parts, " ") .. stats.format_pills(pill_labels)
+  local glyphs = table.concat(glyph_parts, " ")
+  local header = glyphs ~= "" and (glyphs .. " · " .. title) or title
+  local pills = stats.format_pills(pill_labels)
+  -- format_pills returns " [pill] [pill]" (leading space) or "".
+  -- Promote the leading space to ` ·` so the stats cluster reads as
+  -- a sibling of the title rather than running into it; no-op when
+  -- there are no stats (empty `pills`).
+  if pills ~= "" then
+    pills = " ·" .. pills
+  end
+  return header .. pills
 end
 
 ---Render a tool-call block (initial). Body holds description + fields
@@ -1740,14 +1750,30 @@ local function render_plan(state, record)
   state.active_text_block = nil
 
   local steps = type(record.steps) == "table" and record.steps or {}
-  local done = 0
-  for _, step in ipairs(steps) do
-    if type(step) == "table" and step.status == "completed" then
-      done = done + 1
+
+  -- Prefer the daemon's `record.stats = { done, total }` checklist
+  -- summary (shipped on every plan emit as of daemon PR #83). Falls
+  -- back to walking `steps` when the daemon omits stats (older
+  -- daemons / non-plan checklist-shaped records that don't carry the
+  -- wire field yet).
+  local done, total
+  if type(record.stats) == "table" and type(record.stats.done) == "number" and type(record.stats.total) == "number" then
+    done = record.stats.done
+    total = record.stats.total
+  else
+    done = 0
+    for _, step in ipairs(steps) do
+      if type(step) == "table" and step.status == "completed" then
+        done = done + 1
+      end
     end
+    total = #steps
   end
 
-  local header = string.format("# plan · %d/%d done", done, #steps)
+  -- Pill-style header matching the per-tool + tools-section header
+  -- convention (`[+N] [-M] [Xs]`) — captain wanted the checklist
+  -- stat surfaced via the same pill chrome.
+  local header = "# plan" .. stats.format_pills({ string.format("%d/%d done", done, total) })
   local body = {}
 
   if #steps == 0 then
@@ -1951,6 +1977,18 @@ function M.render_item(state, turn_id, item)
 
     chat_buffer.with_buffer(state.bufnr, function()
       append_lines(state, vim.split(item.text or "", "\n", { plain = true }))
+      -- Close the captain-prompt `---` wrapper opened by
+      -- `append_turn_header(user)`. Trailing blank gives any
+      -- attachments (rendered below) one paragraph break before
+      -- they land — matches the captain's spec:
+      --   ## captain
+      --
+      --   ---
+      --   <prompt>
+      --   ---
+      --
+      --   <attachments>
+      append_lines(state, { "---", "" })
     end)
 
     -- Render any captain-side attachments shipped on the user prompt
@@ -2357,6 +2395,17 @@ function M.handle_turn_ended(event)
       layout.stop_reason = tostring(event.stopReason)
     end
     repaint_pilot_header(state, layout)
+
+    -- Close the response `---` wrapper opened by `append_agent_text`
+    -- (only when opened — empty pilot turns without prose skip
+    -- this). Lands at the prose anchor, which by now sits AFTER the
+    -- last prose line. Idempotent via the same `end_marker_emitted`
+    -- flag so a replayed event doesn't stack duplicates.
+    if not layout.end_marker_emitted and layout.response_wrap_emitted then
+      chat_buffer.with_buffer(state.bufnr, function()
+        insert_at_prose_anchor(state, effective_turn_id, { "---", "" })
+      end)
+    end
 
     -- Drop a one-line outcome marker at the prose tail. Verbatim
     -- daemon text — no `"ok " .. reason` humanisation — because
