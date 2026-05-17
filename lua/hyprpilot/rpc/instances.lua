@@ -584,6 +584,72 @@ function M.set_option(instance_id, config_id, value, callback)
   end)
 end
 
+---True when the instance is currently marked "keep alive past nvim
+---quit" — i.e. `cleanup_owned` will skip it on exit. Returns nil
+---when the instance is unknown (not registered locally).
+---@param instance_id? string
+---@return boolean?
+function M.is_keep_alive(instance_id)
+  local id = instance_id or window.active_instance()
+  if id == nil then
+    return nil
+  end
+  local state = window._instances[id]
+  if state == nil then
+    return nil
+  end
+  -- "Keep alive" is the inverse of `spawned_with_shutdown` — the
+  -- registry flag drives `cleanup_owned`'s shutdown list, so
+  -- "keep_alive = true" means "we do NOT auto-shutdown on quit."
+  return not (state.spawned_with_shutdown == true)
+end
+
+---Mark `instance_id` (or the active instance) as keep-alive or
+---auto-shutdown across nvim quit. `keep == true` clears the
+---`spawned_with_shutdown` flag so `cleanup_owned` skips it on exit
+---— the daemon-side session survives, captain can re-attach in a
+---fresh nvim. `keep == false` re-arms the auto-shutdown for the
+---next quit. Returns the new state, or nil on unknown instance.
+---@param instance_id? string
+---@param keep boolean
+---@return boolean? new_keep_alive
+function M.set_keep_alive(instance_id, keep)
+  local id = instance_id or window.active_instance()
+  if id == nil then
+    log.warn("instances.set_keep_alive: no active instance and none specified")
+    return nil
+  end
+  local state = window._instances[id]
+  if state == nil then
+    log.warn("instances.set_keep_alive: unknown instance=%s", id)
+    return nil
+  end
+  -- Captain-facing semantic ("keep alive") is the inverse of the
+  -- registry flag that drives cleanup. Translate at this seam so
+  -- the rest of the codebase keeps reading `spawned_with_shutdown`
+  -- and we don't have to chase a rename.
+  state.spawned_with_shutdown = not keep
+  log.info("instances.set_keep_alive: instance=%s keep_alive=%s — session will %s on nvim quit", id, tostring(keep), keep and "be preserved" or "be shut down")
+  pcall(vim.notify, string.format("hyprpilot: %s — session %s on quit", id, keep and "preserved" or "will be shut down"), vim.log.levels.INFO)
+  return keep
+end
+
+---Flip the keep-alive flag for `instance_id` (or the active
+---instance). Pairs with a captain keymap so a single keystroke
+---toggles "this session survives my nvim quit". Returns the new
+---state, or nil on unknown instance.
+---@param instance_id? string
+---@return boolean? new_keep_alive
+function M.toggle_keep_alive(instance_id)
+  local current = M.is_keep_alive(instance_id)
+  if current == nil then
+    log.warn("instances.toggle_keep_alive: no resolvable instance")
+    pcall(vim.notify, "hyprpilot: no active instance to toggle", vim.log.levels.WARN)
+    return nil
+  end
+  return M.set_keep_alive(instance_id, not current)
+end
+
 ---Fire `instances/shutdown` for every live instance the registry
 ---marks as `spawned_with_shutdown = true`. Captains who passed
 ---`with_shutdown = true` on spawn opted in to "this instance is

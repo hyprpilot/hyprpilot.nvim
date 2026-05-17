@@ -476,18 +476,25 @@ T["plan updates in the same turn overwrite the existing block (no stacking)"] = 
   })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  -- Only ONE plan header should be in the buffer; the second update
-  -- replaced the first instead of appending a new block.
-  local plan_count = 0
+  -- The plan block is body-only now (no `# plan` row); the
+  -- `### tasks` section header carries the checklist stats.
+  -- Only ONE step body row for "Plan A" should be present; the
+  -- second update replaced the first instead of appending.
+  local plan_a_count = 0
   for _, l in ipairs(lines) do
-    if l:find("^# plan") ~= nil then
-      plan_count = plan_count + 1
+    if l:find("Plan A", 1, true) ~= nil then
+      plan_a_count = plan_a_count + 1
     end
   end
-  MiniTest.expect.equality(plan_count, 1)
-  -- The completed status from the second update should be present;
-  -- the pending status from the first should NOT.
-  MiniTest.expect.equality(helpers.has_line_containing(lines, "Plan A"), true)
+  MiniTest.expect.equality(plan_a_count, 1)
+  -- And only one `### tasks` section header.
+  local tasks_header_count = 0
+  for _, l in ipairs(lines) do
+    if l:find("^### tasks") ~= nil then
+      tasks_header_count = tasks_header_count + 1
+    end
+  end
+  MiniTest.expect.equality(tasks_header_count, 1)
 
   helpers.cleanup_instance(id)
 end
