@@ -629,8 +629,16 @@ function M.set_keep_alive(instance_id, keep)
   -- the rest of the codebase keeps reading `spawned_with_shutdown`
   -- and we don't have to chase a rename.
   state.spawned_with_shutdown = not keep
-  log.info("instances.set_keep_alive: instance=%s keep_alive=%s — session will %s on nvim quit", id, tostring(keep), keep and "be preserved" or "be shut down")
-  pcall(vim.notify, string.format("hyprpilot: %s — session %s on quit", id, keep and "preserved" or "will be shut down"), vim.log.levels.INFO)
+  -- Frame the status in the captain's own terminology
+  -- ("auto-shutdown"). `keep == true` → auto-shutdown DISABLED
+  -- (session survives nvim quit); `keep == false` → auto-shutdown
+  -- ENABLED (session shuts down on nvim quit). The earlier
+  -- "preserved on quit" wording was ambiguous — captain couldn't
+  -- tell from the notify which side of the toggle they landed on.
+  local status = keep and "DISABLED" or "ENABLED"
+  local consequence = keep and "session survives nvim quit" or "session shuts down on nvim quit"
+  log.info("instances.set_keep_alive: instance=%s auto_shutdown=%s — %s", id, status, consequence)
+  pcall(vim.notify, string.format("hyprpilot: %s — auto-shutdown %s (%s)", id, status, consequence), vim.log.levels.INFO)
   return keep
 end
 
