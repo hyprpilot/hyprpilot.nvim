@@ -231,33 +231,25 @@ function M.nudge_edgy_layout()
   _edgy_layout_pending = true
   vim.defer_fn(function()
     _edgy_layout_pending = false
-    -- Stash the captain's current window + cursor BEFORE handing
-    -- off to edgy. `edgy.layout.layout()` walks every adopted
-    -- window, runs `nvim_win_set_height` on most of them, and
+    -- Stash the captain's current window BEFORE handing off to
+    -- edgy. `edgy.layout.layout()` walks every adopted window and
     -- (depending on edgy's internal sequencing) can briefly steer
-    -- `nvim_get_current_win` away from the composer — by the time
-    -- the captain's next keystroke lands, the cursor has visibly
-    -- jumped one row (or to a different window entirely on
-    -- composer-grows-by-newline). Restoring both after the pass
-    -- absorbs that drift without fighting edgy's layout math.
+    -- `nvim_get_current_win` away from the composer, breaking the
+    -- captain's insert-mode flow. Restoring focus afterwards
+    -- absorbs that drift without touching cursor position —
+    -- `nvim_win_get_cursor` / `set_cursor` round-trips were
+    -- racing the captain's mid-stroke vim cursor advance
+    -- (`<CR>` lands cursor on row N+1; defer fires; we capture
+    -- the freshly-typed pos but `nvim_win_set_cursor` on an
+    -- already-current window re-anchored the cursor visibly back
+    -- one row in practice). Trust vim to keep the cursor where
+    -- the captain put it; only fix focus.
     local prev_win = vim.api.nvim_get_current_win()
-    local prev_cursor = nil
-    if vim.api.nvim_win_is_valid(prev_win) then
-      local ok_c, pos = pcall(vim.api.nvim_win_get_cursor, prev_win)
-      if ok_c then
-        prev_cursor = pos
-      end
-    end
     pcall(function()
       require("edgy.layout").layout()
     end)
-    if vim.api.nvim_win_is_valid(prev_win) then
-      if vim.api.nvim_get_current_win() ~= prev_win then
-        pcall(vim.api.nvim_set_current_win, prev_win)
-      end
-      if prev_cursor ~= nil then
-        pcall(vim.api.nvim_win_set_cursor, prev_win, prev_cursor)
-      end
+    if vim.api.nvim_win_is_valid(prev_win) and vim.api.nvim_get_current_win() ~= prev_win then
+      pcall(vim.api.nvim_set_current_win, prev_win)
     end
   end, 100)
 end

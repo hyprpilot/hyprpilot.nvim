@@ -1734,11 +1734,19 @@ local function render_thought(state, text)
 
   -- First thought in this turn — mint the accumulating block. No
   -- `* thought` per-chunk subheader; the `### thoughts` section
-  -- header carries the role identifier on its own.
+  -- header carries the role identifier on its own. The block's
+  -- body opens with a `---` horizontal rule so the thoughts
+  -- region reads as a contained bubble (matches the captain /
+  -- pilot prose wrappers). The closer `---` lands at
+  -- `handle_turn_ended` via the `thoughts_wrap_emitted` flag.
   local layout = get_layout(state, state.current_turn)
   local block_id = "thought:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
-  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", chunk_lines)
+  local wrapped_chunk = vim.list_extend({ "---", "" }, chunk_lines)
+  local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", wrapped_chunk)
+  if layout ~= nil then
+    layout.thoughts_wrap_emitted = true
+  end
 
   if first_row == nil then
     -- Fallback for spontaneous thoughts (no turn layout).
@@ -1753,7 +1761,12 @@ local function render_thought(state, text)
   state.active_thought_block = block_id
 
   -- Body lines stay plain so the markdown highlighter handles them.
-  apply_line_hl(state, first_row, "HyprpilotThoughtBody")
+  -- The block opens with `["---", ""]` (wrap-opener) when a layout
+  -- exists, so the first BODY line sits at first_row + 2. Orphan
+  -- thoughts (no layout, fallback append path) have no wrap, so
+  -- the body is at first_row directly.
+  local body_offset = (layout ~= nil) and 2 or 0
+  apply_line_hl(state, first_row + body_offset, "HyprpilotThoughtBody")
 end
 
 ---Render a plan block. Multiple plan updates in the same turn
@@ -2469,6 +2482,25 @@ function M.handle_turn_ended(event)
     if not layout.end_marker_emitted and layout.response_wrap_emitted then
       chat_buffer.with_buffer(state.bufnr, function()
         insert_at_prose_anchor(state, effective_turn_id, { "", "---", "" })
+      end)
+    end
+
+    -- Close the thoughts `---` wrapper opened by `render_thought`
+    -- (first thought in this turn prepended `["---", ""]` to its
+    -- block body). Lands at the thoughts section's tail anchor —
+    -- which sits at the trailing blank below the section, so the
+    -- inserted `["", "---"]` produces `<thought>` / blank / `---`
+    -- / trailing-blank with one space above + below the rule.
+    -- Idempotent: gated by `thoughts_wrap_closed` so a replayed
+    -- `turn_ended` event doesn't stack duplicate rules.
+    local thoughts_section = layout.sections and layout.sections.thoughts or nil
+    if thoughts_section ~= nil and layout.thoughts_wrap_emitted and not layout.thoughts_wrap_closed then
+      layout.thoughts_wrap_closed = true
+      chat_buffer.with_buffer(state.bufnr, function()
+        local tail_row = section_end_row(state, thoughts_section)
+        if tail_row ~= nil then
+          vim.api.nvim_buf_set_lines(state.bufnr, tail_row, tail_row, false, { "", "---" })
+        end
       end)
     end
 
