@@ -199,7 +199,7 @@ local defaults = {
       cycle_prev = "<S-Tab>",
       -- Opens / closes the inline diff preview for the head entry
       -- when it's an edit-shaped tool.
-      show_diff = "<localleader>g",
+      show_diff = "<localleader>o",
     },
   },
   diff_preview = {
