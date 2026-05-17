@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.6.2...hyprpilot.nvim-v1.7.0) (2026-05-17)
+
+
+### Features
+
+* **chat:** UX refresh — focus safety, queue sync, checklist, --- wraps, edgy ([#99](https://github.com/hyprpilot/hyprpilot.nvim/issues/99)) ([5ff16fe](https://github.com/hyprpilot/hyprpilot.nvim/commit/5ff16fef60b67f2c99a0e068aa9daa92b2e8c9cd))
+
+
+### Bug Fixes
+
+* **chat:** one space around every --- + composer attachment chat parity ([#101](https://github.com/hyprpilot/hyprpilot.nvim/issues/101)) ([835f916](https://github.com/hyprpilot/hyprpilot.nvim/commit/835f91613d04d5a54ce4f62e568a66aa74d9e307))
+
 ## [1.6.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.6.1...hyprpilot.nvim-v1.6.2) (2026-05-16)
 
 
