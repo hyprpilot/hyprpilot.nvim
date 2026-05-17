@@ -29,6 +29,19 @@ M._associated_bufnr = nil
 --- spawned instance OR re-locks for a follow-on auto-spawn.
 local _auto_spawn_in_flight = false
 
+--- Re-entry guard for `M.show()`. The lifecycle restore cascade
+--- (header / queue-strip / permission-row / composer) fires a chain
+--- of `WinEnter` / `BufWinEnter` / `BufEnter` autocmds — if a peer
+--- plugin's autocmd reacts by calling our focus / show paths
+--- (layout managers retrying adoption, file-explorer rebinding,
+--- a captain wiring a `User HyprpilotInstanceChanged` autocmd that
+--- re-shows), the second `M.show()` re-enters mid-cascade and we
+--- re-run every step on the half-built layout. Symptom the captain
+--- saw: "infinite loop of trying to restore it." The guard makes
+--- the second call a no-op; the first call's cascade finishes
+--- cleanly.
+local _show_in_progress = false
+
 -- Shared gate (`buffer.layout_manager_active`) — every plugin
 -- surface uses the same predicate to decide whether to set its own
 -- `winfixwidth` / `winfixheight` / `nvim_win_set_height`. Edgy
@@ -340,6 +353,22 @@ end
 ---— the captain never has to manually spawn before opening the chat.
 ---@param instance_id string?
 function M.show(instance_id)
+  if _show_in_progress then
+    log.debug("window.show: re-entry blocked (instance_id=%s)", tostring(instance_id))
+    return
+  end
+  _show_in_progress = true
+  local ok, err = pcall(function()
+    M._show_inner(instance_id)
+  end)
+  _show_in_progress = false
+  if not ok then
+    log.warn("window.show: inner threw: %s", tostring(err))
+  end
+end
+
+---@param instance_id string?
+function M._show_inner(instance_id)
   -- Capture the captain's working buffer BEFORE we steal focus into
   -- the chat. The associated buffer is what completion sources scan
   -- against; once the chat is open `nvim_get_current_buf()` is the

@@ -568,6 +568,27 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
     — captains needing the clipboard flow write a 3-line wrapper
     (`img-clip.save_image(temp_path) → attach_file(temp_path)`).
 
+- **`chat.window.M.show` re-entry guard (`_show_in_progress`)**
+  - Chose: top-level `M.show` is a thin wrapper that bails when
+    `_show_in_progress == true`, sets the flag, pcalls
+    `M._show_inner(instance_id)`, clears the flag. The cascade body
+    (capture associated buffer, open split, hydrate, header / queue-
+    strip / permission-row / composer opens) lives in `_show_inner`.
+  - Why: `show()`'s lifecycle restore cascade fires a chain of
+    `BufWinEnter` / `WinEnter` / `BufEnter` autocmds across every
+    surface. A peer plugin (layout manager retrying adoption,
+    completion engine rebinding) or a captain's `User
+    HyprpilotInstanceChanged` autocmd that calls our focus / show
+    path re-enters mid-cascade, re-running every step on the half-
+    built layout — captain's "infinite loop of trying to restore
+    it." Guard makes the re-entrant call a no-op; the first call's
+    cascade completes cleanly. Async paths (auto-spawn callback)
+    re-enter via the public `M.show` after the wrapper has cleared
+    the flag, so they work normally.
+  - Rejected: per-surface guards (header + composer + queue-strip
+    each tracking their own re-entry). The cascade is the unit of
+    work; the guard wraps the unit.
+
 - **`palettes/instances` cwd filter (sessions-style API)**
   - Chose: `palettes.instances.open({ cwd? })` filters rows
     against `item.cwd`. `nil` → `vim.fn.getcwd()` default,
@@ -679,6 +700,22 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
   into `attach_file(path)` once mime detection covered binary + text.
   Captains needing the clipboard flow write a 3-line wrapper
   (`img-clip.save_image(temp_path) → attach_file(temp_path)`).
+- **Synchronous `require("edgy.layout").layout()` inside
+  `open_aux_split`** — was firing right after `nvim_win_set_buf`
+  to close the "edgy unhooks on empty-ft scratch split then
+  doesn't re-adopt after the buffer swap" race. Worked in
+  isolation but re-entered `BufWinEnter` / `WinEnter` autocmds
+  on the same tick. Under the lifecycle restore cascade in
+  `chat.window.M.show()` (four aux-splits opening in
+  succession), a sibling-collapse race produced the captain's
+  "infinite loop of trying to restore it" symptom. Replaced
+  with the debounced `M.nudge_edgy_layout()` helper (already
+  used by composer / queue-strip / permission-row resize
+  paths); the 100ms coalesce closes the same race without the
+  same-tick autocmd re-entry. Lesson: anything that triggers
+  `BufWinEnter` / `WinEnter` indirectly belongs OUT of the
+  current tick when it lives inside an open-path that is
+  itself called many times during a cascade.
 
 ## Tools & MCP Usage
 
@@ -768,3 +805,13 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
   another." A `FileType` autocmd that runs `runtime
   ftplugin/markdown.vim` is a workaround that loses cmp / snippet
   inheritance; the dot is the right tool.
+- **Cascade-shaped public APIs need a re-entry guard** — anything
+  that fires many `BufWinEnter` / `WinEnter` / `BufEnter` autocmds
+  in sequence (most notably `chat.window.M.show`'s lifecycle
+  restore: chat split → header → queue-strip → permission-row →
+  composer) is an attractor for peer-plugin reactions and captain-
+  wired `User Hyprpilot*` autocmds. The mid-cascade re-entry runs
+  every step against a half-built layout. Wrap the cascade body
+  in an `_in_progress` flag; the top-level entry no-ops when set.
+  Async paths (RPC reply callbacks) hit the public entry AFTER
+  the wrapper has cleared the flag, so they aren't impacted.

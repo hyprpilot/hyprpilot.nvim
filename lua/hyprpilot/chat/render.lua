@@ -1287,10 +1287,15 @@ local function recompute_section_aggregate(state, section)
   section.aggregated_stats = { added = added, removed = removed, duration_ms = duration_ms }
 end
 
----Compose the header line for a tool-call block. Drops empty
----glyph slots before joining so a captain who clears
----`icons.tool_kind.default` (or any specific kind) doesn't end up
----with a doubled space at the start of the header.
+---Compose the header line for a tool-call block. Shape:
+---`<status> <tool_kind> · <title> · [stat] [stat]` — status pill
+---leads (captain's "is this running / done / failed" check),
+---tool-kind glyph follows, then `·` separators bracket the title
+---so glyphs / title / stats read as three visually distinct
+---units. Drops empty glyph slots so a captain who clears
+---`icons.tool_kind.default` (or any specific status) doesn't end
+---up with a doubled space or a leading `·`; drops the trailing
+---`·` when the tool has no stats so the line doesn't trail off.
 ---@param record table
 ---@return string
 local function tool_header_line(record)
@@ -1301,13 +1306,23 @@ local function tool_header_line(record)
     pill_labels = stats.from_wire_stats(record.formatted.stats)
   end
 
-  local parts = {}
-  for _, piece in ipairs({ tool_icon(record.toolKind), tool_status_badge(record.state), title }) do
+  local glyph_parts = {}
+  for _, piece in ipairs({ tool_status_badge(record.state), tool_icon(record.toolKind) }) do
     if type(piece) == "string" and piece ~= "" then
-      table.insert(parts, piece)
+      table.insert(glyph_parts, piece)
     end
   end
-  return table.concat(parts, " ") .. stats.format_pills(pill_labels)
+  local glyphs = table.concat(glyph_parts, " ")
+  local header = glyphs ~= "" and (glyphs .. " · " .. title) or title
+  local pills = stats.format_pills(pill_labels)
+  -- format_pills returns " [pill] [pill]" (leading space) or "".
+  -- Promote the leading space to ` ·` so the stats cluster reads as
+  -- a sibling of the title rather than running into it; no-op when
+  -- there are no stats (empty `pills`).
+  if pills ~= "" then
+    pills = " ·" .. pills
+  end
+  return header .. pills
 end
 
 ---Render a tool-call block (initial). Body holds description + fields
