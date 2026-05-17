@@ -941,7 +941,12 @@ end
 ---@param state hyprpilot.render.State
 ---@param text string
 local function append_agent_text(state, text)
-  if text == "" then
+  -- Same whitespace guard as `render_thought` — a chunk that's
+  -- just `\n` / `\n\n` would split to `["", ""]` / `["", "", ""]`
+  -- and inserting both adds a spurious blank row at the prose
+  -- tail. Daemon's paragraph-break prefix bakes the boundary into
+  -- the NEXT non-empty chunk; filler-only chunks are no-ops here.
+  if text:match("^%s*$") then
     return
   end
 
@@ -1674,8 +1679,14 @@ local function render_thought(state, text)
   -- chunk (header already there, falls through idempotently).
   ensure_section(state, state.current_turn, "thoughts")
 
-  if text == "" then
-    log.debug("render_thought: empty text — kept section header, no body")
+  -- Treat whitespace-only chunks (Opus sometimes emits bare `"\n"`
+  -- / `"\n\n"` as filler between thinking blocks) the same as
+  -- fully-empty: keep the section header (the elapsed-pill anchor)
+  -- but add no body rows. Without this the whitespace lands as one
+  -- or more blank rows and stacks vertical empty space the captain
+  -- never asked for.
+  if text:match("^%s*$") then
+    log.debug("render_thought: empty / whitespace-only text — kept section header, no body")
     return
   end
 
@@ -1707,23 +1718,27 @@ local function render_thought(state, text)
         active_block = nil
         return
       end
-      -- Each `agent_thought` event is its own markdown paragraph.
-      -- Splice a blank separator between the existing body's tail
-      -- and the new chunk when both ends carry content — without
-      -- this, markdown renders consecutive chunks as a single mashed
-      -- paragraph (the captain's screenshot showed this regression).
-      -- Same rule when the new chunk's first line is non-empty:
-      -- treat it as a fresh paragraph relative to the previous tail.
+      -- Token-streaming concat — mirrors `append_agent_text` at the
+      -- pilot-prose path. Daemon-supplied chunks are concatenation-
+      -- safe (the daemon's `paragraph_break_prefix` bakes `\n` /
+      -- `\n\n` onto chunks so verbatim concat produces well-formed
+      -- markdown); the FIRST split-line is the tail of the in-
+      -- progress row and concats onto the existing tail in place,
+      -- remaining split-lines become fresh rows. Without this the
+      -- previous "prepend `''` when both ends non-empty" heuristic
+      -- doubled the wire's `\n\n` paragraph break into TWO blank
+      -- rows (`vim.split("\n\npara2", "\n") = ["", "", "para2"]`
+      -- inserted whole below a non-empty tail = two blanks); now
+      -- the leading `""` concats onto the tail (no visual change)
+      -- and the inner `""` becomes the SINGLE blank between
+      -- paragraphs the captain (and the Tauri overlay) expects.
       local existing_tail = vim.api.nvim_buf_get_lines(state.bufnr, tail_row, tail_row + 1, false)[1] or ""
-      local lines_to_insert
-      if existing_tail ~= "" and (chunk_lines[1] or "") ~= "" then
-        lines_to_insert = vim.list_extend({ "" }, chunk_lines)
-      else
-        lines_to_insert = chunk_lines
+      vim.api.nvim_buf_set_lines(state.bufnr, tail_row, tail_row + 1, false, { flatten_text(existing_tail .. chunk_lines[1]) })
+      local remaining = #chunk_lines > 1 and flatten_lines(vim.list_slice(chunk_lines, 2)) or {}
+      if #remaining > 0 then
+        vim.api.nvim_buf_set_lines(state.bufnr, tail_row + 1, tail_row + 1, false, remaining)
       end
-      lines_to_insert = flatten_lines(lines_to_insert)
-      vim.api.nvim_buf_set_lines(state.bufnr, tail_row + 1, tail_row + 1, false, lines_to_insert)
-      local new_tail = tail_row + #lines_to_insert
+      local new_tail = tail_row + #remaining
       vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.tail_mark)
       active_block.tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, new_tail, 0, { right_gravity = true })
     end)

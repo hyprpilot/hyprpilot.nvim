@@ -497,6 +497,23 @@ function M.open_aux_split(opts)
     return nil, "chat window not focusable"
   end
 
+  -- Stash the chat window's view BEFORE we split. The split
+  -- shrinks the chat's row count, which makes vim re-flow its
+  -- cursor / topline to keep the cursor on-screen — captain saw
+  -- the chat jump to a random row whenever a permission row or
+  -- queue strip popped in (a tail-following chat would lose its
+  -- bottom-anchor and land mid-buffer). Restoring `winsaveview`
+  -- after the split lands re-pins both topline and cursor to
+  -- where the captain had them.
+  local chat_winid = window._winid
+  local chat_view = nil
+  if chat_winid ~= nil and vim.api.nvim_win_is_valid(chat_winid) then
+    local ok_view, view = pcall(vim.api.nvim_win_call, chat_winid, vim.fn.winsaveview)
+    if ok_view then
+      chat_view = view
+    end
+  end
+
   local ok_split, split_err = pcall(vim.cmd, opts.direction)
   if not ok_split then
     if vim.api.nvim_win_is_valid(previous_win) then
@@ -551,6 +568,28 @@ function M.open_aux_split(opts)
     if not ok_after then
       return unwind("after callback failed: " .. tostring(after_err))
     end
+  end
+
+  -- Restore the chat window's pre-split view. Routes through
+  -- `nvim_win_call` so winrestview runs against the chat win
+  -- regardless of which window is current at this point in the
+  -- choreography. Also schedule a second restore on the next
+  -- tick — edgy's deferred layout pass (queued via
+  -- `nudge_edgy_layout` above) and any peer-plugin `WinResized`
+  -- listeners run AFTER this function returns, and they can
+  -- nudge the chat's topline again. Two restores (one immediate,
+  -- one scheduled) keep the captain pinned through both phases.
+  if chat_view ~= nil and chat_winid ~= nil and vim.api.nvim_win_is_valid(chat_winid) then
+    pcall(vim.api.nvim_win_call, chat_winid, function()
+      vim.fn.winrestview(chat_view)
+    end)
+    vim.schedule(function()
+      if vim.api.nvim_win_is_valid(chat_winid) then
+        pcall(vim.api.nvim_win_call, chat_winid, function()
+          vim.fn.winrestview(chat_view)
+        end)
+      end
+    end)
   end
 
   if vim.api.nvim_win_is_valid(previous_win) then

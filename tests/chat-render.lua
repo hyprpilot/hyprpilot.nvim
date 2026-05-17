@@ -420,11 +420,19 @@ T["agent_thought concatenates multiple events into a single block (markdown para
   local bufnr = buffer.create(id)
   local state = render.state(id, bufnr)
 
+  -- Chunks arrive with the daemon's `paragraph_break_prefix` baked
+  -- onto each continuation — verbatim concat of `text` fields must
+  -- produce well-formed markdown. The renderer mirrors the daemon
+  -- contract: leading `\n\n` becomes EXACTLY ONE blank row between
+  -- paragraphs (split → `["", "", "second paragraph"]`, first `""`
+  -- concats onto tail, remaining `["", "second paragraph"]` insert
+  -- below). Without the daemon's prefix, consecutive chunks would
+  -- token-stream-concat (same shape as `append_agent_text`).
   render.hydrate(state, {
     items = {
       { turnId = "t1", item = { kind = "agent_thought", text = "first paragraph" } },
-      { turnId = "t1", item = { kind = "agent_thought", text = "second paragraph" } },
-      { turnId = "t1", item = { kind = "agent_thought", text = "third paragraph" } },
+      { turnId = "t1", item = { kind = "agent_thought", text = "\n\nsecond paragraph" } },
+      { turnId = "t1", item = { kind = "agent_thought", text = "\n\nthird paragraph" } },
     },
   })
 
@@ -445,9 +453,10 @@ T["agent_thought concatenates multiple events into a single block (markdown para
     end
   end
   MiniTest.expect.equality(header_count, 1)
-  -- Markdown paragraph break between events: at least one blank
-  -- line between consecutive chunks.
-  MiniTest.expect.equality(first_idx ~= nil and second_idx ~= nil and second_idx - first_idx >= 2, true)
+  -- Daemon's `\n\n` prefix lands as EXACTLY one blank between
+  -- paragraphs (split = `["", "", "second paragraph"]`; first `""`
+  -- concats onto the tail, the inner `""` is the single blank).
+  MiniTest.expect.equality(first_idx ~= nil and second_idx ~= nil and second_idx - first_idx == 2, true)
 
   helpers.cleanup_instance(id)
 end
