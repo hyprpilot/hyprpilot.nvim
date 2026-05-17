@@ -253,29 +253,6 @@ local function flatten_text(s)
   return (s:gsub("[\r\n]", " "))
 end
 
----Collapse runs of consecutive blank rows down to a single blank,
----anywhere in the list. Mirrors markdown's "≥2 blank lines = one
----paragraph break" semantic so a daemon-supplied
----`paragraph_break_prefix` (which bakes `\n` / `\n\n` onto chunks
----for verbatim-concat correctness) doesn't stack TWO buffer rows
----at the boundary where an opener already ended in a blank +
----chunks led with a blank. Single blanks pass through unchanged
----(one paragraph break in / out).
----@param lines string[]
----@return string[]
-local function collapse_blank_runs(lines)
-  local out = {}
-  local prev_blank = false
-  for _, line in ipairs(lines) do
-    local is_blank = line == ""
-    if not (is_blank and prev_blank) then
-      table.insert(out, line)
-    end
-    prev_blank = is_blank
-  end
-  return out
-end
-
 ---Flatten a list of strings so no element contains an embedded
 ---newline. `nvim_buf_set_lines` rejects multi-line items with
 ---"'replacement string' item contains newlines"; defensively
@@ -996,27 +973,22 @@ local function append_agent_text(state, text)
       -- it inserts at the prose anchor (which by then sits after
       -- the last prose line), then drops the turn-result marker
       -- below.
-      local opener_lines = nil
       if layout ~= nil and not layout.response_wrap_emitted then
         local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
         local line_above = ""
         if anchor_row > 0 then
           line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
         end
-        opener_lines = line_above == "" and { "---", "" } or { "", "---", "" }
+        local opener_lines = line_above == "" and { "---", "" } or { "", "---", "" }
+        insert_at_prose_anchor(state, turn_id, opener_lines)
         layout.response_wrap_emitted = true
       end
-      -- Combine opener + first chunk in one insert and collapse
-      -- any consecutive-blank run to a single blank. Boundary
-      -- failure mode without this: opener trailing `""` plus a
-      -- chunk whose `vim.split("\n\nHello", "\n")` leads with
-      -- `["", "", "Hello"]` stacks `[---, "", "", "", Hello]` =
-      -- three blank rows between rule and content. Daemon's
-      -- paragraph-break prefix is intended for verbatim-concat
-      -- correctness; at the first-chunk boundary we honour it as
-      -- markdown's "≥2 blanks = one paragraph break" semantic.
-      local combined = opener_lines ~= nil and vim.list_extend(vim.list_extend({}, opener_lines), chunks) or chunks
-      insert_at_prose_anchor(state, turn_id, collapse_blank_runs(combined))
+      -- Insert the daemon's chunks verbatim. The entry-level
+      -- whitespace-only guard already drops chunks that would add
+      -- no visible content; non-empty chunks are written as-is so
+      -- the daemon's paragraph-break prefix lands as the daemon
+      -- intended (no plugin-side collapsing / stripping).
+      insert_at_prose_anchor(state, turn_id, chunks)
       state.active_text_block = { kind = "agent_text", turn_id = turn_id }
       return
     end
@@ -1790,15 +1762,12 @@ local function render_thought(state, text)
   local layout = get_layout(state, state.current_turn)
   local block_id = "thought:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
-  -- Collapse runs of consecutive blanks at the wrap-opener +
-  -- chunk_lines boundary. Failure mode without this: a first-
-  -- chunk text like `"\n\nfoo"` splits to `["", "", "foo"]`,
-  -- which after `vim.list_extend({"---", ""}, ...)` becomes
-  -- `["---", "", "", "", "foo"]` (three blank rows between rule
-  -- and content). The daemon's paragraph-break prefix is for
-  -- verbatim-concat correctness; at the first-chunk boundary we
-  -- honour it as markdown's "≥2 blanks = one paragraph break".
-  local wrapped_chunk = collapse_blank_runs(vim.list_extend({ "---", "" }, chunk_lines))
+  -- Wrap-opener (`---` + blank) followed by the daemon's chunk
+  -- verbatim. The entry-level whitespace-only guard already
+  -- dropped fully-blank chunks; non-blank chunks land as-is so
+  -- the daemon's intra-thought paragraph breaks survive
+  -- intact (no plugin-side collapsing).
+  local wrapped_chunk = vim.list_extend({ "---", "" }, chunk_lines)
   local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", wrapped_chunk)
   if layout ~= nil then
     layout.thoughts_wrap_emitted = true
