@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.8.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.7.0...hyprpilot.nvim-v1.8.0) (2026-05-17)
+
+
+### Features
+
+* **instances:** keep-alive toggle + spacing collapse + plan body-only ([#103](https://github.com/hyprpilot/hyprpilot.nvim/issues/103)) ([49af2f7](https://github.com/hyprpilot/hyprpilot.nvim/commit/49af2f7ca067d94d14b81b815c8a4111910631d5))
+
+
+### Bug Fixes
+
+* **instances:** keep-alive toggle reports auto-shutdown status unambiguously ([#106](https://github.com/hyprpilot/hyprpilot.nvim/issues/106)) ([2e235d5](https://github.com/hyprpilot/hyprpilot.nvim/commit/2e235d5bc291681803bd1030c002b0f8a353dd09))
+
+
+### Refactor
+
+* **render:** drop collapse_blank_runs — write daemon chunks verbatim, skip blank-only ([#105](https://github.com/hyprpilot/hyprpilot.nvim/issues/105)) ([391f2ce](https://github.com/hyprpilot/hyprpilot.nvim/commit/391f2ce15f7c39617f1cdc54e2646ab6a9ae103e))
+
 ## [1.7.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.6.2...hyprpilot.nvim-v1.7.0) (2026-05-17)
 
 
