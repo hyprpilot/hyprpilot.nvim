@@ -1820,7 +1820,6 @@ local function render_plan(state, record)
   -- Pill-style header matching the per-tool + tools-section header
   -- convention (`[+N] [-M] [Xs]`) — captain wanted the checklist
   -- stat surfaced via the same pill chrome.
-  local header = "# plan" .. stats.format_pills({ string.format("%d/%d done", done, total) })
   local body = {}
 
   if #steps == 0 then
@@ -1839,7 +1838,7 @@ local function render_plan(state, record)
     end
   end
 
-  local lines = vim.list_extend({ header }, body)
+  local lines = body
 
   -- Replace-in-place path: the current turn already has an active
   -- plan block — overwrite its full content (header + body) so the
