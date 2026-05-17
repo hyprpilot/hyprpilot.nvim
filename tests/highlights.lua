@@ -124,11 +124,10 @@ T["plan applies header + per-step highlights"] = function()
     },
   })
 
-  -- Header format changed from `# plan · N/M done` (mid-dot inline)
-  -- to `# plan [N/M done]` (stat-pill) to match the per-tool /
-  -- section-header convention.
-  local header_row = row_of(bufnr, "# plan ")
-  MiniTest.expect.equality(line_hl(bufnr, header_row), "HyprpilotPlanHeader")
+  -- The plan block dropped the `# plan` row entirely — the
+  -- `### tasks [N/M done]` section header now carries the
+  -- checklist stats. Per-step highlights remain on each step body
+  -- row (highlighted by status).
   MiniTest.expect.equality(line_hl(bufnr, row_of(bufnr, "[x] A")), "HyprpilotPlanStepDone")
   MiniTest.expect.equality(line_hl(bufnr, row_of(bufnr, "[~] B")), "HyprpilotPlanStepInProgress")
   MiniTest.expect.equality(line_hl(bufnr, row_of(bufnr, "[ ] C")), "HyprpilotPlanStepPending")

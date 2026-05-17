@@ -253,6 +253,29 @@ local function flatten_text(s)
   return (s:gsub("[\r\n]", " "))
 end
 
+---Collapse runs of consecutive blank rows down to a single blank,
+---anywhere in the list. Mirrors markdown's "≥2 blank lines = one
+---paragraph break" semantic so a daemon-supplied
+---`paragraph_break_prefix` (which bakes `\n` / `\n\n` onto chunks
+---for verbatim-concat correctness) doesn't stack TWO buffer rows
+---at the boundary where an opener already ended in a blank +
+---chunks led with a blank. Single blanks pass through unchanged
+---(one paragraph break in / out).
+---@param lines string[]
+---@return string[]
+local function collapse_blank_runs(lines)
+  local out = {}
+  local prev_blank = false
+  for _, line in ipairs(lines) do
+    local is_blank = line == ""
+    if not (is_blank and prev_blank) then
+      table.insert(out, line)
+    end
+    prev_blank = is_blank
+  end
+  return out
+end
+
 ---Flatten a list of strings so no element contains an embedded
 ---newline. `nvim_buf_set_lines` rejects multi-line items with
 ---"'replacement string' item contains newlines"; defensively
@@ -973,17 +996,27 @@ local function append_agent_text(state, text)
       -- it inserts at the prose anchor (which by then sits after
       -- the last prose line), then drops the turn-result marker
       -- below.
+      local opener_lines = nil
       if layout ~= nil and not layout.response_wrap_emitted then
         local anchor_row = vim.api.nvim_buf_get_extmark_by_id(bufnr, NS, layout.prose_anchor_mark, {})[1]
         local line_above = ""
         if anchor_row > 0 then
           line_above = vim.api.nvim_buf_get_lines(bufnr, anchor_row - 1, anchor_row, false)[1] or ""
         end
-        local opener_lines = line_above == "" and { "---", "" } or { "", "---", "" }
-        insert_at_prose_anchor(state, turn_id, opener_lines)
+        opener_lines = line_above == "" and { "---", "" } or { "", "---", "" }
         layout.response_wrap_emitted = true
       end
-      insert_at_prose_anchor(state, turn_id, chunks)
+      -- Combine opener + first chunk in one insert and collapse
+      -- any consecutive-blank run to a single blank. Boundary
+      -- failure mode without this: opener trailing `""` plus a
+      -- chunk whose `vim.split("\n\nHello", "\n")` leads with
+      -- `["", "", "Hello"]` stacks `[---, "", "", "", Hello]` =
+      -- three blank rows between rule and content. Daemon's
+      -- paragraph-break prefix is intended for verbatim-concat
+      -- correctness; at the first-chunk boundary we honour it as
+      -- markdown's "≥2 blanks = one paragraph break" semantic.
+      local combined = opener_lines ~= nil and vim.list_extend(vim.list_extend({}, opener_lines), chunks) or chunks
+      insert_at_prose_anchor(state, turn_id, collapse_blank_runs(combined))
       state.active_text_block = { kind = "agent_text", turn_id = turn_id }
       return
     end
@@ -1757,7 +1790,15 @@ local function render_thought(state, text)
   local layout = get_layout(state, state.current_turn)
   local block_id = "thought:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
 
-  local wrapped_chunk = vim.list_extend({ "---", "" }, chunk_lines)
+  -- Collapse runs of consecutive blanks at the wrap-opener +
+  -- chunk_lines boundary. Failure mode without this: a first-
+  -- chunk text like `"\n\nfoo"` splits to `["", "", "foo"]`,
+  -- which after `vim.list_extend({"---", ""}, ...)` becomes
+  -- `["---", "", "", "", "foo"]` (three blank rows between rule
+  -- and content). The daemon's paragraph-break prefix is for
+  -- verbatim-concat correctness; at the first-chunk boundary we
+  -- honour it as markdown's "≥2 blanks = one paragraph break".
+  local wrapped_chunk = collapse_blank_runs(vim.list_extend({ "---", "" }, chunk_lines))
   local _, first_row = insert_block_into_section(state, state.current_turn, "thoughts", block_id, "agent_thought", wrapped_chunk)
   if layout ~= nil then
     layout.thoughts_wrap_emitted = true
@@ -1820,10 +1861,10 @@ local function render_plan(state, record)
   -- Pill-style header matching the per-tool + tools-section header
   -- convention (`[+N] [-M] [Xs]`) — captain wanted the checklist
   -- stat surfaced via the same pill chrome.
-  local body = {}
+  local lines = {}
 
   if #steps == 0 then
-    table.insert(body, "  (no steps)")
+    table.insert(lines, "  (no steps)")
   else
     local task_glyphs = (config.options.icons or {}).task_status or {}
     -- Fall back to the legacy ASCII so a captain who pre-emptively
@@ -1834,11 +1875,9 @@ local function render_plan(state, record)
       local mark = task_glyphs[key] or fallback[key] or fallback.pending
       local priority = step.priority and (" (" .. step.priority .. ")") or ""
       local content = type(step.content) == "string" and step.content or ""
-      table.insert(body, string.format("  %s %s%s", mark, content:gsub("\n", " "), priority))
+      table.insert(lines, string.format("  %s %s%s", mark, content:gsub("\n", " "), priority))
     end
   end
-
-  local lines = body
 
   -- Replace-in-place path: the current turn already has an active
   -- plan block — overwrite its full content (header + body) so the
@@ -1869,26 +1908,32 @@ local function render_plan(state, record)
   end
   if active_block ~= nil and active_block.turn_id == state.current_turn then
     chat_buffer.with_buffer(state.bufnr, function()
-      local head_row = block_range(state, active_block)
-      if head_row == nil then
+      local head_row, tail_row = block_range(state, active_block)
+      if head_row == nil or tail_row == nil then
         -- Lost the marks (rare); fall through to mint-new path.
         state.active_plan_block = nil
         active_block = nil
         return
       end
-      -- Rewrite header line + body in one set_lines call. New body
-      -- lengths are captured via `replace_block_body` which also
-      -- re-anchors the tail mark.
-      vim.api.nvim_buf_set_lines(state.bufnr, head_row, head_row + 1, false, { flatten_text(header) })
-      replace_block_body(state, active_block, body)
+      -- The plan block is body-only now (no `# plan` row — the
+      -- `### tasks [N/M done]` section header carries the
+      -- checklist stats). Wholesale-replace the full block range
+      -- (head..tail inclusive) and re-anchor head/tail marks.
+      -- `replace_block_body` assumes a header at `head_row` and
+      -- starts replacing at `head_row + 1` — would leave the old
+      -- first step in place and stack new steps below.
+      vim.api.nvim_buf_set_lines(state.bufnr, head_row, tail_row + 1, false, flatten_lines(lines))
+      vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.head_mark)
+      vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.tail_mark)
+      active_block.head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, head_row, 0, { right_gravity = true })
+      active_block.tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, head_row + #lines - 1, 0, { right_gravity = true })
     end)
     if active_block ~= nil then
       active_block.checklist = { done = done, total = total }
       local head_row = block_range(state, active_block)
       if head_row ~= nil then
-        apply_line_hl(state, head_row, "HyprpilotPlanHeader")
         for i, step in ipairs(steps) do
-          apply_line_hl(state, head_row + i, plan_step_hl(step.status))
+          apply_line_hl(state, head_row + i - 1, plan_step_hl(step.status))
         end
       end
       local turn_layout = get_layout(state, active_block.turn_id)
@@ -1919,9 +1964,8 @@ local function render_plan(state, record)
     block.checklist = { done = done, total = total }
   end
 
-  apply_line_hl(state, first_row, "HyprpilotPlanHeader")
   for i, step in ipairs(steps) do
-    apply_line_hl(state, first_row + i, plan_step_hl(step.status))
+    apply_line_hl(state, first_row + i - 1, plan_step_hl(step.status))
   end
 
   -- Repaint the section header so the new `[done/total done]` pill
