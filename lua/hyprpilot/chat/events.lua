@@ -256,6 +256,13 @@ local function dispatch(raw)
       -- repaints and the composer's edit-slot stays in sync.
       local rpc_queue = require("hyprpilot.rpc.queue")
       require("hyprpilot.chat.queue-strip").handle_queue_changed(event.instanceId, rpc_queue.items_from_wire(event.items))
+    elseif event.event == "profile_changed" then
+      -- Daemon-singleton selected profile flipped (some frontend
+      -- — possibly us — called `profile/set`). Re-emit as a
+      -- captain-facing User autocmd so palettes / headers /
+      -- whatever else cares about "currently selected profile"
+      -- can subscribe without touching the wire layer.
+      emit("ProfileChanged", { profile_id = event.profileId })
     elseif event.event == "lagged" then
       -- Daemon dropped events on us (subscription overflow). The
       -- correct recovery is to refetch the latest page so the local
