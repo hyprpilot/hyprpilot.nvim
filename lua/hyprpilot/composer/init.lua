@@ -1101,10 +1101,14 @@ function M.submit(text, opts)
     log.debug("composer.submit: read %d bytes from composer bufnr=%s", #text, bufnr)
   end
 
-  text = text:gsub("^%s+", ""):gsub("%s+$", "")
-
-  if text == "" then
-    log.debug("composer.submit: text empty after trim, no-op")
+  -- Empty / whitespace-only guard — non-destructive so the daemon
+  -- receives whatever the captain typed byte-identically.
+  -- The daemon handles paragraph structure on the output side
+  -- (paragraph_break_prefix on streamed chunks) but takes input
+  -- verbatim; trimming captain-supplied whitespace here would
+  -- silently rewrite the prompt's shape.
+  if text:match("^%s*$") then
+    log.debug("composer.submit: text empty / whitespace-only, no-op")
     return
   end
 
