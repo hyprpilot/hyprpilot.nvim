@@ -11,8 +11,9 @@
 ---     (captures live edits)
 ---   `attach_file(path, opts?)` — generic disk-file attach with mime
 ---     + text/binary auto-detect; respects `composer.attach.max_bytes`
----   `attach_clipboard(opts?)` — image (via img-clip) OR text (via
----     getreg('+')) autodetect; round-trips through `attach_file`
+---   `attach_clipboard(opts?)` — image (internal shell-out probe) OR
+---     text (via getreg('+')) autodetect; round-trips through
+---     `attach_file`
 ---   `clear_attachments(instance_id?)` — drop every staged attachment
 ---   `paste_buffer(bufnr?, opts?)` — append the buffer's contents as a
 ---     fenced block (header = cwd-relative path)
@@ -653,10 +654,8 @@ end
 ---
 ---   require("hyprpilot.composer").attach_file("/path/to/file")
 ---
----   -- with an `img-clip` clipboard image flow:
----   local path = vim.fn.tempname() .. ".png"
----   require("img-clip.clipboard").save_image(path)
----   require("hyprpilot.composer").attach_file(path, { title = "screenshot" })
+---   -- captains driving from a one-shot clipboard probe:
+---   require("hyprpilot.composer").attach_clipboard({ title = "screenshot" })
 ---
 ---Rejects paths over `composer.attach.max_bytes` (default 8 MiB) so
 ---a stray `attach_file("/var/log/syslog")` doesn't ship a 200 MB
@@ -727,9 +726,9 @@ function M.attach_file(path, opts)
 end
 
 ---Attach whatever's on the system clipboard, mime-detect by source:
---- - if `img-clip.nvim` is loaded AND reports an image on the
----   clipboard, save it as a temp PNG and route through
----   `attach_file` (binary path: base64 → `data`)
+--- - if an internal clipboard probe (`composer/clipboard.lua`)
+---   reports a PNG on the clipboard, save it to a temp file and
+---   route through `attach_file` (binary path: base64 → `data`)
 --- - otherwise read the `+` register (system clipboard text), write
 ---   it to a temp `.txt`, and route through `attach_file` (text
 ---   path: body string)
@@ -738,23 +737,33 @@ end
 ---whatever I copied") without making them know whether the clipboard
 ---holds an image or text. Falls through to a warn + nil-return when
 ---the clipboard is empty and no image is detected.
+---
+---No `img-clip.nvim` dependency — the probe + save logic is inline
+---under `composer/clipboard.lua`. The captain's pattern is mirrored:
+---each paste lands in a fresh `vim.fn.tempname()` directory.
 ---@param opts? { instance_id?: string, title?: string, slug?: string, dir?: string }
 ---@return hyprpilot.composer.Attachment?
 function M.attach_clipboard(opts)
   opts = opts or {}
+  local clipboard = require("hyprpilot.composer.clipboard")
 
-  -- Image path first — img-clip's `content_is_image()` is the only
-  -- cross-platform "is the clipboard an image" probe we can reach
-  -- from Lua without shelling out to xclip / wl-paste / pngpaste.
-  -- Captains without img-clip silently fall through to text — same
-  -- behaviour as before this helper existed.
-  local clipboard_ok, clipboard = pcall(require, "img-clip.clipboard")
-  if clipboard_ok and type(clipboard.content_is_image) == "function" and clipboard.content_is_image() then
+  -- Image path first — internal probe spawns the right backend
+  -- (xclip / wl-paste / pngpaste / powershell.exe) and returns
+  -- false when nothing usable is on PATH; we then fall through
+  -- to the text path.
+  if clipboard.content_is_image() then
+    -- `vim.fn.tempname()` returns a fresh path under
+    -- `$XDG_RUNTIME_DIR/nvim.<user>/<pid>/<seq>` (or `/tmp/...`
+    -- depending on host). Treat it as a directory so each paste
+    -- gets its own folder — matches the captain's img-clip
+    -- `dir_path = vim.fn.tempname()` pattern and keeps multiple
+    -- pastes from colliding on the same `clipboard-<ts>.png`
+    -- basename.
     local dir = opts.dir or vim.fn.tempname()
     vim.fn.mkdir(dir, "p")
     local path = string.format("%s/clipboard-%d.png", dir, vim.uv.hrtime())
     if not clipboard.save_image(path) then
-      log.warn("composer.attach_clipboard: img-clip.save_image failed")
+      log.warn("composer.attach_clipboard: clipboard.save_image failed for %s", path)
       return nil
     end
     return M.attach_file(path, opts)
