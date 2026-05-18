@@ -798,15 +798,14 @@ T["agent_attachment lands in ### attachments section after tools"] = function()
   helpers.cleanup_instance(id)
 end
 
-T["replay with shared turn_id across multiple user_prompts splits into separate exchanges"] = function()
-  -- Regression for the session-replay bug: during `instance/snapshot/chat`
-  -- replay the daemon ships a single synthetic turn_id for the whole
-  -- replay window (no TurnStarted boundaries fire between historical
-  -- turns). Without exchange-based partitioning, every user_prompt
-  -- and every agent response collapsed under one ## captain / ## pilot
-  -- header pair. The fix bumps an exchange counter on each
-  -- user_prompt → agent role transition and namespaces the daemon
-  -- turn_id under that counter.
+T["replay with distinct turn_ids per exchange renders separate headers"] = function()
+  -- Post-daemon-fix wire contract: session-replay (and live flow)
+  -- ships a DISTINCT `turn_id` for every logical turn — the
+  -- role-transition split in `acp::instance` mints a fresh turn
+  -- on every User↔Agent flip. The render uses `event.turnId`
+  -- directly as the layout key (no client-side namespacing). This
+  -- test pins that contract: three captain/pilot exchanges, each
+  -- with its own turn_id, render as three separate header pairs.
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -815,14 +814,12 @@ T["replay with shared turn_id across multiple user_prompts splits into separate 
 
   render.hydrate(state, {
     items = {
-      -- Three exchanges, ALL keyed to the same synthetic turn_id
-      -- the way a session replay actually arrives from the daemon.
-      { turnId = "synthetic-x", item = { kind = "user_prompt", text = "first prompt" } },
-      { turnId = "synthetic-x", item = { kind = "agent_text", text = "first reply" } },
-      { turnId = "synthetic-x", item = { kind = "user_prompt", text = "second prompt" } },
-      { turnId = "synthetic-x", item = { kind = "agent_text", text = "second reply" } },
-      { turnId = "synthetic-x", item = { kind = "user_prompt", text = "third prompt" } },
-      { turnId = "synthetic-x", item = { kind = "agent_text", text = "third reply" } },
+      { turnId = "turn-1", item = { kind = "user_prompt", text = "first prompt" } },
+      { turnId = "turn-1", item = { kind = "agent_text", text = "first reply" } },
+      { turnId = "turn-2", item = { kind = "user_prompt", text = "second prompt" } },
+      { turnId = "turn-2", item = { kind = "agent_text", text = "second reply" } },
+      { turnId = "turn-3", item = { kind = "user_prompt", text = "third prompt" } },
+      { turnId = "turn-3", item = { kind = "agent_text", text = "third reply" } },
     },
   })
 
