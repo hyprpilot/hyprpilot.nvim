@@ -759,7 +759,12 @@ function M.attach_clipboard(opts)
   end
 
   -- Caller can pin a specific mime when they know what's on the
-  -- clipboard (test / scripting). Default: probe + pick best.
+  -- clipboard (test / scripting). Default: take the FIRST mime
+  -- the backend advertised — clipboard sources publish their
+  -- preferred format first (image/png before image/tiff before
+  -- text/plain filename for a screenshot, etc.), and
+  -- `list_mime_types` filters X11 protocol noise so the first
+  -- entry is always an actual mime.
   local mime = opts.mime
   if mime == nil then
     local available = clipboard.list_mime_types()
@@ -768,11 +773,7 @@ function M.attach_clipboard(opts)
       -- Last-ditch: try the `+` register before warning out.
       return M._attach_clipboard_text_fallback(opts)
     end
-    mime = clipboard.pick_best_mime(available)
-    if mime == nil then
-      log.warn("composer.attach_clipboard: no supported mime among %s", vim.inspect(available))
-      return nil
-    end
+    mime = available[1]
   end
 
   -- Fresh temp directory per paste (mirrors the captain's

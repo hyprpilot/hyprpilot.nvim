@@ -63,11 +63,27 @@ function M.resolve_cmd()
   return _cached_cmd
 end
 
----List the mime types the system clipboard currently advertises.
----Sorted in backend-native order (which is typically the clipboard
----owner's preference order — first entry is the source's
----highest-fidelity offering). Returns an empty list when the
----clipboard is empty OR no backend resolves.
+---True when `entry` looks like an actual mime type (contains a
+---`/`). Filters out X11 protocol meta-targets that xclip's
+---`TARGETS` query interleaves (`TARGETS`, `TIMESTAMP`, `MULTIPLE`,
+---`SAVE_TARGETS`) and the assorted legacy clipboard atoms (`STRING`,
+---`UTF8_STRING`, etc.) that wl-paste sometimes carries through from
+---X11 bridges. Keeping only `*/` entries means the FIRST entry of
+---the returned list is always a real mime — caller can take
+---`mime_types[1]` without any further preference logic.
+---@param entry string
+---@return boolean
+local function looks_like_mime(entry)
+  return entry:find("/", 1, true) ~= nil
+end
+
+---List the mime types the system clipboard currently advertises,
+---in backend-native order (which is the source's preferred order —
+---first entry is the source's highest-fidelity offering). X11
+---protocol meta-targets (`TARGETS`, `TIMESTAMP`, …) and legacy
+---atoms (`STRING`, `UTF8_STRING`, …) are filtered out so the caller
+---can take `mime_types[1]` directly. Returns an empty list when
+---the clipboard is empty OR no backend resolves.
 ---@return string[]
 function M.list_mime_types()
   local cmd = M.resolve_cmd()
@@ -76,12 +92,15 @@ function M.list_mime_types()
   end
 
   if cmd == "xclip" then
-    -- `xclip -t TARGETS -o` returns one mime per line.
+    -- `xclip -t TARGETS -o` returns one entry per line. Sources
+    -- list TARGETS / TIMESTAMP / MULTIPLE / SAVE_TARGETS protocol
+    -- atoms BEFORE the actual mime types — filter them out via
+    -- the `looks_like_mime` predicate.
     local out = vim.system({ "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o" }, { text = true }):wait()
     if out.code ~= 0 then
       return {}
     end
-    return vim.split(out.stdout or "", "\n", { plain = true, trimempty = true })
+    return vim.tbl_filter(looks_like_mime, vim.split(out.stdout or "", "\n", { plain = true, trimempty = true }))
   end
 
   if cmd == "wl-paste" then
@@ -89,7 +108,7 @@ function M.list_mime_types()
     if out.code ~= 0 then
       return {}
     end
-    return vim.split(out.stdout or "", "\n", { plain = true, trimempty = true })
+    return vim.tbl_filter(looks_like_mime, vim.split(out.stdout or "", "\n", { plain = true, trimempty = true }))
   end
 
   if cmd == "pbpaste" then
@@ -410,57 +429,6 @@ end
 ---internals) and re-load.
 function M._reset_ext_map()
   _system_ext_map = nil
-end
-
----Pick the highest-fidelity mime from `available` according to a
----fixed preference order. The captain pasted from a source that
----advertised multiple formats (e.g. screenshot: `image/png` +
----`image/tiff` + `text/plain` filename); we want the rendered
----bitmap not the filename. Returns nil when `available` has no
----supported entry — caller falls back to text-register.
----@param available string[]
----@return string?
-function M.pick_best_mime(available)
-  if type(available) ~= "table" or #available == 0 then
-    return nil
-  end
-  -- Lookup table for O(1) membership.
-  local present = {}
-  for _, m in ipairs(available) do
-    present[m] = true
-  end
-  -- Preference order: images first (binary, lossless first),
-  -- then richer documents (PDF), then HTML, then markdown / text.
-  -- Uri-list at the tail because file references are usually only
-  -- useful when nothing else attaches.
-  local prefer = {
-    "image/png",
-    "image/webp",
-    "image/jpeg",
-    "image/jp2",
-    "image/tiff",
-    "image/gif",
-    "image/svg+xml",
-    "image/bmp",
-    "application/pdf",
-    "application/rtf",
-    "text/html",
-    "text/markdown",
-    "text/csv",
-    "application/json",
-    "application/yaml",
-    "text/plain",
-    "text/uri-list",
-  }
-  for _, m in ipairs(prefer) do
-    if present[m] then
-      return m
-    end
-  end
-  -- Nothing on the preference list matched, but `available` is
-  -- non-empty — return the first entry verbatim so unusual but
-  -- valid mimes still attach.
-  return available[1]
 end
 
 ---Write `bytes` (raw string, may contain NULs) to `path` via
