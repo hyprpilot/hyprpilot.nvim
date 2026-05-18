@@ -1169,6 +1169,31 @@ function M.submit(text, opts)
     data = { instance_id = instance_id, bufnr = bufnr, text = text },
   })
 
+  -- Capture the captain's current window + mode BEFORE the RPC
+  -- fires. The disposition=queued branch below hydrates the queue
+  -- strip → `open_aux_split` briefly steers focus through the chat
+  -- window to mint the new strip split, and assorted autocmds /
+  -- edgy layout passes can leave focus elsewhere by the time the
+  -- captain's next keystroke lands. Restoring at the end of the
+  -- callback chain keeps the captain glued to whatever surface
+  -- they were on (composer in insert mode, typically).
+  local prev_win = vim.api.nvim_get_current_win()
+  local prev_mode = vim.api.nvim_get_mode().mode
+  local function restore_focus()
+    if not vim.api.nvim_win_is_valid(prev_win) then
+      return
+    end
+    if vim.api.nvim_get_current_win() ~= prev_win then
+      pcall(vim.api.nvim_set_current_win, prev_win)
+    end
+    -- Insert-mode submit (`<C-s>` from the composer) should leave
+    -- the captain back in insert so they keep typing. Normal-mode
+    -- submit (`<CR>`) shouldn't force insert.
+    if prev_mode:match("^i") and prev_win == M._winid then
+      pcall(vim.cmd, "startinsert")
+    end
+  end
+
   client.request("prompts/send", payload, nil, function(err, result)
     if err ~= nil then
       log.error("composer.submit: %s", err.message)
@@ -1209,6 +1234,13 @@ function M.submit(text, opts)
       pattern = "HyprpilotPromptDispatched",
       data = { instance_id = instance_id, bufnr = bufnr, disposition = disposition },
     })
+
+    -- Two restorations: an immediate one for the sync path
+    -- (composer.open / edgy nudge that ran during this callback)
+    -- and a scheduled one to catch the deferred edgy layout pass
+    -- (100ms) that fires after this callback returns.
+    restore_focus()
+    vim.defer_fn(restore_focus, 150)
   end)
 end
 
