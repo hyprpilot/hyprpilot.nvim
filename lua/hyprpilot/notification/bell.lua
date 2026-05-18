@@ -56,7 +56,22 @@ function M.ensure_listeners()
   unsubscribe = attention.on_change(function(snapshot)
     local now = #snapshot
     if now > last_count then
-      M.ring()
+      -- Defer the ring one event-loop tick. Auto-resolved
+      -- permissions arrive as `permission_request` +
+      -- `permission_resolved` in the same socket burst — both
+      -- `on_change` callbacks fire synchronously before vim
+      -- schedules anything. By deferring here, if the list
+      -- already shrank back below its pre-add count by the
+      -- time the scheduled function runs, we skip the ring.
+      -- Manually-pending permissions (captain needs to decide)
+      -- are still in the list at schedule time → ring. Turn-
+      -- ended entries are never removed automatically → ring.
+      local count_before = last_count
+      vim.schedule(function()
+        if #attention.list() > count_before then
+          M.ring()
+        end
+      end)
     end
     last_count = now
   end)

@@ -48,9 +48,11 @@ T["bell rings on attention-list growth when enabled"] = function()
   bell.ensure_listeners()
 
   attention._add_permission("inst-1", 1, "req-1")
+  vim.wait(20) -- let the deferred vim.schedule ring fire
   MiniTest.expect.equality(counter.count, 1)
 
   attention._add_turn_ended("inst-2", 2)
+  vim.wait(20)
   MiniTest.expect.equality(counter.count, 2)
   restore()
 end
@@ -63,10 +65,12 @@ T["bell does NOT ring on remove (list shrinks)"] = function()
   bell.ensure_listeners()
 
   attention._add_permission("inst-1", 1, "req-1")
+  vim.wait(20)
   MiniTest.expect.equality(counter.count, 1)
 
   attention._remove_permission("req-1")
-  MiniTest.expect.equality(counter.count, 1)
+  vim.wait(20)
+  MiniTest.expect.equality(counter.count, 1) -- no extra ring on removal
 
   restore()
 end
@@ -80,7 +84,24 @@ T["bell does NOT ring on duplicate-add (no list growth)"] = function()
 
   attention._add_permission("inst-1", 1, "req-1")
   attention._add_permission("inst-1", 1, "req-1") -- dedup'd
+  vim.wait(20)
   MiniTest.expect.equality(counter.count, 1)
+  restore()
+end
+
+T["bell does NOT ring for auto-resolved permission (add + remove before schedule fires)"] = function()
+  local bell, attention = fresh()
+  config.options.notification = { bell = { enabled = true } }
+
+  local restore, counter = stub_ring(bell)
+  bell.ensure_listeners()
+
+  -- Add then immediately remove (daemon auto-resolved the permission
+  -- in the same socket burst). The schedule fires AFTER both events.
+  attention._add_permission("inst-1", 1, "req-1")
+  attention._remove_permission("req-1")
+  vim.wait(20) -- let the deferred check run
+  MiniTest.expect.equality(counter.count, 0)
   restore()
 end
 

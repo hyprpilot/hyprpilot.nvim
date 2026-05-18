@@ -152,4 +152,44 @@ T["cleanup_owned fires instances/shutdown for owned instances only"] = function(
   restore_client()
 end
 
+T["shutdown: last instance closes the chat window; registry wiped"] = function()
+  local window = require("hyprpilot.chat.window")
+  local instances = require("hyprpilot.rpc.instances")
+  local buffer = require("hyprpilot.chat.buffer")
+
+  local restore_client, calls = helpers.stub_client_with({
+    ["instances/shutdown"] = { result = { instanceId = "solo" } },
+  })
+
+  -- Register a single instance so `active_instance()` resolves.
+  local bufnr = buffer.create("solo")
+  window.register({
+    bufnr = bufnr,
+    instance_id = "solo",
+    spawned_with_shutdown = true,
+  }, { activate = true })
+
+  -- Snapshot the pre-shutdown state.
+  MiniTest.expect.equality(window._instances["solo"] ~= nil, true)
+
+  -- Fire the manual shutdown.
+  instances.shutdown("solo")
+
+  -- After the (synchronous stub) RPC callback: instance wiped + window hidden.
+  MiniTest.expect.equality(window._instances["solo"], nil)
+  -- Window is not visible (was never opened in headless; `hide()` is a no-op
+  -- when not visible — key assertion is that the registry is empty).
+  MiniTest.expect.equality(next(window._instances), nil)
+
+  -- Exactly one `instances/shutdown` wire call.
+  local shutdown_calls = vim.tbl_filter(function(c)
+    return c.method == "instances/shutdown"
+  end, calls)
+  MiniTest.expect.equality(#shutdown_calls, 1)
+  MiniTest.expect.equality(shutdown_calls[1].params.instanceId, "solo")
+
+  helpers.cleanup_instance("solo")
+  restore_client()
+end
+
 return T
