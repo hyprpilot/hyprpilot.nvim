@@ -598,6 +598,57 @@ function M.set_option(instance_id, config_id, value, callback)
   end)
 end
 
+---Swap the profile on a live instance under the SAME `instance_id`.
+---Daemon tears down the actor + re-spawns under the new profile,
+---preserving the registry id. Plugin / overlay chrome keyed by
+---instance_id (chat buffers, window state, queue strip, permission
+---row) stays addressable across the swap — only the on-wire
+---profile_id / agent_id / model / mode shift. When both profiles
+---resolve to the same agent_id, the existing session_id is reused
+---and the chat transcript carries over; different agent_ids force
+---a fresh session (the daemon broadcasts the transcript wipe via
+---the usual snapshot path).
+---
+---`opts.with_config` mirrors the wire field: `nil` (omit) keeps
+---the captain's stored overlays from the original spawn / last
+---`instances/restart`; `{}` (empty list) wipes them; a non-empty
+---list replaces. Captains rarely touch this.
+---
+---Profile ids come from the daemon's `profiles/list` catalog (the
+---same surface `palettes.profiles` opens).
+---@param instance_id string
+---@param profile_id string
+---@param opts? { with_config?: hyprpilot.ConfigPatch[] }
+---@param callback? hyprpilot.SetterCallback
+function M.set_profile(instance_id, profile_id, opts, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.set_profile: instance_id must be a non-empty string")
+    return
+  end
+
+  if type(profile_id) ~= "string" or profile_id == "" then
+    log.warn("instances.set_profile: profile_id must be a non-empty string")
+    return
+  end
+
+  opts = opts or {}
+  local params = { instanceId = instance_id, profileId = profile_id }
+  -- Only stamp `withConfig` on the wire when the caller passed it
+  -- explicitly. Daemon distinguishes `None` (keep stored overlays)
+  -- from `Some(vec)` (replace, even with empty); we mirror via
+  -- field presence so `nil` opts.with_config doesn't accidentally
+  -- wipe the overlays.
+  if opts.with_config ~= nil then
+    params.withConfig = opts.with_config
+  end
+
+  client.request("instances/setProfile", params, nil, function(err, result)
+    if callback ~= nil then
+      callback(err, result)
+    end
+  end)
+end
+
 ---True when the instance is currently marked "keep alive past nvim
 ---quit" — i.e. `cleanup_owned` will skip it on exit. Returns nil
 ---when the instance is unknown (not registered locally).
