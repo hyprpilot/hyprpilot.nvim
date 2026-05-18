@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.9.0...hyprpilot.nvim-v1.9.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* update profile ([#113](https://github.com/hyprpilot/hyprpilot.nvim/issues/113)) ([dca1db8](https://github.com/hyprpilot/hyprpilot.nvim/commit/dca1db8c3e10951b247c8d1305189fdf2a80524d))
+
 ## [1.9.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.8.0...hyprpilot.nvim-v1.9.0) (2026-05-18)
 
 
