@@ -780,18 +780,30 @@ function M.attach_clipboard(opts)
   -- the same `clipboard-<ts>` basename colliding across pastes.
   local dir = opts.dir or vim.fn.tempname()
   vim.fn.mkdir(dir, "p")
-  local ext = clipboard.extension_for(mime) or "bin"
-  local path = string.format("%s/clipboard-%d.%s", dir, vim.uv.hrtime(), ext)
+  -- Extension lookup goes through the system mime DB
+  -- (`/etc/mime.types`). When the system doesn't know the mime
+  -- (Windows hosts, or an exotic mime not in `media-types`), we
+  -- save as `.bin` and force-pass the explicit mime to
+  -- `attach_file` so the wire payload still carries the right
+  -- mime hint to the daemon (extension-based inference would
+  -- otherwise return nil for `.bin`).
+  local ext = clipboard.extension_for(mime)
+  local path = string.format("%s/clipboard-%d.%s", dir, vim.uv.hrtime(), ext or "bin")
 
   if not clipboard.save_as(mime, path) then
     log.warn("composer.attach_clipboard: clipboard.save_as(%s) failed for %s", mime, path)
     return nil
   end
 
-  -- `attach_file` re-derives mime from the extension we just
-  -- baked in and picks the text vs binary wire path on its own —
-  -- no need to plumb mime through here.
-  return M.attach_file(path, opts)
+  -- Plumb the explicit mime through when the extension is
+  -- generic (`.bin`); `attach_file` honours `opts.mime` over
+  -- extension-based inference, so the daemon still receives the
+  -- correct mime even when the basename doesn't help.
+  local file_opts = opts
+  if ext == nil then
+    file_opts = vim.tbl_extend("force", {}, opts, { mime = mime })
+  end
+  return M.attach_file(path, file_opts)
 end
 
 ---Text-only fallback for `attach_clipboard`. Used when no native

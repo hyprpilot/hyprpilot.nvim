@@ -301,34 +301,115 @@ function M._mime_to_osa_class(mime_type)
   return map[mime_type]
 end
 
----Default mime-type → file-extension map. Used when the caller
----doesn't supply its own and just wants a sensible basename for a
----given mime. Returns nil for unknown mimes so the caller can
----fall back to a generic `.bin`.
+--- Cached mime → extension lookup loaded from the system DB
+--- (`/etc/mime.types` on Linux / macOS shared by Apache, etc.).
+--- Built lazily on first call to `extension_for`. Returns nil
+--- when the system has no entry for the mime — caller picks a
+--- generic fallback (typically `.bin`).
+---@type table<string, string>?
+local _system_ext_map = nil
+
+--- Candidate system mime DB paths (first found wins). We read the
+--- canonical Apache-style `/etc/mime.types` shipped by the
+--- `media-types` package on Debian/Ubuntu, the matching file on
+--- macOS, and the FreeBSD/Homebrew location.
+local SYSTEM_MIME_PATHS = {
+  "/etc/mime.types",
+  "/etc/apache2/mime.types",
+  "/usr/local/etc/apache2/mime.types",
+  "/usr/local/etc/mime.types",
+}
+
+---Parse a single line from `/etc/mime.types`. Comment lines and
+---mime-only entries (no extensions advertised) yield nil. Returns
+---`(mime, first_ext)` so the caller stamps the FIRST advertised
+---extension as the canonical one for the mime.
+---@param line string
+---@return string?, string?
+local function parse_mime_types_line(line)
+  if line:match("^%s*#") or line:match("^%s*$") then
+    return nil, nil
+  end
+  local mime, exts = line:match("^(%S+)%s+(.+)$")
+  if mime == nil or exts == nil then
+    return nil, nil
+  end
+  return mime, exts:match("^(%S+)")
+end
+
+---Read a system mime DB file from disk via libuv (no shell). Returns
+---the full contents or nil when the file doesn't exist / can't be
+---read (logged at debug, not warn — missing on this host is fine).
+---@param path string
+---@return string?
+local function read_system_db(path)
+  local fd = vim.uv.fs_open(path, "r", tonumber("400", 8))
+  if fd == nil then
+    return nil
+  end
+  local stat = vim.uv.fs_fstat(fd)
+  if stat == nil or stat.size == 0 then
+    vim.uv.fs_close(fd)
+    return nil
+  end
+  local content = vim.uv.fs_read(fd, stat.size, 0)
+  vim.uv.fs_close(fd)
+  return content
+end
+
+---Build the mime → ext map from the first system DB we find on
+---disk. Cached for the rest of the session.
+---@return table<string, string>
+local function load_system_ext_map()
+  if _system_ext_map ~= nil then
+    return _system_ext_map
+  end
+  local map = {}
+  for _, path in ipairs(SYSTEM_MIME_PATHS) do
+    local content = read_system_db(path)
+    if content ~= nil then
+      for line in content:gmatch("[^\n]+") do
+        local mime, ext = parse_mime_types_line(line)
+        -- First match wins so the canonical extension (jpg over
+        -- jpe / jpeg etc.) is whichever the system DB lists first
+        -- for that mime.
+        if mime ~= nil and ext ~= nil and map[mime] == nil then
+          map[mime] = ext
+        end
+      end
+      log.debug("composer.clipboard: loaded mime DB from %s (%d entries)", path, vim.tbl_count(map))
+      break
+    end
+  end
+  _system_ext_map = map
+  return map
+end
+
+---Resolve the canonical file extension for a mime type. Reads
+---the system mime DB (`/etc/mime.types` etc.) on first call and
+---caches. Returns nil for mimes the system doesn't know — caller
+---falls back to `.bin` and passes the explicit mime through to
+---`attach_file({ mime = ... })` so the wire payload still carries
+---the correct mime hint to the daemon.
+---
+---Windows hosts typically don't ship `/etc/mime.types`. Captains
+---there get the nil-return path; `attach_clipboard` falls back to
+---`.bin` + explicit mime on the attachment.
 ---@param mime_type string
 ---@return string?
 function M.extension_for(mime_type)
-  local map = {
-    ["image/png"] = "png",
-    ["image/jpeg"] = "jpg",
-    ["image/jp2"] = "jp2",
-    ["image/gif"] = "gif",
-    ["image/webp"] = "webp",
-    ["image/tiff"] = "tiff",
-    ["image/svg+xml"] = "svg",
-    ["image/bmp"] = "bmp",
-    ["application/pdf"] = "pdf",
-    ["application/rtf"] = "rtf",
-    ["application/zip"] = "zip",
-    ["application/json"] = "json",
-    ["application/yaml"] = "yaml",
-    ["text/html"] = "html",
-    ["text/markdown"] = "md",
-    ["text/csv"] = "csv",
-    ["text/uri-list"] = "uri",
-    ["text/plain"] = "txt",
-  }
+  if type(mime_type) ~= "string" or mime_type == "" then
+    return nil
+  end
+  local map = load_system_ext_map()
   return map[mime_type] or map[mime_type:lower()]
+end
+
+---Reset the cached system mime DB. Test-only — lets a test
+---override `SYSTEM_MIME_PATHS` (via monkeypatch on this module's
+---internals) and re-load.
+function M._reset_ext_map()
+  _system_ext_map = nil
 end
 
 ---Pick the highest-fidelity mime from `available` according to a
