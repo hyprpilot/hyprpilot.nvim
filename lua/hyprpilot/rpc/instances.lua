@@ -479,6 +479,20 @@ function M.shutdown(instance_id, callback)
       return
     end
 
+    -- Drop the local registry entry + wipe the buffer so the chat
+    -- doesn't keep showing a stale instance that the daemon has
+    -- already torn down.
+    window.close(id)
+
+    -- When the shutdown leaves no instances registered, hide the
+    -- entire sidebar. The captain shut down the only session — no
+    -- content to show, so close the pane rather than leaving an
+    -- empty placeholder sitting on screen.
+    if next(window._instances) == nil then
+      window.hide()
+      log.debug("instances.shutdown: last instance gone — hiding chat window")
+    end
+
     if callback ~= nil then
       callback(nil, { id = result.instanceId })
     end
