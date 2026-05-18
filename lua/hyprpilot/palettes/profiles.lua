@@ -13,7 +13,6 @@ local hp_instances = require("hyprpilot.rpc.instances")
 local hp_profiles = require("hyprpilot.rpc.profiles")
 local log = require("hyprpilot.log")
 local pickers = require("hyprpilot.palettes.pickers")
-local window = require("hyprpilot.chat.window")
 
 local M = {}
 
@@ -90,33 +89,25 @@ function M.open(opts)
 end
 
 ---@class hyprpilot.palettes.profiles.SetOpts
----@field instance_id? string                              -- default: active
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
 
----Open the profile picker against a LIVE instance — picking a row
----fires `instances/setProfile`. The daemon tears down the actor +
----re-spawns under the new profile in `Bootstrap::ListOnly`: the
----agent process is alive and `sessions/list` serves the new
----profile's history, but no session is bound. Natural follow-on
----is the sessions palette so the captain picks a session under
----the new profile.
+---Open the profile picker against the daemon-singleton selected
+---profile. Picking a row fires `profile/set` — daemon mutates its
+---`selected_profile_id`, broadcasts `acp:profile-changed`, and
+---every connected frontend syncs. No mid-flight teardown of any
+---running instance; the selection is a daemon-scope pointer
+---separate from per-instance profile_ids (a live instance keeps
+---running under whatever profile it was spawned with).
 ---
----Plugin / overlay chrome keyed by `instance_id` (chat buffer,
----window, queue strip, permission row) stays addressable across
----the switch.
+---Captain workflow: pick profile → `sessions/list` reflects the
+---new profile's history → captain picks a session → `sessions/load`
+---mints an actor under the picked profile.
 ---@param opts? hyprpilot.palettes.profiles.SetOpts
 function M.set(opts)
   opts = opts or {}
-  local instance_id = opts.instance_id or window.active_instance()
-  if instance_id == nil then
-    log.warn("palettes.profiles.set: no active instance")
-    return
-  end
 
-  -- Fetch the catalog + the active instance's current profile_id
-  -- in parallel so the picker can mark the current row + skip the
-  -- no-op self-set. `instances.meta` is the same source the
-  -- header pill reads from.
+  -- Fetch the catalog + the daemon-selected profile in parallel so
+  -- the picker can mark the current row + skip the no-op self-set.
   hp_profiles.list(function(err, items)
     if err ~= nil then
       log.warn("palettes.profiles.set: profiles/list failed: %s", err.message)
@@ -128,21 +119,20 @@ function M.set(opts)
       return
     end
 
-    hp_instances.meta(instance_id, function(meta_err, meta)
-      if meta_err ~= nil then
-        log.warn("palettes.profiles.set: meta fetch failed: %s", meta_err.message)
+    hp_profiles.get_selected(function(get_err, current)
+      if get_err ~= nil then
+        log.warn("palettes.profiles.set: profile/get failed: %s", get_err.message)
         return
       end
-      local current = (meta or {}).profile_id
 
       pickers.open({
         items = items,
-        title = "re-bootstrap active instance under another profile",
+        title = "select profile (daemon-singleton)",
         kind = "hyprpilot.profiles.set",
         picker = opts.picker,
         format_item = function(item)
-          -- Mark the current profile with `*` (mirrors the
-          -- modes / models / effort palettes' shape) so the
+          -- Mark the currently-selected profile with `*` (mirrors
+          -- the modes / models / effort palettes' shape) so the
           -- captain reads at a glance "which one am I on".
           local prefix = item.id == current and "* " or "  "
           local meta_parts = { item.agent_id }
@@ -157,20 +147,18 @@ function M.set(opts)
             log.debug("palettes.profiles.set: chose current profile (%s) — no-op", tostring(current))
             return
           end
-          hp_instances.set_profile(instance_id, choice.id, nil, function(set_err)
+          hp_profiles.set_selected(choice.id, function(set_err)
             if set_err ~= nil then
-              log.warn("palettes.profiles.set: setProfile failed: %s", set_err.message)
+              log.warn("palettes.profiles.set: profile/set failed: %s", set_err.message)
               return
             end
-            log.debug("palettes.profiles.set: instance=%s profile=%s — opening sessions palette for the new profile's history", instance_id, choice.id)
+            log.debug("palettes.profiles.set: profile=%s — opening sessions palette for the new profile's history", choice.id)
             -- Auto-chain into the sessions palette so the
-            -- captain can bind a session under the new profile
-            -- (the daemon booted Bootstrap::ListOnly — agent is
-            -- alive, nothing bound yet, prompts will reject
-            -- until a session is loaded). Captain can ESC out
+            -- captain immediately browses the new profile's
+            -- session catalog and picks one to bind. ESC out
             -- if they'd rather start fresh.
             pcall(function()
-              require("hyprpilot.palettes.sessions").open({ instance_id = instance_id })
+              require("hyprpilot.palettes.sessions").open()
             end)
           end)
         end,

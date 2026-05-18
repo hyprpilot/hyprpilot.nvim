@@ -1101,16 +1101,11 @@ function M.submit(text, opts)
     log.debug("composer.submit: read %d bytes from composer bufnr=%s", #text, bufnr)
   end
 
-  -- Empty / whitespace-only guard — non-destructive so the daemon
-  -- receives whatever the captain typed byte-identically.
-  -- The daemon handles paragraph structure on the output side
-  -- (paragraph_break_prefix on streamed chunks) but takes input
-  -- verbatim; trimming captain-supplied whitespace here would
-  -- silently rewrite the prompt's shape.
-  if text:match("^%s*$") then
-    log.debug("composer.submit: text empty / whitespace-only, no-op")
-    return
-  end
+  -- Pass text to the daemon byte-identical. Empty / whitespace-only
+  -- guard removed: daemon handles empty input itself (mirrors the
+  -- empty-thought design where stats ship even when text is blank),
+  -- and adding a plugin-side guard would re-introduce the same
+  -- silent-rewrite class of bug the trim removal closed.
 
   local attachments_snapshot = opts.attachments
   if attachments_snapshot == nil then
