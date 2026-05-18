@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.9.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.8.0...hyprpilot.nvim-v1.9.0) (2026-05-18)
+
+
+### Features
+
+* **composer:** internalize clipboard probe — drop img-clip.nvim dependency ([#109](https://github.com/hyprpilot/hyprpilot.nvim/issues/109)) ([523778a](https://github.com/hyprpilot/hyprpilot.nvim/commit/523778a2979a524e513f7312ac61810c7fa6402b))
+* **profiles:** wire set_profile + palettes.profiles.swap (live profile switch) ([#110](https://github.com/hyprpilot/hyprpilot.nvim/issues/110)) ([59c6445](https://github.com/hyprpilot/hyprpilot.nvim/commit/59c64457a54b9818d5dadf66c352b6909b96611b))
+
+
+### Bug Fixes
+
+* **instances:** close pane when last instance is shut down + bell skips auto-resolved permissions ([#107](https://github.com/hyprpilot/hyprpilot.nvim/issues/107)) ([2725222](https://github.com/hyprpilot/hyprpilot.nvim/commit/272522276fed3d36597933181e44dd70cb758933))
+
+
+### Refactor
+
+* **profiles:** set() rename + ListOnly semantic + auto-chain to sessions palette ([#112](https://github.com/hyprpilot/hyprpilot.nvim/issues/112)) ([15c093f](https://github.com/hyprpilot/hyprpilot.nvim/commit/15c093f50050d10edf6e19d372c8e5cafdf5f4f6))
+
 ## [1.8.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.7.0...hyprpilot.nvim-v1.8.0) (2026-05-17)
 
 
