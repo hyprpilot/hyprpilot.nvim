@@ -598,16 +598,27 @@ function M.set_option(instance_id, config_id, value, callback)
   end)
 end
 
----Swap the profile on a live instance under the SAME `instance_id`.
----Daemon tears down the actor + re-spawns under the new profile,
----preserving the registry id. Plugin / overlay chrome keyed by
----instance_id (chat buffers, window state, queue strip, permission
----row) stays addressable across the swap — only the on-wire
----profile_id / agent_id / model / mode shift. When both profiles
----resolve to the same agent_id, the existing session_id is reused
----and the chat transcript carries over; different agent_ids force
----a fresh session (the daemon broadcasts the transcript wipe via
----the usual snapshot path).
+---Switch the profile on a live instance under the SAME `instance_id`.
+---Daemon tears down the actor + re-spawns under the new profile in
+---`Bootstrap::ListOnly` — the agent process is alive and serves
+---`sessions/list` for the new profile's history, but NO session is
+---bound. The captain then either picks one of the new profile's
+---historical sessions via `sessions/load` (the natural follow-on
+---palette) or starts a fresh session by binding before the first
+---prompt — prompts against an unbound list-only actor reject with
+---`no live session in list-only actor`.
+---
+---Same-profile + nil overlays short-circuit daemon-side, so a
+---double-fire from the palette is free.
+---
+---Plugin / overlay chrome keyed by `instance_id` (chat buffer,
+---window, queue strip, permission row) stays addressable across the
+---switch — only the on-wire profile_id / agent_id / available_modes
+---/ available_models shift. The chat transcript wipes (no
+---transparent session preservation — see daemon commit `567d3a0`
+---for the rationale: resuming the old session under the new profile
+---grafted divergent system context onto a transcript the captain
+---never opted in to).
 ---
 ---`opts.with_config` mirrors the wire field: `nil` (omit) keeps
 ---the captain's stored overlays from the original spawn / last
