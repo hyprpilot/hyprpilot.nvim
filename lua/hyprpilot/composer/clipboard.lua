@@ -1,40 +1,42 @@
---- Internal clipboard probe + save_image helper. Mirrors the
---- shell-out approach `img-clip.nvim` uses (xclip / wl-paste /
---- pngpaste / powershell.exe) but inline so the plugin doesn't
---- carry an external Neovim dependency just for the
---- "is the clipboard an image, and if so write it to a temp file"
---- two-call surface that `composer.attach_clipboard` consumes.
+--- Generic clipboard probe + save_as helper. Lists every mime
+--- type the system clipboard currently advertises; the caller
+--- picks the best one for its use case and writes the content
+--- straight to disk. No assumptions about images-vs-text — works
+--- for PNG / JPEG / SVG / PDF / WebP / HTML / Markdown / plain
+--- text / arbitrary binary on hosts whose clipboard backends
+--- expose them.
 ---
---- Pure functions, no module state. Caller decides where to save
---- (typically `vim.fn.tempname()` + a deterministic basename).
+--- Backends (resolved in order, first hit wins):
+---   Windows / WSL   → `powershell.exe`
+---   macOS           → `pbpaste` (text) + `osascript` (mime probe / data)
+---   Wayland Linux   → `wl-paste`
+---   X11 Linux       → `xclip`
+---
+--- Pure functions, no module state beyond a single cached backend
+--- resolution. Caller decides where to save (typically
+--- `vim.fn.tempname()` + a generated basename with the right
+--- extension for the picked mime).
 
 local log = require("hyprpilot.log")
 
 local M = {}
 
---- Resolved clipboard backend keyed by the binary we run. Cached
---- across calls — the probe is `executable()` + env-var lookups,
---- cheap to redo, but cache anyway to keep `attach_clipboard`
---- branch-free on the common path.
+--- Cached clipboard backend. The probe is `executable()` +
+--- env-var lookups so it's cheap, but cache anyway to keep
+--- `attach_clipboard` branch-free on the common path.
 ---@type string?
 local _cached_cmd = nil
 
----True when `name` is executable on PATH. Wraps `vim.fn.executable`
----which returns 1 for found, 0 for not.
+---True when `name` is executable on PATH.
 ---@param name string
 ---@return boolean
 local function has(name)
   return vim.fn.executable(name) == 1
 end
 
----Detect which clipboard backend is available on this host.
----Resolution order matches `img-clip`:
----   Windows / WSL  → `powershell.exe`
----   macOS          → `pngpaste`
----   Wayland Linux  → `wl-paste` (requires `$WAYLAND_DISPLAY`)
----   X11 Linux      → `xclip` (requires `$DISPLAY`)
----Returns nil when nothing usable is on PATH — caller falls
----through to the text path.
+---Detect which clipboard backend is available. Returns the
+---backend's primary binary (`powershell.exe`, `pbpaste`,
+---`wl-paste`, `xclip`) or nil when nothing usable resolves.
 ---@return string?
 function M.resolve_cmd()
   if _cached_cmd ~= nil then
@@ -44,8 +46,8 @@ function M.resolve_cmd()
   local sys = vim.uv.os_uname().sysname or ""
   if (sys:match("Windows") or vim.fn.has("wsl") == 1) and has("powershell.exe") then
     _cached_cmd = "powershell.exe"
-  elseif sys == "Darwin" and has("pngpaste") then
-    _cached_cmd = "pngpaste"
+  elseif sys == "Darwin" and has("pbpaste") then
+    _cached_cmd = "pbpaste"
   elseif os.getenv("WAYLAND_DISPLAY") ~= nil and has("wl-paste") then
     _cached_cmd = "wl-paste"
   elseif os.getenv("DISPLAY") ~= nil and has("xclip") then
@@ -55,110 +57,226 @@ function M.resolve_cmd()
   return _cached_cmd
 end
 
----True when the system clipboard currently holds a PNG image.
----Probes via `--list-types` (wl-paste) / `-t TARGETS -o` (xclip) /
----empty-pipe exit code (pngpaste) / GetImage hit (powershell).
----Returns false when no backend resolves OR the probe says the
----clipboard holds text / nothing / a non-PNG image.
----@return boolean
-function M.content_is_image()
+---List the mime types the system clipboard currently advertises.
+---Sorted in backend-native order (which is typically the clipboard
+---owner's preference order — first entry is the source's
+---highest-fidelity offering). Returns an empty list when the
+---clipboard is empty OR no backend resolves.
+---@return string[]
+function M.list_mime_types()
   local cmd = M.resolve_cmd()
   if cmd == nil then
-    return false
+    return {}
   end
 
   if cmd == "xclip" then
+    -- `xclip -t TARGETS -o` returns one mime per line.
     local out = vim.system({ "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o" }, { text = true }):wait()
-    return out.code == 0 and (out.stdout or ""):find("image/png", 1, true) ~= nil
+    if out.code ~= 0 then
+      return {}
+    end
+    return vim.split(out.stdout or "", "\n", { plain = true, trimempty = true })
   end
 
   if cmd == "wl-paste" then
     local out = vim.system({ "wl-paste", "--list-types" }, { text = true }):wait()
-    return out.code == 0 and (out.stdout or ""):find("image/png", 1, true) ~= nil
+    if out.code ~= 0 then
+      return {}
+    end
+    return vim.split(out.stdout or "", "\n", { plain = true, trimempty = true })
   end
 
-  if cmd == "pngpaste" then
-    -- pngpaste exits non-zero when the clipboard isn't a PNG. Pipe
-    -- to /dev/null so we don't spew the image bytes into the
-    -- captured stdout for nothing.
-    local out = vim.system({ "pngpaste", "-" }, { text = false }):wait()
-    return out.code == 0
+  if cmd == "pbpaste" then
+    -- macOS has no native mime list — probe the known surface via
+    -- osascript's clipboard descriptor when available, otherwise
+    -- fall back to "if there's image data, claim image/png; if
+    -- there's text, claim text/plain". The osascript path covers
+    -- richer surfaces (RTF, PDF, etc.) when present.
+    local types = {}
+    if has("osascript") then
+      local probe = [[
+        set out to ""
+        set clipInfo to clipboard info
+        repeat with c in clipInfo
+          set out to out & (item 1 of c) & linefeed
+        end repeat
+        return out
+      ]]
+      local osa = vim.system({ "osascript", "-e", probe }, { text = true }):wait()
+      if osa.code == 0 then
+        for _, t in ipairs(vim.split(osa.stdout or "", "\n", { plain = true, trimempty = true })) do
+          local mime = M._osa_class_to_mime(t)
+          if mime ~= nil then
+            table.insert(types, mime)
+          end
+        end
+      end
+    end
+    if #types == 0 then
+      -- pngpaste-aware probe as a last resort (image/png only).
+      if has("pngpaste") then
+        local out = vim.system({ "pngpaste", "-" }, { text = false }):wait()
+        if out.code == 0 then
+          table.insert(types, "image/png")
+        end
+      end
+      -- pbpaste with no args returns text; non-empty → text/plain.
+      local pb = vim.system({ "pbpaste" }, { text = true }):wait()
+      if pb.code == 0 and (pb.stdout or "") ~= "" then
+        table.insert(types, "text/plain")
+      end
+    end
+    return types
   end
 
   if cmd == "powershell.exe" then
-    local out = vim
-      .system(
-        { "powershell.exe", "-NoProfile", "-Command", "Add-Type -AssemblyName System.Windows.Forms; if ([System.Windows.Forms.Clipboard]::ContainsImage()) { 'yes' }" },
-        { text = true }
-      )
-      :wait()
-    return out.code == 0 and (out.stdout or ""):find("yes", 1, true) ~= nil
+    -- Probe via `Get-Clipboard -Format <kind>` + ContainsImage /
+    -- ContainsText / ContainsFileDropList. Returns the supported
+    -- subset in priority order.
+    local script = [[
+      Add-Type -AssemblyName System.Windows.Forms
+      $cb = [System.Windows.Forms.Clipboard]
+      if ($cb::ContainsImage()) { Write-Output 'image/png' }
+      if ($cb::ContainsFileDropList()) { Write-Output 'text/uri-list' }
+      if ($cb::ContainsText()) { Write-Output 'text/plain' }
+    ]]
+    local out = vim.system({ "powershell.exe", "-NoProfile", "-Command", script }, { text = true }):wait()
+    if out.code ~= 0 then
+      return {}
+    end
+    return vim.split(out.stdout or "", "\n", { plain = true, trimempty = true })
   end
 
-  return false
+  return {}
 end
 
----Write the system clipboard's PNG image to `path`. Returns true
----on success, false on any failure (no backend, empty clipboard,
----non-PNG content, exec failure). Caller is responsible for the
----containing directory existing (use `vim.fn.mkdir(dir, "p")`).
----@param path string                       -- absolute file path
+---Translate an AppleScript clipboard-info class identifier into
+---a mime type. Covers the common ones; unknown classes return nil
+---(caller drops them from the listed-types set).
+---@param class_name string
+---@return string?
+function M._osa_class_to_mime(class_name)
+  local map = {
+    ["«class PNGf»"] = "image/png",
+    ["«class TIFF»"] = "image/tiff",
+    ["«class jp2 »"] = "image/jp2",
+    ["«class JPEG»"] = "image/jpeg",
+    ["«class PDF »"] = "application/pdf",
+    ["«class RTF »"] = "application/rtf",
+    ["«class HTML»"] = "text/html",
+    ["«class utf8»"] = "text/plain",
+    ["«class ut16»"] = "text/plain",
+    ["string"] = "text/plain",
+    ["Unicode text"] = "text/plain",
+  }
+  return map[class_name]
+end
+
+---Save the clipboard's `mime_type` payload to `path`. Returns
+---true on success, false on any failure (mime not on clipboard,
+---backend missing, exec failure, IO failure). Caller is
+---responsible for the containing directory existing.
+---@param mime_type string                    -- one of the entries from `list_mime_types()`
+---@param path string                         -- absolute file path
 ---@return boolean ok
-function M.save_image(path)
+function M.save_as(mime_type, path)
+  if type(mime_type) ~= "string" or mime_type == "" then
+    log.warn("composer.clipboard.save_as: mime_type must be a non-empty string")
+    return false
+  end
   if type(path) ~= "string" or path == "" then
-    log.warn("composer.clipboard.save_image: path must be a non-empty string")
+    log.warn("composer.clipboard.save_as: path must be a non-empty string")
     return false
   end
 
   local cmd = M.resolve_cmd()
   if cmd == nil then
-    log.debug("composer.clipboard.save_image: no clipboard backend on PATH")
+    log.debug("composer.clipboard.save_as: no backend on PATH")
     return false
   end
 
   if cmd == "xclip" then
-    -- `xclip -o -t image/png` writes raw PNG to stdout — capture
-    -- as binary (text = false) and write the bytes to `path`.
-    local out = vim.system({ "xclip", "-selection", "clipboard", "-o", "-t", "image/png" }, { text = false }):wait()
+    local out = vim.system({ "xclip", "-selection", "clipboard", "-o", "-t", mime_type }, { text = false }):wait()
     if out.code ~= 0 or out.stdout == nil or out.stdout == "" then
-      log.warn("composer.clipboard.save_image: xclip exited %d", out.code)
+      log.warn("composer.clipboard.save_as: xclip(%s) exited %d", mime_type, out.code)
       return false
     end
     return M._write_bytes(path, out.stdout)
   end
 
   if cmd == "wl-paste" then
-    local out = vim.system({ "wl-paste", "--type", "image/png" }, { text = false }):wait()
+    local out = vim.system({ "wl-paste", "--type", mime_type }, { text = false }):wait()
     if out.code ~= 0 or out.stdout == nil or out.stdout == "" then
-      log.warn("composer.clipboard.save_image: wl-paste exited %d", out.code)
+      log.warn("composer.clipboard.save_as: wl-paste(%s) exited %d", mime_type, out.code)
       return false
     end
     return M._write_bytes(path, out.stdout)
   end
 
-  if cmd == "pngpaste" then
-    -- `pngpaste <path>` writes directly to the target file.
-    local out = vim.system({ "pngpaste", path }):wait()
-    if out.code ~= 0 then
-      log.warn("composer.clipboard.save_image: pngpaste exited %d (%s)", out.code, tostring(out.stderr))
-      return false
+  if cmd == "pbpaste" then
+    -- macOS: per-mime extraction. PNG via pngpaste, text via
+    -- pbpaste, anything else via osascript's `the clipboard as «class XYZ»`.
+    if mime_type == "image/png" and has("pngpaste") then
+      local out = vim.system({ "pngpaste", path }):wait()
+      return out.code == 0
     end
-    return true
+    if mime_type == "text/plain" then
+      local out = vim.system({ "pbpaste" }, { text = true }):wait()
+      if out.code ~= 0 then
+        return false
+      end
+      return M._write_bytes(path, out.stdout or "")
+    end
+    if has("osascript") then
+      local cls = M._mime_to_osa_class(mime_type)
+      if cls == nil then
+        log.warn("composer.clipboard.save_as: no osascript class for mime=%s", mime_type)
+        return false
+      end
+      local script = string.format(
+        "set the_data to (the clipboard as %s)\n"
+          .. "set the_file to open for access POSIX file %q with write permission\n"
+          .. "set eof of the_file to 0\n"
+          .. "write the_data to the_file\n"
+          .. "close access the_file",
+        cls,
+        path
+      )
+      local out = vim.system({ "osascript", "-e", script }, { text = true }):wait()
+      if out.code ~= 0 then
+        log.warn("composer.clipboard.save_as: osascript(%s) exited %d (%s)", mime_type, out.code, tostring(out.stderr))
+        return false
+      end
+      return true
+    end
+    log.warn("composer.clipboard.save_as: no macOS backend for mime=%s", mime_type)
+    return false
   end
 
   if cmd == "powershell.exe" then
-    -- Quote the path with single quotes — powershell treats single-
-    -- quoted strings as literal. Escape any embedded single quote.
     local escaped = path:gsub("'", "''")
-    local script = string.format(
-      "Add-Type -AssemblyName System.Windows.Forms; "
-        .. "if ([System.Windows.Forms.Clipboard]::ContainsImage()) { "
-        .. "[System.Windows.Forms.Clipboard]::GetImage().Save('%s') } else { exit 1 }",
-      escaped
-    )
+    local script
+    if mime_type == "image/png" then
+      script = string.format(
+        "Add-Type -AssemblyName System.Windows.Forms; "
+          .. "if ([System.Windows.Forms.Clipboard]::ContainsImage()) { "
+          .. "[System.Windows.Forms.Clipboard]::GetImage().Save('%s') } else { exit 1 }",
+        escaped
+      )
+    elseif mime_type == "text/plain" then
+      script = string.format(
+        "Add-Type -AssemblyName System.Windows.Forms; "
+          .. "if ([System.Windows.Forms.Clipboard]::ContainsText()) { "
+          .. "[System.IO.File]::WriteAllText('%s', [System.Windows.Forms.Clipboard]::GetText()) } else { exit 1 }",
+        escaped
+      )
+    else
+      log.warn("composer.clipboard.save_as: no powershell backend for mime=%s", mime_type)
+      return false
+    end
     local out = vim.system({ "powershell.exe", "-NoProfile", "-Command", script }):wait()
     if out.code ~= 0 then
-      log.warn("composer.clipboard.save_image: powershell exited %d (%s)", out.code, tostring(out.stderr))
+      log.warn("composer.clipboard.save_as: powershell(%s) exited %d (%s)", mime_type, out.code, tostring(out.stderr))
       return false
     end
     return true
@@ -167,10 +285,108 @@ function M.save_image(path)
   return false
 end
 
+---Translate a mime type into the AppleScript clipboard class
+---identifier. Inverse of `_osa_class_to_mime`. Returns nil for
+---mime types macOS doesn't natively address as a clipboard class.
+---@param mime_type string
+---@return string?
+function M._mime_to_osa_class(mime_type)
+  local map = {
+    ["image/png"] = "«class PNGf»",
+    ["image/tiff"] = "«class TIFF»",
+    ["image/jpeg"] = "«class JPEG»",
+    ["application/pdf"] = "«class PDF »",
+    ["application/rtf"] = "«class RTF »",
+    ["text/html"] = "«class HTML»",
+    ["text/plain"] = "«class utf8»",
+  }
+  return map[mime_type]
+end
+
+---Default mime-type → file-extension map. Used when the caller
+---doesn't supply its own and just wants a sensible basename for a
+---given mime. Returns nil for unknown mimes so the caller can
+---fall back to a generic `.bin`.
+---@param mime_type string
+---@return string?
+function M.extension_for(mime_type)
+  local map = {
+    ["image/png"] = "png",
+    ["image/jpeg"] = "jpg",
+    ["image/jp2"] = "jp2",
+    ["image/gif"] = "gif",
+    ["image/webp"] = "webp",
+    ["image/tiff"] = "tiff",
+    ["image/svg+xml"] = "svg",
+    ["image/bmp"] = "bmp",
+    ["application/pdf"] = "pdf",
+    ["application/rtf"] = "rtf",
+    ["application/zip"] = "zip",
+    ["application/json"] = "json",
+    ["application/yaml"] = "yaml",
+    ["text/html"] = "html",
+    ["text/markdown"] = "md",
+    ["text/csv"] = "csv",
+    ["text/uri-list"] = "uri",
+    ["text/plain"] = "txt",
+  }
+  return map[mime_type] or map[mime_type:lower()]
+end
+
+---Pick the highest-fidelity mime from `available` according to a
+---fixed preference order. The captain pasted from a source that
+---advertised multiple formats (e.g. screenshot: `image/png` +
+---`image/tiff` + `text/plain` filename); we want the rendered
+---bitmap not the filename. Returns nil when `available` has no
+---supported entry — caller falls back to text-register.
+---@param available string[]
+---@return string?
+function M.pick_best_mime(available)
+  if type(available) ~= "table" or #available == 0 then
+    return nil
+  end
+  -- Lookup table for O(1) membership.
+  local present = {}
+  for _, m in ipairs(available) do
+    present[m] = true
+  end
+  -- Preference order: images first (binary, lossless first),
+  -- then richer documents (PDF), then HTML, then markdown / text.
+  -- Uri-list at the tail because file references are usually only
+  -- useful when nothing else attaches.
+  local prefer = {
+    "image/png",
+    "image/webp",
+    "image/jpeg",
+    "image/jp2",
+    "image/tiff",
+    "image/gif",
+    "image/svg+xml",
+    "image/bmp",
+    "application/pdf",
+    "application/rtf",
+    "text/html",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+    "application/yaml",
+    "text/plain",
+    "text/uri-list",
+  }
+  for _, m in ipairs(prefer) do
+    if present[m] then
+      return m
+    end
+  end
+  -- Nothing on the preference list matched, but `available` is
+  -- non-empty — return the first entry verbatim so unusual but
+  -- valid mimes still attach.
+  return available[1]
+end
+
 ---Write `bytes` (raw string, may contain NULs) to `path` via
----`vim.uv.fs_open` + `fs_write`. Returns true on success, false
----on any IO error. Mode 0o600 (captain-only) since these are
----temp clipboard payloads, not shared.
+---`vim.uv.fs_open` + `fs_write`. Returns true on success, false on
+---any IO error. Mode 0o600 (captain-only).
 ---@param path string
 ---@param bytes string
 ---@return boolean ok
@@ -189,8 +405,8 @@ function M._write_bytes(path, bytes)
   return true
 end
 
----Reset the cached backend. Test-only — flips a captain who toggles
----`$WAYLAND_DISPLAY` mid-session out of the stale cache.
+---Reset the cached backend. Test-only — flips a captain who
+---toggles `$WAYLAND_DISPLAY` mid-session out of the stale cache.
 function M._reset_cache()
   _cached_cmd = nil
 end

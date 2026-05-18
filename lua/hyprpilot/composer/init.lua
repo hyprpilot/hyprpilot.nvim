@@ -725,65 +725,88 @@ function M.attach_file(path, opts)
   return M.attach(payload)
 end
 
----Attach whatever's on the system clipboard, mime-detect by source:
---- - if an internal clipboard probe (`composer/clipboard.lua`)
----   reports a PNG on the clipboard, save it to a temp file and
----   route through `attach_file` (binary path: base64 → `data`)
---- - otherwise read the `+` register (system clipboard text), write
----   it to a temp `.txt`, and route through `attach_file` (text
----   path: body string)
+---Attach whatever's on the system clipboard. Probes the
+---clipboard's advertised mime types, picks the highest-fidelity
+---one (image > pdf > rich text > html > markdown > plain text >
+---uri-list — see `clipboard.pick_best_mime`), writes the bytes
+---to a temp file with the right extension, and routes through
+---`attach_file` so `attach`'s mime-aware text/binary auto-detect
+---picks the right wire path (text → `body`, binary → `data`).
 ---
----The single entry point captures the captain's intent ("attach
----whatever I copied") without making them know whether the clipboard
----holds an image or text. Falls through to a warn + nil-return when
----the clipboard is empty and no image is detected.
+---The captain's intent is "attach whatever I copied" — they
+---shouldn't have to know whether the clipboard holds a PNG, a
+---PDF, RTF, HTML, or plain text. The probe surfaces every mime
+---the backend exposes (xclip's `-t TARGETS -o`, wl-paste's
+---`--list-types`, macOS's `clipboard info`, Windows's
+---`Contains*` checks), and the mime-pick + extension map cover
+---everything we know how to write.
 ---
----No `img-clip.nvim` dependency — the probe + save logic is inline
----under `composer/clipboard.lua`. The captain's pattern is mirrored:
----each paste lands in a fresh `vim.fn.tempname()` directory.
----@param opts? { instance_id?: string, title?: string, slug?: string, dir?: string }
+---Falls through to the `+` register text fallback only when the
+---backend resolves to nothing usable (no xclip / wl-paste /
+---pbpaste / powershell on PATH). When the backend is present
+---but the clipboard is empty / unsupported → warn + return nil.
+---@param opts? { instance_id?: string, title?: string, slug?: string, dir?: string, mime?: string }
 ---@return hyprpilot.composer.Attachment?
 function M.attach_clipboard(opts)
   opts = opts or {}
   local clipboard = require("hyprpilot.composer.clipboard")
 
-  -- Image path first — internal probe spawns the right backend
-  -- (xclip / wl-paste / pngpaste / powershell.exe) and returns
-  -- false when nothing usable is on PATH; we then fall through
-  -- to the text path.
-  if clipboard.content_is_image() then
-    -- `vim.fn.tempname()` returns a fresh path under
-    -- `$XDG_RUNTIME_DIR/nvim.<user>/<pid>/<seq>` (or `/tmp/...`
-    -- depending on host). Treat it as a directory so each paste
-    -- gets its own folder — matches the captain's img-clip
-    -- `dir_path = vim.fn.tempname()` pattern and keeps multiple
-    -- pastes from colliding on the same `clipboard-<ts>.png`
-    -- basename.
-    local dir = opts.dir or vim.fn.tempname()
-    vim.fn.mkdir(dir, "p")
-    local path = string.format("%s/clipboard-%d.png", dir, vim.uv.hrtime())
-    if not clipboard.save_image(path) then
-      log.warn("composer.attach_clipboard: clipboard.save_image failed for %s", path)
-      return nil
-    end
-    return M.attach_file(path, opts)
+  if clipboard.resolve_cmd() == nil then
+    -- No native clipboard backend — fall through to vim's `+`
+    -- register so captains running over plain SSH (no DISPLAY /
+    -- WAYLAND_DISPLAY) still get text-paste support.
+    return M._attach_clipboard_text_fallback(opts)
   end
 
-  -- Text fallback. `+` is vim's idiomatic system-clipboard register
-  -- (X11 CLIPBOARD selection / macOS pasteboard / Windows
-  -- clipboard). Empty register → no clipboard content → warn.
-  local text = vim.fn.getreg("+")
-  if type(text) ~= "string" or text == "" then
-    log.warn("composer.attach_clipboard: clipboard is empty (no image, no text)")
+  -- Caller can pin a specific mime when they know what's on the
+  -- clipboard (test / scripting). Default: probe + pick best.
+  local mime = opts.mime
+  if mime == nil then
+    local available = clipboard.list_mime_types()
+    if #available == 0 then
+      -- Backend resolved but the clipboard is empty / opaque.
+      -- Last-ditch: try the `+` register before warning out.
+      return M._attach_clipboard_text_fallback(opts)
+    end
+    mime = clipboard.pick_best_mime(available)
+    if mime == nil then
+      log.warn("composer.attach_clipboard: no supported mime among %s", vim.inspect(available))
+      return nil
+    end
+  end
+
+  -- Fresh temp directory per paste (mirrors the captain's
+  -- `vim.fn.tempname()` pattern in their nvim config). Avoids
+  -- the same `clipboard-<ts>` basename colliding across pastes.
+  local dir = opts.dir or vim.fn.tempname()
+  vim.fn.mkdir(dir, "p")
+  local ext = clipboard.extension_for(mime) or "bin"
+  local path = string.format("%s/clipboard-%d.%s", dir, vim.uv.hrtime(), ext)
+
+  if not clipboard.save_as(mime, path) then
+    log.warn("composer.attach_clipboard: clipboard.save_as(%s) failed for %s", mime, path)
     return nil
   end
 
-  -- Round-trip through a temp `.txt` so `attach_file`'s mime probe
-  -- routes through the text path (body, not base64-encoded data).
-  -- Could call `M.attach({ ... body = text })` directly, but the
-  -- detour keeps every clipboard payload subject to
-  -- `composer.attach.max_bytes` + the same null-byte sniff as a
-  -- disk file.
+  -- `attach_file` re-derives mime from the extension we just
+  -- baked in and picks the text vs binary wire path on its own —
+  -- no need to plumb mime through here.
+  return M.attach_file(path, opts)
+end
+
+---Text-only fallback for `attach_clipboard`. Used when no native
+---clipboard backend is on PATH (plain SSH, no display) OR when
+---the backend is present but reports an empty clipboard. Reads
+---the `+` register, writes to a temp `.txt`, attaches.
+---@param opts table
+---@return hyprpilot.composer.Attachment?
+function M._attach_clipboard_text_fallback(opts)
+  local text = vim.fn.getreg("+")
+  if type(text) ~= "string" or text == "" then
+    log.warn("composer.attach_clipboard: clipboard is empty (no native backend payload, no `+` register text)")
+    return nil
+  end
+
   local path = vim.fn.tempname() .. ".txt"
   local fd = vim.uv.fs_open(path, "w", 420)
   if fd == nil then
@@ -792,7 +815,6 @@ function M.attach_clipboard(opts)
   end
   vim.uv.fs_write(fd, text, 0)
   vim.uv.fs_close(fd)
-
   return M.attach_file(path, opts)
 end
 
