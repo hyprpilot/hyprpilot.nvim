@@ -8,9 +8,15 @@
 ---
 --- Backends (resolved in order, first hit wins):
 ---   Windows / WSL   → `powershell.exe`
----   macOS           → `pbpaste` (text) + `osascript` (mime probe / data)
+---   macOS           → `pbpaste` (text) + `osascript` (mime probe + binary)
 ---   Wayland Linux   → `wl-paste`
 ---   X11 Linux       → `xclip`
+---
+--- macOS uses the standard system tools end-to-end: `pbpaste` for
+--- text round-trips and `osascript` for mime enumeration via
+--- `clipboard info` + per-class extraction
+--- (`the clipboard as «class PNGf»` / `«class PDF »` / …). No
+--- extra third-party binaries required.
 ---
 --- Pure functions, no module state beyond a single cached backend
 --- resolution. Caller decides where to save (typically
@@ -87,40 +93,40 @@ function M.list_mime_types()
   end
 
   if cmd == "pbpaste" then
-    -- macOS has no native mime list — probe the known surface via
-    -- osascript's clipboard descriptor when available, otherwise
-    -- fall back to "if there's image data, claim image/png; if
-    -- there's text, claim text/plain". The osascript path covers
-    -- richer surfaces (RTF, PDF, etc.) when present.
+    -- macOS: `osascript -e 'clipboard info'` returns the full mime
+    -- class list (PNGf, TIFF, PDF, RTF, HTML, utf8, …). Translate
+    -- each AppleScript class to its mime equivalent.
     local types = {}
-    if has("osascript") then
-      local probe = [[
-        set out to ""
-        set clipInfo to clipboard info
-        repeat with c in clipInfo
-          set out to out & (item 1 of c) & linefeed
-        end repeat
-        return out
-      ]]
-      local osa = vim.system({ "osascript", "-e", probe }, { text = true }):wait()
-      if osa.code == 0 then
-        for _, t in ipairs(vim.split(osa.stdout or "", "\n", { plain = true, trimempty = true })) do
-          local mime = M._osa_class_to_mime(t)
-          if mime ~= nil then
-            table.insert(types, mime)
-          end
+    local probe = [[
+      set out to ""
+      set clipInfo to clipboard info
+      repeat with c in clipInfo
+        set out to out & (item 1 of c) & linefeed
+      end repeat
+      return out
+    ]]
+    local osa = vim.system({ "osascript", "-e", probe }, { text = true }):wait()
+    if osa.code == 0 then
+      for _, t in ipairs(vim.split(osa.stdout or "", "\n", { plain = true, trimempty = true })) do
+        local mime = M._osa_class_to_mime(t)
+        if mime ~= nil then
+          table.insert(types, mime)
         end
       end
     end
-    if #types == 0 then
-      -- pngpaste-aware probe as a last resort (image/png only).
-      if has("pngpaste") then
-        local out = vim.system({ "pngpaste", "-" }, { text = false }):wait()
-        if out.code == 0 then
-          table.insert(types, "image/png")
-        end
+    -- Belt + braces: `pbpaste` with no args returns the text
+    -- representation. If it's non-empty and `text/plain` didn't
+    -- already land via the osascript probe, add it — covers older
+    -- macOS / minimal hosts where `clipboard info` returns nothing
+    -- usable.
+    local has_text = false
+    for _, m in ipairs(types) do
+      if m == "text/plain" then
+        has_text = true
+        break
       end
-      -- pbpaste with no args returns text; non-empty → text/plain.
+    end
+    if not has_text then
       local pb = vim.system({ "pbpaste" }, { text = true }):wait()
       if pb.code == 0 and (pb.stdout or "") ~= "" then
         table.insert(types, "text/plain")
@@ -214,12 +220,8 @@ function M.save_as(mime_type, path)
   end
 
   if cmd == "pbpaste" then
-    -- macOS: per-mime extraction. PNG via pngpaste, text via
-    -- pbpaste, anything else via osascript's `the clipboard as «class XYZ»`.
-    if mime_type == "image/png" and has("pngpaste") then
-      local out = vim.system({ "pngpaste", path }):wait()
-      return out.code == 0
-    end
+    -- macOS: text goes through `pbpaste`, everything else through
+    -- `osascript`'s `the clipboard as «class XYZ»` + binary write.
     if mime_type == "text/plain" then
       local out = vim.system({ "pbpaste" }, { text = true }):wait()
       if out.code ~= 0 then
@@ -227,30 +229,26 @@ function M.save_as(mime_type, path)
       end
       return M._write_bytes(path, out.stdout or "")
     end
-    if has("osascript") then
-      local cls = M._mime_to_osa_class(mime_type)
-      if cls == nil then
-        log.warn("composer.clipboard.save_as: no osascript class for mime=%s", mime_type)
-        return false
-      end
-      local script = string.format(
-        "set the_data to (the clipboard as %s)\n"
-          .. "set the_file to open for access POSIX file %q with write permission\n"
-          .. "set eof of the_file to 0\n"
-          .. "write the_data to the_file\n"
-          .. "close access the_file",
-        cls,
-        path
-      )
-      local out = vim.system({ "osascript", "-e", script }, { text = true }):wait()
-      if out.code ~= 0 then
-        log.warn("composer.clipboard.save_as: osascript(%s) exited %d (%s)", mime_type, out.code, tostring(out.stderr))
-        return false
-      end
-      return true
+    local cls = M._mime_to_osa_class(mime_type)
+    if cls == nil then
+      log.warn("composer.clipboard.save_as: no osascript class for mime=%s", mime_type)
+      return false
     end
-    log.warn("composer.clipboard.save_as: no macOS backend for mime=%s", mime_type)
-    return false
+    local script = string.format(
+      "set the_data to (the clipboard as %s)\n"
+        .. "set the_file to open for access POSIX file %q with write permission\n"
+        .. "set eof of the_file to 0\n"
+        .. "write the_data to the_file\n"
+        .. "close access the_file",
+      cls,
+      path
+    )
+    local out = vim.system({ "osascript", "-e", script }, { text = true }):wait()
+    if out.code ~= 0 then
+      log.warn("composer.clipboard.save_as: osascript(%s) exited %d (%s)", mime_type, out.code, tostring(out.stderr))
+      return false
+    end
+    return true
   end
 
   if cmd == "powershell.exe" then
