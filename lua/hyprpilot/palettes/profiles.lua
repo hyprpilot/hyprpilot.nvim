@@ -152,14 +152,6 @@ function M.set(opts)
               log.warn("palettes.profiles.set: profile/set failed: %s", set_err.message)
               return
             end
-            log.debug("palettes.profiles.set: profile=%s — opening sessions palette for the new profile's history", choice.id)
-            -- Auto-chain into the sessions palette so the
-            -- captain immediately browses the new profile's
-            -- session catalog and picks one to bind. ESC out
-            -- if they'd rather start fresh.
-            pcall(function()
-              require("hyprpilot.palettes.sessions").open()
-            end)
           end)
         end,
       })
