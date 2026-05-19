@@ -31,7 +31,7 @@ local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission-row")
 ---@field tool_kind? string
 ---@field options table[]
 ---@field formatted? table
----@field focused_idx integer
+---@field focused_idx integer?    -- nil when the daemon shipped no default-option id; <Tab> / <S-Tab> seed focus on the first cycle keypress
 ---@field raw_input? table  -- agent's structured tool input (path / old_string / new_string / content / edits[] for the edit family). Diff preview reads from here.
 
 ---@type hyprpilot.chat.permission-row.Entry[]
@@ -92,49 +92,34 @@ local function ensure_buffer()
   return bufnr
 end
 
----Pick the "default" option index for a fresh permission prompt.
+---Pick the focus index for a fresh permission prompt. Honour the
+---daemon's `default_option_id` verbatim — it's the source of truth
+---(see `pick_allow_once_id` in
+---`src-tauri/src/adapters/permission.rs`). Returns nil when the
+---daemon shipped no id OR the shipped id doesn't match any offered
+---option: the captain navigates with `<Tab>` / `<S-Tab>` and
+---commits with `<CR>` on an explicit pick.
 ---
----Resolution order:
----  1. **Daemon-supplied `default_option_id`** — `PermissionRequestSnapshot::default_option_id`
----     (`src-tauri/src/adapters/permission.rs`). The daemon has the
----     agent's full intent, so when it ships a hint we honour it
----     verbatim. Lets future variants (workspace-allow defaults,
----     deny-by-policy, etc.) ship server-side without a plugin
----     update.
----  2. **`option.kind` prefix match (`^allow`)** — daemon
----     wire-normalises every vendor's option shape to `allow_*` /
----     `reject_*` (`PermissionOptionView`); matching on `kind` keeps
----     us in lockstep without code changes for new vendor variants
----     (`allow_session` / `allow_workspace` / …).
----  3. **`option.id` / `option.name` prefix match** — last-ditch
----     fallback for adapters that don't (yet) populate `kind`.
----  4. **First option** — defends against a degenerate prompt with
----     no allow-shaped option so the captain isn't keymap-stuck.
+---No local fallback to `allow_always` (would be "allow forever"
+---by accident) or to the first option (whatever it happens to
+---be). The daemon now strictly ships `default_option_id` ONLY when
+---the agent offered `allow_once` exactly; nvim mirrors that
+---contract — see `pick_allow_once_id` in the daemon for the
+---strict-allow-once rationale.
 ---@param options table[]
 ---@param default_option_id? string
----@return integer
+---@return integer?
 local function default_focused_idx(options, default_option_id)
-  if type(default_option_id) == "string" and default_option_id ~= "" then
-    for i, opt in ipairs(options) do
-      if tostring(opt.optionId or "") == default_option_id then
-        return i
-      end
-    end
-    log.debug("permission_row: daemon default_option_id=%q not in option list; falling back to kind match", default_option_id)
+  if type(default_option_id) ~= "string" or default_option_id == "" then
+    return nil
   end
-
   for i, opt in ipairs(options) do
-    local kind = string.lower(tostring(opt.kind or ""))
-    if kind:match("^allow") then
-      return i
-    end
-    local id = string.lower(tostring(opt.optionId or ""))
-    local name = string.lower(tostring(opt.name or ""))
-    if id:match("^allow") or id:match("^accept") or id:match("^proceed") or name:match("^allow") or name:match("^accept") or name:match("^proceed") then
+    if tostring(opt.optionId or "") == default_option_id then
       return i
     end
   end
-  return 1
+  log.debug("permission_row: daemon default_option_id=%q not in option list; rendering no focused default", default_option_id)
+  return nil
 end
 
 ---Find the first option whose kind (preferred) or id / name (fallback)
