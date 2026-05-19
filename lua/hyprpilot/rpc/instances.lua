@@ -684,12 +684,21 @@ end
 ---standalone `VimLeavePre` autocmd that lost the order race against
 ---the shutdown autocmd and silently no-op'd in production.
 ---
----Fire-and-forget: response (if any) lands after we've already
----exited; nothing here would consume it. The daemon's
----`instances/shutdown` handler is idempotent for already-dead
----instances. Owned instances the captain already shut down via the
----palette get dropped from `_instances` by `window.close`, so the
----iteration naturally skips them.
+---**Blocks via `vim.wait` until every request acks** (or the
+---per-request timeout expires). `chansend` + fire-and-forget is
+---asynchronous — the writes land in libuv's internal queue and
+---only hit the socket on the next event-loop tick. On
+---`VimLeavePre`, Neovim exits before libuv gets that tick, and
+---the daemon never receives the request. Waiting on real replies
+---guarantees the round-trip completed and the daemon's
+---`shutdown_one` actually ran (idempotent for already-dead
+---instances, so a captain who already shut down via the palette
+---just sees a fast ack from `_instances`-less daemon state).
+---
+---Per-request timeout is short (1500ms) so a hung daemon doesn't
+---stall the captain's exit — the worst case is the captain quits,
+---one shutdown gets through, the rest fall through on timeout and
+---may leak as orphans (re-attachable on next launch).
 function M.cleanup_owned()
   local owned = {}
   for id, state in pairs(window._instances) do
@@ -701,8 +710,36 @@ function M.cleanup_owned()
     return
   end
   log.debug("instances.cleanup_owned: shutting down %d owned instance(s)", #owned)
+
+  -- Per-instance done flags + a single `vim.wait` that blocks
+  -- until ALL acks come back. Each request gets a short timeout
+  -- so a hung daemon can't stall vim exit indefinitely.
+  local pending = {}
   for _, id in ipairs(owned) do
-    pcall(client.request, "instances/shutdown", { instanceId = id }, nil, function() end)
+    pending[id] = true
+    client.request("instances/shutdown", { instanceId = id }, { timeout_ms = 1500 }, function(err)
+      if err ~= nil then
+        log.debug("instances.cleanup_owned: shutdown(%s) failed: %s", id, tostring(err.message))
+      else
+        log.debug("instances.cleanup_owned: shutdown(%s) ok", id)
+      end
+      pending[id] = nil
+    end)
+  end
+
+  -- Block until every pending shutdown either acks or times out.
+  -- `vim.wait` runs the libuv event loop so chansend writes
+  -- actually hit the socket and replies actually come back.
+  -- Cap at 2000ms so a wedged daemon can't strand vim exit.
+  local ok = vim.wait(2000, function()
+    return next(pending) == nil
+  end, 25)
+  if not ok then
+    local leaked = {}
+    for id in pairs(pending) do
+      table.insert(leaked, id)
+    end
+    log.warn("instances.cleanup_owned: %d shutdown(s) didn't ack in 2000ms: %s", #leaked, table.concat(leaked, ", "))
   end
 end
 
