@@ -469,10 +469,40 @@ function M.full_reset()
   -- instance. The hydrate calls re-render the buffer in place so
   -- the captain's cursor / scroll position survives — they just
   -- see fresh content as the daemon's snapshots replay.
+  --
+  -- Active instance first (synchronously), then defer the rest
+  -- with a 150ms stagger. Without staggering, N concurrent
+  -- snapshot RPCs hit the daemon at once + N concurrent `M.hydrate`
+  -- calls run their per-item render loops on the same tick —
+  -- under a daemon-flap reconnect storm this is the worst CPU
+  -- spike. Sorting by id gives a stable order so the captain
+  -- sees the same recovery shape every time.
   M.ensure_subscribed()
-  require("hyprpilot.chat.render").iter_states(function(instance_id, st)
-    M.hydrate(instance_id, st.bufnr)
-  end)
+  local render_mod = require("hyprpilot.chat.render")
+  local active_id = require("hyprpilot.chat.window").active_instance()
+  local rest = {}
+  for instance_id, _ in pairs(render_mod._states) do
+    if instance_id ~= active_id then
+      table.insert(rest, instance_id)
+    end
+  end
+  table.sort(rest)
+  if active_id ~= nil and render_mod._states[active_id] ~= nil then
+    M.hydrate(active_id, render_mod._states[active_id].bufnr)
+  end
+  for i, instance_id in ipairs(rest) do
+    local st = render_mod._states[instance_id]
+    if st ~= nil then
+      vim.defer_fn(function()
+        -- Re-resolve state at fire time — instance may have been
+        -- closed during the defer window.
+        local live = render_mod._states[instance_id]
+        if live ~= nil then
+          M.hydrate(instance_id, live.bufnr)
+        end
+      end, i * 150)
+    end
+  end
 end
 
 -- Wire the reconnect listener once at module load. The "was
