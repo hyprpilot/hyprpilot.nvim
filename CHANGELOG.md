@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.10.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.10.0...hyprpilot.nvim-v1.10.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **instances:** warn on cleanup_owned shutdown failures (was silent at debug) ([#121](https://github.com/hyprpilot/hyprpilot.nvim/issues/121)) ([92d8962](https://github.com/hyprpilot/hyprpilot.nvim/commit/92d896224d4189203da7c8a6db189829999ea97b))
+* **permission:** respect daemon's default_option_id verbatim — no local fallback to allow_always or first option ([#118](https://github.com/hyprpilot/hyprpilot.nvim/issues/118)) ([6852537](https://github.com/hyprpilot/hyprpilot.nvim/commit/685253712b4e06bcc6695734ea7f40c544e3de07))
+
 ## [1.10.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.9.1...hyprpilot.nvim-v1.10.0) (2026-05-19)
 
 
