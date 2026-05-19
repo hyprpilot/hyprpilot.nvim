@@ -2130,22 +2130,29 @@ function M.hydrate(state, snapshot)
   -- pending-queue / no-op path; one batched drain after the loop
   -- + a final `rescan_code_block_folds` pass restores folds in
   -- one window-call per matching window.
+  --
+  -- `pcall` + finally semantics: an unhandled throw inside
+  -- `render_item` (corrupt extmark, malformed snapshot item)
+  -- WOULD strand `_hydrating = true` forever, silently breaking
+  -- every subsequent `fold_range` / `mark_foldable_range` call
+  -- until the next successful hydrate. Wrap the loop and ALWAYS
+  -- clear the flag.
   state._hydrating = true
-  for _, entry in ipairs(items) do
-    M.render_item(state, entry.turnId, entry.item)
-  end
+  local loop_ok, loop_err = pcall(function()
+    for _, entry in ipairs(items) do
+      M.render_item(state, entry.turnId, entry.item)
+    end
+  end)
   state._hydrating = false
+  if not loop_ok then
+    log.warn("render.hydrate: render_item raised: %s", tostring(loop_err))
+  end
 
-  -- Snapshot is bulk-loaded; sweep the entire buffer once so every
-  -- fenced code block in the historical transcript becomes
-  -- foldable. Live appends pick up their folds via
-  -- `handle_turn_ended` instead.
-  rescan_code_block_folds(state)
-
-  -- Drain any block-level folds that `fold_range` queued during
-  -- the loop (the `_hydrating` short-circuit pushes to
-  -- pending_fold_rows). `apply_pending_folds` runs every queued
-  -- `:fold` in a single `nvim_win_call` per matching window.
+  -- Drain queued block-level folds from `fold_range`'s
+  -- `_hydrating` short-circuit. `apply_pending_folds` ALSO runs
+  -- `rescan_code_block_folds` for fence detection in one batched
+  -- post-loop sweep — covers both the block folds and the
+  -- previously-skipped fence folds.
   M.apply_pending_folds(state.bufnr)
 end
 
@@ -3028,7 +3035,9 @@ function fold_block(state, block)
 end
 
 ---Apply queued fold-close requests to the window that just opened
----`bufnr` (called from `chat.window` on show / switch).
+---`bufnr`. Called from `chat.window` on show / switch AND from
+---`M.hydrate` after the replay loop to drain the `_hydrating`
+---short-circuit queue + rescan fences in one batched pass.
 ---@param bufnr integer
 function M.apply_pending_folds(bufnr)
   local state = M.state_for_bufnr(bufnr)

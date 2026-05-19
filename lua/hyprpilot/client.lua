@@ -386,6 +386,12 @@ end
 
 ---Force a reconnect now.
 function M.reconnect()
+  -- Captain-driven explicit reconnect should restart the backoff
+  -- clock from zero — they're asserting intent, not continuing a
+  -- flap cycle. Without this, a manual reconnect after a long
+  -- flap would inherit the prior 30s delay on the next auto-
+  -- triggered reconnect.
+  reconnect_attempt_count = 0
   teardown("client.reconnect")
 
   set_state("disconnected")
