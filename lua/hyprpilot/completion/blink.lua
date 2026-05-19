@@ -9,7 +9,11 @@
 ---         hyprpilot = {
 ---           name = "hyprpilot",
 ---           module = "hyprpilot.completion.blink",
----           opts = { sources = { "skills" } },  -- optional
+---           score_offset = 100,                    -- blink.cmp-native provider boost
+---           opts = {
+---             sources = { "skills" },              -- optional source filter
+---             score_offset = 100,                  -- per-item boost (default: 100)
+---           },
 ---         },
 ---       },
 ---     },
@@ -19,6 +23,17 @@
 --- `hyprpilot_composer`) — other buffers should keep their native LSP /
 --- path / buffer providers as the source of truth. Captain can
 --- widen the activation predicate via `opts.enabled`.
+---
+--- Two priority knobs cooperate to keep hyprpilot items above peer
+--- providers (LSP / buffer / path) when both match the captain's
+--- prefix:
+---   - `opts.score_offset` (default 100): added to every item we hand
+---     back. Wins cross-provider ranking in the merged result list.
+---     Pass `0` to opt out.
+---   - `score_offset` on the blink.cmp provider entry: the engine-
+---     native knob; relevant for grouped menu layouts
+---     (`completion.menu.draw.grouped`) where per-item offsets don't
+---     change cross-provider grouping.
 ---
 --- Wire RPCs flow through `completion.wire` so future per-engine
 --- adapters can share the same contract.
@@ -36,6 +51,7 @@ Provider.__index = Provider
 ---@field sources? string[]                       -- override config.completion.sources for this provider
 ---@field enabled? fun(): boolean                 -- override default `filetype == "hyprpilot_composer"` gate
 ---@field manual_only? boolean                    -- only emit completions when blink invokes us with `manual` context
+---@field score_offset? integer                   -- per-item score boost (default 100); set to 0 to rank by raw fuzzy score
 
 -- blink.cmp's CompletionItemKind enum. Map our wire `kind` string
 -- onto a sensible LSP kind so blink can render its icon column.
@@ -104,6 +120,7 @@ function Provider:get_completions(ctx, callback)
     end
 
     local source_id = response and response.source_id
+    local score_offset = self.opts.score_offset or 100
     local items = {}
     for _, wire_item in ipairs((response and response.items) or {}) do
       local replacement = wire_item.replacement or {}
@@ -112,6 +129,10 @@ function Provider:get_completions(ctx, callback)
         label = wire_item.label,
         kind = KIND[(wire_item.kind or ""):lower()] or KIND.text,
         detail = wire_item.detail,
+        -- Pin hyprpilot items above peer providers (LSP / buffer /
+        -- path) in the merged result list. Captain opts out with
+        -- `opts = { score_offset = 0 }`.
+        score_offset = score_offset,
         -- Carry the resolveId on the item so `:resolve` can fetch
         -- the lazy documentation. Blink passes the same item back.
         data = {
