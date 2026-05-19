@@ -42,7 +42,7 @@ local buffers = {}
 local attachments_by_instance = {}
 
 --- Per-instance "you're editing this queue slot" pointer. Set by
---- `M.set_text` when the queue strip's `edit_head` keymap loads a
+--- `M.set_text` when the queue strip's `edit` keymap loads a
 --- queued item into the composer. The next `M.submit` on this
 --- instance routes through `queue/edit` (preserving the slot's
 --- `id` / `enqueued_seq` / `enqueued_at` daemon-side) instead of
@@ -895,15 +895,25 @@ function M.paste_buffer(bufnr, opts)
 end
 
 ---Append the last visual selection (line-wise) into the composer as
----a fenced code block. Reads marks `'<` / `'>` on the current buffer,
----so a captain wiring this for visual mode should `<Esc>` first (or
----bind in normal mode after the selection). Header is
+---a fenced code block. Reads the live `v`/`.` anchors when called
+---from inside visual mode (the `'<`/`'>` marks aren't refreshed
+---until vim exits visual mode, so a keymap bound with mode `"v"`
+---that fires mid-selection would see the PREVIOUS selection's marks
+---— captain hit a "needs second try" reliability bug); falls back to
+---the marks when called from normal mode. Header is
 ---`<cwd-relative-path>:<start>-<end>`.
 ---@param opts? { instance_id?: string }
 function M.paste_selection(opts)
   local bufnr = vim.api.nvim_get_current_buf()
-  local start_line = vim.api.nvim_buf_get_mark(bufnr, "<")[1]
-  local end_line = vim.api.nvim_buf_get_mark(bufnr, ">")[1]
+  local mode = vim.fn.mode()
+  local start_line, end_line
+  if mode == "v" or mode == "V" or mode == "\22" then
+    start_line = vim.fn.getpos("v")[2]
+    end_line = vim.fn.getpos(".")[2]
+  else
+    start_line = vim.api.nvim_buf_get_mark(bufnr, "<")[1]
+    end_line = vim.api.nvim_buf_get_mark(bufnr, ">")[1]
+  end
 
   if start_line == 0 or end_line == 0 then
     log.warn("composer.paste_selection: no visual selection on bufnr=%s", bufnr)
@@ -914,16 +924,26 @@ function M.paste_selection(opts)
     start_line, end_line = end_line, start_line
   end
 
-  local id = resolve_instance((opts or {}).instance_id, "paste_selection")
-  if id == nil then
-    return
-  end
-
+  -- Snapshot lines + buffer metadata BEFORE leaving visual mode —
+  -- captain configs that wire BufLeave / WinLeave autocmds can
+  -- swap the buffer out from under us when <Esc> fires.
   local path = vim.api.nvim_buf_get_name(bufnr)
   local relpath = path ~= "" and vim.fn.fnamemodify(path, ":.") or "(unnamed)"
   local header = string.format("%s:%d-%d", relpath, start_line, end_line)
   local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
   local lang = vim.bo[bufnr].filetype
+
+  if mode == "v" or mode == "V" or mode == "\22" then
+    -- Drop back to normal mode so subsequent reads of `'<`/`'>`
+    -- reflect this selection (vim only refreshes the visual marks
+    -- on visual-mode EXIT) and the captain's cursor lands cleanly.
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+  end
+
+  local id = resolve_instance((opts or {}).instance_id, "paste_selection")
+  if id == nil then
+    return
+  end
 
   append_to_composer(id, build_fenced_block(header, lang, lines))
   M.resize()
@@ -1065,7 +1085,7 @@ end
 ---can emit the right `HyprpilotPrompt*` autocmd.
 ---
 ---Edit-slot route: when the captain edited a queued item via the
----queue strip's `edit_head` keymap, `M.set_text` stamped the
+---queue strip's `edit` keymap, `M.set_text` stamped the
 ---`editing_queue_slot_by_instance[id]` pointer. The next submit
 ---fires `queue/edit` instead of `prompts/send`, preserving the
 ---slot's daemon-side `id` / `enqueued_seq` / `enqueued_at`. On
@@ -1124,7 +1144,8 @@ function M.submit(text, opts)
   end
 
   -- Edit-slot route: the captain pulled a queued item into the
-  -- composer via `edit_head`; submit means "save the edit", not
+  -- composer via the queue strip's `edit` keymap; submit means
+  -- "save the edit", not
   -- "send a new prompt". Daemon's `queue/edit` preserves the
   -- slot's id / enqueued_seq / enqueued_at so the queue order
   -- stays intact.
@@ -1145,7 +1166,7 @@ function M.submit(text, opts)
       end
       -- Item-gone recovery: daemon rejects with `invalid_params`
       -- + `"queue item not found: <id>"` when the slot vanished
-      -- between edit_head and submit (drop_head / drop_all from
+      -- between the edit keymap and submit (drop / drop_all from
       -- the strip, queue/dispatch from another frontend, etc.).
       -- Drop the stale slot pointer and re-fire as a fresh
       -- `prompts/send` so the captain's typed text doesn't get
@@ -1362,7 +1383,7 @@ function M.wipe(instance_id)
 end
 
 ---Replace the composer buffer's content for `instance_id` with
----`text`. Used by the queue strip's `edit_head` so a captain who
+---`text`. Used by the queue strip's `edit` keymap so a captain who
 ---wants to tweak a queued prompt before resubmit gets the prompt
 ---loaded into the composer (matching the desktop overlay's
 ---`onQueueEdit` behaviour) instead of an immediate dispatch.

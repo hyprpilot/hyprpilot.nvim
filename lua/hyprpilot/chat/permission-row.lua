@@ -32,6 +32,8 @@ local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission-row")
 ---@field options table[]
 ---@field formatted? table
 ---@field focused_idx integer?    -- nil when the daemon shipped no default-option id; <Tab> / <S-Tab> seed focus on the first cycle keypress
+---@field allow_option_id? string -- daemon's pick for the allow-shaped option; consumed by the accept keymap (no plugin-side pattern matching)
+---@field reject_option_id? string -- daemon's pick for the reject-shaped option; consumed by the reject keymap
 ---@field raw_input? table  -- agent's structured tool input (path / old_string / new_string / content / edits[] for the edit family). Diff preview reads from here.
 
 ---@type hyprpilot.chat.permission-row.Entry[]
@@ -122,22 +124,22 @@ local function default_focused_idx(options, default_option_id)
   return nil
 end
 
----Find the first option whose kind (preferred) or id / name (fallback)
----matches a `^prefix` pattern. Same `kind`-first rationale as
----`default_focused_idx`.
+---Find the option whose `optionId` matches `target_id` (and the
+---index it lives at). Returns nil, nil when not found. Used by the
+---accept / reject keymap path to translate the daemon-supplied
+---`allow_option_id` / `reject_option_id` into the local `options[]`
+---index for the wire reply.
 ---@param options table[]
----@param patterns string[]
+---@param target_id string?
 ---@return table?
 ---@return integer?
-local function smart_match(options, patterns)
+local function option_by_id(options, target_id)
+  if type(target_id) ~= "string" or target_id == "" then
+    return nil, nil
+  end
   for i, opt in ipairs(options) do
-    local kind = string.lower(tostring(opt.kind or ""))
-    local id = string.lower(tostring(opt.optionId or ""))
-    local name = string.lower(tostring(opt.name or ""))
-    for _, pattern in ipairs(patterns) do
-      if kind:match(pattern) ~= nil or id:match(pattern) ~= nil or name:match(pattern) ~= nil then
-        return opt, i
-      end
+    if tostring(opt.optionId or "") == target_id then
+      return opt, i
     end
   end
   return nil, nil
@@ -426,20 +428,23 @@ function M.refresh()
   end
 end
 
----Submit the focused option (or one matching `patterns`) for the
----head request.
----@param patterns? string[]
-local function submit(patterns)
+---Submit a permission option for the head request. `target_id`
+---resolves the option via daemon-supplied id (typically
+---`entry.allow_option_id` / `entry.reject_option_id`); when nil, the
+---focused option is used. Returns silently when no head entry exists
+---or the target id doesn't map to an offered option.
+---@param target_id? string
+local function submit(target_id)
   local entry = head()
   if entry == nil then
     return
   end
 
   local opt, idx
-  if patterns ~= nil then
-    opt, idx = smart_match(entry.options, patterns)
+  if target_id ~= nil then
+    opt, idx = option_by_id(entry.options, target_id)
     if opt == nil then
-      log.debug("permission_row: no option matching %s", vim.inspect(patterns))
+      log.debug("permission_row: no option with optionId=%q", tostring(target_id))
       return
     end
     entry.focused_idx = idx
@@ -500,11 +505,27 @@ local function install_keymaps(bufnr)
   end, "submit focused permission option")
 
   apply_action(bufnr, keymaps.accept, function()
-    submit({ "^allow", "^accept", "^proceed" })
+    local entry = head()
+    if entry == nil then
+      return
+    end
+    if type(entry.allow_option_id) ~= "string" or entry.allow_option_id == "" then
+      log.warn("permission_row: daemon shipped no allow_option_id for %s — pick explicitly with <Tab> + <CR>", entry.request_id)
+      return
+    end
+    submit(entry.allow_option_id)
   end, "allow pending permission")
 
   apply_action(bufnr, keymaps.reject, function()
-    submit({ "^reject", "^deny", "^abort", "^cancel" })
+    local entry = head()
+    if entry == nil then
+      return
+    end
+    if type(entry.reject_option_id) ~= "string" or entry.reject_option_id == "" then
+      log.warn("permission_row: daemon shipped no reject_option_id for %s — pick explicitly with <Tab> + <CR>", entry.request_id)
+      return
+    end
+    submit(entry.reject_option_id)
   end, "deny pending permission")
 
   apply_action(bufnr, keymaps.cycle_next, function()
@@ -616,7 +637,7 @@ end
 ---visible and pre-focuses the daemon-supplied (or Allow-shaped)
 ---option.
 ---@param instance_id string
----@param record { request_id: string, tool: string, tool_kind?: string, options: table[], formatted?: table, default_option_id?: string, raw_input?: table }
+---@param record { request_id: string, tool: string, tool_kind?: string, options: table[], formatted?: table, default_option_id?: string, allow_option_id?: string, reject_option_id?: string, raw_input?: table }
 function M.enqueue(instance_id, record)
   for _, entry in ipairs(M._queue) do
     if entry.request_id == record.request_id then
@@ -633,6 +654,8 @@ function M.enqueue(instance_id, record)
     options = options,
     formatted = record.formatted,
     focused_idx = default_focused_idx(options, record.default_option_id),
+    allow_option_id = record.allow_option_id,
+    reject_option_id = record.reject_option_id,
     raw_input = record.raw_input,
   })
 

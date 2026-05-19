@@ -1,5 +1,5 @@
 --- Behavioural tests for `composer.set_text` — the public hook the
---- queue strip's `edit_head` calls to drop a parked prompt back into
+--- queue strip's `edit` keymap calls to drop a parked prompt back into
 --- the composer for editing (matching the desktop overlay's
 --- `onQueueEdit` UX).
 
