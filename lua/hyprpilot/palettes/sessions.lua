@@ -244,6 +244,37 @@ function M.open(opts)
   end)
 end
 
+---Two-step open: first the profile picker, then the sessions
+---picker scoped to the picked profile's id. Useful when the
+---captain wants to browse sessions from a profile OTHER than the
+---daemon-singleton current selection — bypasses the `profile/set`
+---round-trip, doesn't mutate the daemon's selected profile, just
+---injects `profile_id` into `sessions/list` for this one call.
+---
+---Reuses `palettes.profiles.open({ on_pick = ... })` for the
+---first-step picker so the catalog row format + preview stay in
+---lockstep with the spawn-new-instance palette — captains learn
+---the profile catalog shape once.
+---
+---Every opt accepted by `M.open` (except `profile_id`, which we
+---inject from the first picker's choice) is forwarded — so
+---`open_with({ cwd = false, with_config = ... })` works the same
+---as `open({ cwd = false, with_config = ..., profile_id = X })`.
+---@param opts? hyprpilot.palettes.sessions.Opts
+function M.open_with(opts)
+  opts = opts or {}
+  require("hyprpilot.palettes.profiles").open({
+    picker = opts.picker,
+    on_pick = function(profile)
+      if type(profile) ~= "table" or type(profile.id) ~= "string" then
+        log.warn("palettes.sessions.open_with: profile picker returned no id")
+        return
+      end
+      M.open(vim.tbl_extend("force", {}, opts, { profile_id = profile.id }))
+    end,
+  })
+end
+
 M.format_item = format_item
 M.format_preview = format_preview
 M.from_wire = from_wire
