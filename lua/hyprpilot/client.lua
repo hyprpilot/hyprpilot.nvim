@@ -63,9 +63,28 @@ local STALE_TIMEOUT_THRESHOLD = 3
 --- Cleared by the deferred callback right before it actually runs.
 local auto_reconnect_pending = false
 
+--- Consecutive auto-reconnect-attempt counter for exponential
+--- back-off. Increments on every `schedule_auto_reconnect`; reset
+--- on the next successful reply (`dispatch_payload`) — a real
+--- reply proves the channel is healthy AND that the most recent
+--- reconnect actually worked, so we restart back-off from zero.
+--- Without back-off a daemon that connects-then-EOFs in a loop
+--- would re-fire `events.full_reset` once per `retry_delay_ms`
+--- forever, and each `full_reset` re-hydrates every tracked
+--- instance — a daemon-flap cascade the captain would feel as a
+--- continuous CPU + nvim freeze spike.
+local reconnect_attempt_count = 0
+local RECONNECT_BACKOFF_MAX_MS = 30000
+
 ---Force-close the channel + schedule a reconnect attempt. Called
 ---from EOF detection (daemon closed the socket) and from the
 ---stale-streak guard. No-op when a reconnect is already pending.
+---Delay grows exponentially with `reconnect_attempt_count`:
+---  attempt 0 → retry_delay_ms (default 1000ms)
+---  attempt 1 → 2 × retry_delay_ms
+---  attempt N → min(MAX, retry_delay_ms × 2^N)
+---Capped at 30s so a long-down daemon still gets retried on a
+---reasonable cadence when it eventually comes back.
 ---@param reason string
 local function schedule_auto_reconnect(reason)
   if auto_reconnect_pending then
@@ -73,8 +92,10 @@ local function schedule_auto_reconnect(reason)
   end
   auto_reconnect_pending = true
   local cfg = config.options.client or {}
-  local delay_ms = cfg.retry_delay_ms or 1000
-  log.warn("client: auto-reconnect scheduled (reason=%s, delay=%dms)", reason, delay_ms)
+  local base_ms = cfg.retry_delay_ms or 1000
+  local delay_ms = math.min(RECONNECT_BACKOFF_MAX_MS, base_ms * (2 ^ reconnect_attempt_count))
+  reconnect_attempt_count = reconnect_attempt_count + 1
+  log.warn("client: auto-reconnect scheduled (reason=%s, delay=%dms, attempt=%d)", reason, delay_ms, reconnect_attempt_count)
   vim.defer_fn(function()
     auto_reconnect_pending = false
     -- Skip if the captain explicitly disconnected in the meantime,
@@ -209,8 +230,12 @@ local function dispatch_payload(payload)
 
     -- A live reply (success OR rpc error from the daemon) means the
     -- channel is healthy. Reset the stale-detector counter so a
-    -- previously-bad streak doesn't carry over.
+    -- previously-bad streak doesn't carry over, AND the reconnect
+    -- back-off counter so the next disconnect starts fresh from
+    -- `retry_delay_ms` instead of inheriting a long delay from a
+    -- prior flap cycle.
     timeout_streak = 0
+    reconnect_attempt_count = 0
 
     if payload.error ~= nil then
       pcall(entry.callback, {
@@ -361,6 +386,12 @@ end
 
 ---Force a reconnect now.
 function M.reconnect()
+  -- Captain-driven explicit reconnect should restart the backoff
+  -- clock from zero — they're asserting intent, not continuing a
+  -- flap cycle. Without this, a manual reconnect after a long
+  -- flap would inherit the prior 30s delay on the next auto-
+  -- triggered reconnect.
+  reconnect_attempt_count = 0
   teardown("client.reconnect")
 
   set_state("disconnected")
@@ -524,6 +555,7 @@ function M._reset()
   listeners = {}
   state_listeners = {}
   timeout_streak = 0
+  reconnect_attempt_count = 0
   auto_reconnect_pending = false
 end
 

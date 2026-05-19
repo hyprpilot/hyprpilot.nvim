@@ -2090,6 +2090,15 @@ function M.hydrate(state, snapshot)
 
   log.debug("render.hydrate: instance=%s items=%d latestSeq=%s hasMore=%s", state.instance_id, #items, tostring(snapshot.latestSeq), tostring(snapshot.hasMore))
 
+  -- Cancel any in-flight coalesce timers BEFORE resetting
+  -- `state.blocks` — otherwise their scheduled fires land on a
+  -- dropped block reference (handled defensively in the timer
+  -- callback, but cleaner to cancel up front + reclaim the timer
+  -- handles immediately).
+  for _, block in pairs(state.blocks) do
+    cancel_tool_call_timer(block)
+  end
+
   chat_buffer.with_buffer(state.bufnr, function()
     vim.api.nvim_buf_set_lines(state.bufnr, 0, -1, false, {})
     vim.api.nvim_buf_clear_namespace(state.bufnr, NS, 0, -1)
@@ -2113,15 +2122,38 @@ function M.hydrate(state, snapshot)
 
   require("hyprpilot.chat.permission-row").reset()
 
-  for _, entry in ipairs(items) do
-    M.render_item(state, entry.turnId, entry.item)
+  -- Batch fold ops during replay. `fold_range` + `mark_foldable_range`
+  -- both fan out per nvim_list_wins() match per call — at N items
+  -- (default snapshot_limit=100) with multiple windows (edgy
+  -- adoption) this is hundreds of `:fold` ex-commands per replay.
+  -- Setting `state._hydrating` diverts both helpers into the
+  -- pending-queue / no-op path; one batched drain after the loop
+  -- + a final `rescan_code_block_folds` pass restores folds in
+  -- one window-call per matching window.
+  --
+  -- `pcall` + finally semantics: an unhandled throw inside
+  -- `render_item` (corrupt extmark, malformed snapshot item)
+  -- WOULD strand `_hydrating = true` forever, silently breaking
+  -- every subsequent `fold_range` / `mark_foldable_range` call
+  -- until the next successful hydrate. Wrap the loop and ALWAYS
+  -- clear the flag.
+  state._hydrating = true
+  local loop_ok, loop_err = pcall(function()
+    for _, entry in ipairs(items) do
+      M.render_item(state, entry.turnId, entry.item)
+    end
+  end)
+  state._hydrating = false
+  if not loop_ok then
+    log.warn("render.hydrate: render_item raised: %s", tostring(loop_err))
   end
 
-  -- Snapshot is bulk-loaded; sweep the entire buffer once so every
-  -- fenced code block in the historical transcript becomes
-  -- foldable. Live appends pick up their folds via
-  -- `handle_turn_ended` instead.
-  rescan_code_block_folds(state)
+  -- Drain queued block-level folds from `fold_range`'s
+  -- `_hydrating` short-circuit. `apply_pending_folds` ALSO runs
+  -- `rescan_code_block_folds` for fence detection in one batched
+  -- post-loop sweep — covers both the block folds and the
+  -- previously-skipped fence folds.
+  M.apply_pending_folds(state.bufnr)
 end
 
 ---Live `transcript` event handler.
@@ -2421,9 +2453,19 @@ function M.handle_turn_ended(event)
   -- this the folded section captures a stale body snapshot (the
   -- pending update from the last 50ms-window chunk hasn't landed
   -- yet) and the section-aggregate misses the final stats values.
-  for _, block in pairs(state.blocks) do
-    if block.turn_id == effective_turn_id and (block._coalesce_timer ~= nil or block._pending_update ~= nil) then
-      flush_tool_call_timer(state, block)
+  -- Scoped to this turn's `tools.block_ids` — coalesce timers are
+  -- only ever attached to tool_call blocks (`handle_tool_call_update`
+  -- is the only writer), so iterating `pairs(state.blocks)` would
+  -- be O(every block ever rendered) per turn-end. Nil-guard for
+  -- blocks dropped by `forget` between turn-start and turn-end.
+  local ending_layout = state.turn_layouts[effective_turn_id]
+  local tools_section = ending_layout and ending_layout.sections and ending_layout.sections.tools or nil
+  if tools_section ~= nil then
+    for _, block_id in ipairs(tools_section.block_ids) do
+      local block = state.blocks[block_id]
+      if block ~= nil and (block._coalesce_timer ~= nil or block._pending_update ~= nil) then
+        flush_tool_call_timer(state, block)
+      end
     end
   end
 
@@ -2641,11 +2683,20 @@ function M.handle_turn_ended(event)
     end
   end
 
-  -- Mark every fenced code block in the buffer as foldable (open by
-  -- default). Streaming chunks may have completed multiple code
-  -- blocks across the turn; sweep once on turn-end to catch them
-  -- all. Captain folds via native `zc` / `zM`; no auto-collapse.
-  rescan_code_block_folds(state)
+  -- Mark every fenced code block ADDED IN THIS TURN as foldable
+  -- (open by default). Scope the scan to the turn's row band
+  -- (anchor → end-of-buffer) so a long session with many prior
+  -- turns doesn't re-scan the entire transcript per turn-end.
+  -- Falls back to a full scan when the turn's anchor row can't
+  -- be resolved (extmark lost; rare).
+  local scan_from = 0
+  if ending_layout ~= nil and ending_layout.pilot_header_mark ~= nil then
+    local anchor = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, ending_layout.pilot_header_mark, {})
+    if anchor[1] ~= nil then
+      scan_from = anchor[1]
+    end
+  end
+  rescan_code_block_folds(state, scan_from, nil)
 end
 
 ---Format the header for a terminal block.
@@ -2708,6 +2759,18 @@ end
 ---@param chunk table
 function M._render_terminal_chunk(state, terminal_id, chunk)
   local term = state.terminals[terminal_id]
+
+  -- Late-output safety: an `output` chunk for an already-exited
+  -- terminal (daemon ordering race / replayed events / late
+  -- buffered chunk) would otherwise bootstrap a fresh block via
+  -- the `term == nil` path below — duplicate terminal block in
+  -- the current turn. `term._exited` gates these: skip late
+  -- output, but still let a second `exit` chunk through (rare,
+  -- idempotent — header was already finalised, body re-render
+  -- is short-circuited by `body_changed`).
+  if term ~= nil and term._exited and chunk.kind == "output" then
+    return
+  end
 
   -- Bootstrap the block on first observation.
   if term == nil then
@@ -2809,7 +2872,11 @@ function M._render_terminal_chunk(state, terminal_id, chunk)
     -- renders on subsequent output chunks. Drop it so a long-running
     -- session (many terminals over time) doesn't keep megabytes of
     -- already-rendered output strings alive on the state table.
+    -- `_exited` stamps the entry so the early-bail at the top of
+    -- this function suppresses late `output` chunks for an exited
+    -- terminal (would otherwise re-bootstrap a duplicate block).
     term.output = ""
+    term._exited = true
   end
 end
 
@@ -2824,6 +2891,19 @@ end
 ---@param end_row integer
 function fold_range(state, start_row, end_row)
   if end_row < start_row then
+    return
+  end
+
+  -- Replay-batch short-circuit: during `M.hydrate`'s render loop
+  -- skip the per-call window fan-out and queue the row pair for a
+  -- single batched drain at the end of hydrate. Without this each
+  -- of N tool_call items pays an O(open-windows) `:fold`
+  -- ex-command — for a typical edgy layout (3-4 windows) on a
+  -- 100-item replay that's 300-400 commands worth of vim API
+  -- traffic per hydrate.
+  if state._hydrating then
+    table.insert(state.pending_fold_rows, start_row)
+    table.insert(state.pending_fold_rows, end_row)
     return
   end
 
@@ -2854,11 +2934,21 @@ end
 ---demand, but content stays visible by default. Used for fenced
 ---code blocks in prose where we DON'T want auto-collapse, just the
 ---ability to fold.
+---
+---Replay-batch short-circuit: when called with a `state` whose
+---`_hydrating` flag is set, do nothing — the post-hydrate
+---`rescan_code_block_folds` re-scans the entire buffer once after
+---`_hydrating` flips back, so the per-fence work happens once at
+---the end of hydrate instead of per turn during the loop.
 ---@param bufnr integer
 ---@param start_row integer
 ---@param end_row integer
-local function mark_foldable_range(bufnr, start_row, end_row)
+---@param state? hyprpilot.render.State
+local function mark_foldable_range(bufnr, start_row, end_row, state)
   if end_row <= start_row then
+    return
+  end
+  if state ~= nil and state._hydrating then
     return
   end
 
@@ -2880,11 +2970,13 @@ end
 ---blocks and create open-by-default folds for each pair. Captain
 ---uses native `zc` / `zM` etc. to collapse. Dedup is naive: we run
 ---`:fold` blindly, vim discards no-op folds when the range is
----already covered.
+---already covered. `state` is threaded so `mark_foldable_range`
+---can short-circuit during replay.
 ---@param bufnr integer
 ---@param start_row integer
 ---@param end_row? integer
-local function scan_code_block_folds(bufnr, start_row, end_row)
+---@param state? hyprpilot.render.State
+local function scan_code_block_folds(bufnr, start_row, end_row, state)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
@@ -2907,7 +2999,7 @@ local function scan_code_block_folds(bufnr, start_row, end_row)
       else
         local fence_start = start_row + opening - 1
         local fence_end = start_row + i - 1
-        mark_foldable_range(bufnr, fence_start, fence_end)
+        mark_foldable_range(bufnr, fence_start, fence_end, state)
         opening = nil
       end
     end
@@ -2916,14 +3008,21 @@ end
 
 ---Walk every prose region we own (turn layouts' anchor rows + their
 ---ended ranges) and re-mark fenced code blocks as foldable. Called
----from `apply_pending_folds` and `handle_turn_ended` so folds appear
----when the window first shows the buffer + on every turn-end tick.
+---from `apply_pending_folds`, `handle_turn_ended`, and post-replay.
+---When `start_row` / `end_row` are passed, scope the scan to a
+---specific row band — `handle_turn_ended` does this to avoid
+---re-scanning the entire buffer per turn-end (was O(buffer-lines)
+---per turn; now O(turn-lines) which is bounded by what just
+---streamed).
 ---Assigned to the forward-declared local at the top of the file.
-rescan_code_block_folds = function(state)
+---@param state hyprpilot.render.State?
+---@param start_row? integer  -- default 0 (full buffer)
+---@param end_row? integer    -- default nil (= end of buffer)
+rescan_code_block_folds = function(state, start_row, end_row)
   if state == nil then
     return
   end
-  scan_code_block_folds(state.bufnr, 0, nil)
+  scan_code_block_folds(state.bufnr, start_row or 0, end_row, state)
 end
 
 ---Fold a tool / plan / thought / permission block by its registered
@@ -2936,7 +3035,9 @@ function fold_block(state, block)
 end
 
 ---Apply queued fold-close requests to the window that just opened
----`bufnr` (called from `chat.window` on show / switch).
+---`bufnr`. Called from `chat.window` on show / switch AND from
+---`M.hydrate` after the replay loop to drain the `_hydrating`
+---short-circuit queue + rescan fences in one batched pass.
 ---@param bufnr integer
 function M.apply_pending_folds(bufnr)
   local state = M.state_for_bufnr(bufnr)
