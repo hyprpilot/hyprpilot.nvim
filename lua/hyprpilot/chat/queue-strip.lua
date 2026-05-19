@@ -268,9 +268,10 @@ end
 ---strip's buffer is `header` + `1. ...` + `2. ...` etc., so the
 ---cursor's 1-based line N maps to items[N - 1]. Cursor on the
 ---header row falls back to the head item (most common keypress
----right after the strip pops in). Returns nil when the cursor is
----past the last item or the strip's buffer isn't the current one
----(keymap fired from a different surface — defensive guard).
+---right after the strip pops in). When the strip isn't visible
+---(keymap fired before open, hot-reload race) we fall back to the
+---head too — the alternative is a silent no-op that's harder to
+---reason about. Returns nil only when there are no items.
 ---@param instance_id string
 ---@return hyprpilot.QueueItem?
 local function item_at_cursor(instance_id)

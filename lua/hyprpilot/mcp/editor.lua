@@ -11,6 +11,7 @@
 ---     mcp.register(editor.read)
 
 local chat_buffer = require("hyprpilot.chat.buffer")
+local log = require("hyprpilot.log")
 local mcp = require("hyprpilot.mcp")
 
 local M = {}
@@ -594,7 +595,10 @@ M.tools.select = {
     -- captain with the wrong (single-line) selection.
     vim.api.nvim_win_call(winid, function()
       pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
-      pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
+      local ok, cmd_err = pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
+      if not ok then
+        log.warn("editor_select: visual extend failed (bufnr=%s, range=%d-%d): %s", target, start_line, end_line, tostring(cmd_err))
+      end
     end)
 
     return {

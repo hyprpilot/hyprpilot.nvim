@@ -910,10 +910,6 @@ function M.paste_selection(opts)
   if mode == "v" or mode == "V" or mode == "\22" then
     start_line = vim.fn.getpos("v")[2]
     end_line = vim.fn.getpos(".")[2]
-    -- Drop back to normal mode so subsequent reads of `'<`/`'>`
-    -- reflect this selection (vim only refreshes the visual marks
-    -- on visual-mode EXIT) and the captain's cursor lands cleanly.
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
   else
     start_line = vim.api.nvim_buf_get_mark(bufnr, "<")[1]
     end_line = vim.api.nvim_buf_get_mark(bufnr, ">")[1]
@@ -928,16 +924,26 @@ function M.paste_selection(opts)
     start_line, end_line = end_line, start_line
   end
 
-  local id = resolve_instance((opts or {}).instance_id, "paste_selection")
-  if id == nil then
-    return
-  end
-
+  -- Snapshot lines + buffer metadata BEFORE leaving visual mode —
+  -- captain configs that wire BufLeave / WinLeave autocmds can
+  -- swap the buffer out from under us when <Esc> fires.
   local path = vim.api.nvim_buf_get_name(bufnr)
   local relpath = path ~= "" and vim.fn.fnamemodify(path, ":.") or "(unnamed)"
   local header = string.format("%s:%d-%d", relpath, start_line, end_line)
   local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
   local lang = vim.bo[bufnr].filetype
+
+  if mode == "v" or mode == "V" or mode == "\22" then
+    -- Drop back to normal mode so subsequent reads of `'<`/`'>`
+    -- reflect this selection (vim only refreshes the visual marks
+    -- on visual-mode EXIT) and the captain's cursor lands cleanly.
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+  end
+
+  local id = resolve_instance((opts or {}).instance_id, "paste_selection")
+  if id == nil then
+    return
+  end
 
   append_to_composer(id, build_fenced_block(header, lang, lines))
   M.resize()
