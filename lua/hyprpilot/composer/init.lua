@@ -1134,19 +1134,31 @@ function M.submit(text, opts)
       text = text,
       attachments = attachments_snapshot or {},
     }, function(err)
-      if err ~= nil then
-        -- Keep the composer draft + slot pointer for retry. Daemon
-        -- error already logged at the rpc layer; surface here too
-        -- so the captain knows the edit didn't take.
-        log.warn("composer.submit: queue/edit failed: %s — keeping composer draft for retry", err.message)
+      if err == nil then
+        editing_queue_slot_by_instance[instance_id] = nil
+        clear_composer_state()
+        pcall(vim.api.nvim_exec_autocmds, "User", {
+          pattern = "HyprpilotQueueItemEdited",
+          data = { instance_id = instance_id, bufnr = bufnr, item_id = edit_slot.item_id },
+        })
         return
       end
-      editing_queue_slot_by_instance[instance_id] = nil
-      clear_composer_state()
-      pcall(vim.api.nvim_exec_autocmds, "User", {
-        pattern = "HyprpilotQueueItemEdited",
-        data = { instance_id = instance_id, bufnr = bufnr, item_id = edit_slot.item_id },
-      })
+      -- Item-gone recovery: daemon rejects with `invalid_params`
+      -- + `"queue item not found: <id>"` when the slot vanished
+      -- between edit_head and submit (drop_head / drop_all from
+      -- the strip, queue/dispatch from another frontend, etc.).
+      -- Drop the stale slot pointer and re-fire as a fresh
+      -- `prompts/send` so the captain's typed text doesn't get
+      -- lost — they hit submit, they get a submit.
+      local missing = type(err.message) == "string" and err.message:find("queue item not found", 1, true) ~= nil
+      if missing then
+        log.info("composer.submit: queue/edit slot %s gone — falling through to prompts/send", edit_slot.item_id)
+        editing_queue_slot_by_instance[instance_id] = nil
+        M.submit(text, opts)
+        return
+      end
+      -- Other errors: keep composer draft + slot pointer for retry.
+      log.warn("composer.submit: queue/edit failed: %s — keeping composer draft for retry", err.message)
     end)
     return
   end
@@ -1241,6 +1253,75 @@ function M.submit(text, opts)
     restore_focus()
     vim.defer_fn(restore_focus, 150)
   end)
+end
+
+---Submit the composer's contents as N separate prompts, one per
+---non-blank line. Each line becomes its own `prompts/send` —
+---daemon's queue is FIFO over the same socket, so the prompts
+---land in line order (first dispatched immediately or queued,
+---rest queued behind). Bulk-queue-from-composer for captains who
+---paste a checklist and want each item as its own prompt.
+---
+---Attachments + edit-slot routing don't apply — this is a
+---fire-many path. Edit-slot is cleared if set (per-line doesn't
+---make sense for editing one queued item). Attachments are
+---dropped (would otherwise be replicated on every line).
+---
+---No-op when the composer is empty / whitespace-only. Each
+---per-line fire goes through the daemon's accept / queue /
+---reject paths same as a single submit.
+---@param opts? { instance_id?: string }
+function M.submit_per_line(opts)
+  opts = opts or {}
+  local instance_id = opts.instance_id or window.active_instance()
+  if instance_id == nil then
+    log.warn("composer.submit_per_line: no active instance")
+    return
+  end
+
+  local bufnr = buffers[instance_id]
+  if bufnr == nil or not vim.api.nvim_buf_is_valid(bufnr) then
+    log.warn("composer.submit_per_line: no composer buffer for %s", instance_id)
+    return
+  end
+
+  local raw = table.concat(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), "\n")
+  if raw:match("^%s*$") then
+    log.debug("composer.submit_per_line: composer empty / whitespace-only, no-op")
+    return
+  end
+
+  -- Snapshot every non-blank line BEFORE clearing composer state
+  -- so the buffer wipe doesn't race the per-line fire loop.
+  local lines = {}
+  for _, line in ipairs(vim.split(raw, "\n", { plain = true })) do
+    if not line:match("^%s*$") then
+      table.insert(lines, line)
+    end
+  end
+  if #lines == 0 then
+    return
+  end
+
+  -- Drop attachments + edit-slot pointer — neither makes sense
+  -- when fanning out to N separate prompts.
+  attachments_by_instance[instance_id] = nil
+  editing_queue_slot_by_instance[instance_id] = nil
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+  paint_indicator(instance_id)
+
+  log.info("composer.submit_per_line: firing %d prompts on instance=%s", #lines, instance_id)
+
+  for _, line in ipairs(lines) do
+    client.request("prompts/send", { instanceId = instance_id, text = line }, nil, function(err, result)
+      if err ~= nil then
+        log.warn("composer.submit_per_line: prompts/send failed for %q: %s", line, err.message)
+        return
+      end
+      local disposition = (type(result) == "table" and type(result.disposition) == "string") and result.disposition or "sent"
+      log.debug("composer.submit_per_line: %s — %q", disposition, line)
+    end)
+  end
 end
 
 ---Cancel the in-flight turn on the active instance.
