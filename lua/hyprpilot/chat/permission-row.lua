@@ -235,6 +235,21 @@ local function diff_previewable(entry)
   return type(raw.path) == "string" or type(raw.file_path) == "string"
 end
 
+---Strip embedded newlines from a label so a multi-line agent-
+---supplied string (tool name, option label, daemon error message)
+---doesn't break `nvim_buf_set_lines` later with `'replacement
+---string' item contains newlines`. Returns a single-line string —
+---tabs / CR / LF / vertical-tabs all collapse to a single space so
+---the resulting row is exactly one buffer line.
+---@param s any
+---@return string
+local function single_line(s)
+  if type(s) ~= "string" then
+    return ""
+  end
+  return (s:gsub("[\r\n\t\v]+", " "))
+end
+
 ---Compose the button line for the head entry, marking the focused
 ---option with `[> Label <]` and others with `[ Label ]`. Appends a
 ---`[ Diff ]` button at the tail when the entry is edit-previewable
@@ -245,7 +260,7 @@ end
 local function button_line(entry)
   local parts = {}
   for i, opt in ipairs(entry.options) do
-    local label = tostring(opt.name or opt.optionId or "?")
+    local label = single_line(opt.name or opt.optionId or "?")
     if i == entry.focused_idx then
       table.insert(parts, "[> " .. label .. " <]")
     else
@@ -311,15 +326,21 @@ local function compose()
   local kind_icons = (config.options.icons or {}).tool_kind or {}
   local kind_glyph = kind_icons[entry.tool_kind or ""] or kind_icons.default or ""
   local prefix_glyph = kind_glyph ~= "" and (kind_glyph .. " ") or ""
-  table.insert(lines, string.format("# %s %s%s%s", status_icon(), prefix_glyph, entry.tool or "tool", extra))
+  -- Newline-strip `entry.tool`: some tool names are agent-supplied
+  -- (e.g., the daemon stamps the tool call's first input line as
+  -- the title), and a multi-line value here would break
+  -- `nvim_buf_set_lines` later in `M.refresh`.
+  table.insert(lines, string.format("# %s %s%s%s", status_icon(), prefix_glyph, single_line(entry.tool or "tool"), extra))
   local header_row = #lines - 1
 
   -- Stamp the daemon-side respond failure (if any) directly under
   -- the header so the captain can see why their last submit didn't
   -- take. Cleared automatically when they retry against a fresh
-  -- daemon-emitted entry (different request_id).
+  -- daemon-emitted entry (different request_id). Daemon error
+  -- messages can carry stack traces / multi-line context — strip
+  -- to keep this as a single buffer row.
   if type(entry._respond_error) == "string" and entry._respond_error ~= "" then
-    table.insert(lines, "  daemon rejected: " .. entry._respond_error)
+    table.insert(lines, "  daemon rejected: " .. single_line(entry._respond_error))
   end
 
   -- Body lines from the daemon's `formatted` payload (diff /
