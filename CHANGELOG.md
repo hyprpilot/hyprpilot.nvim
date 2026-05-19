@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.9.1...hyprpilot.nvim-v1.10.0) (2026-05-19)
+
+
+### Features
+
+* **palettes/sessions:** add open_with — two-step profile-then-sessio… ([#115](https://github.com/hyprpilot/hyprpilot.nvim/issues/115)) ([9675642](https://github.com/hyprpilot/hyprpilot.nvim/commit/96756422ab8e67aa2c58306ca2603ce44aceafd6))
+
 ## [1.9.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.9.0...hyprpilot.nvim-v1.9.1) (2026-05-18)
 
 
