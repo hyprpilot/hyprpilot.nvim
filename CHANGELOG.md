@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.10.1...hyprpilot.nvim-v1.10.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* update with offset ([#125](https://github.com/hyprpilot/hyprpilot.nvim/issues/125)) ([88d96ca](https://github.com/hyprpilot/hyprpilot.nvim/commit/88d96ca1b56dd5be3009042d256bda46be8ae4b5))
+
+
+### Performance
+
+* replay fold batching + scoped flush walk + reconnect backoff + banded fence rescan ([#122](https://github.com/hyprpilot/hyprpilot.nvim/issues/122)) ([021e847](https://github.com/hyprpilot/hyprpilot.nvim/commit/021e8475d31f5819c2ead6351f58bfa1f63b135e))
+
 ## [1.10.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.10.0...hyprpilot.nvim-v1.10.1) (2026-05-19)
 
 
