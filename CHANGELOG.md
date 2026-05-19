@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.11.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.10.2...hyprpilot.nvim-v1.11.0) (2026-05-19)
+
+
+### Features
+
+* **composer:** queue-edit recovery on item-gone + submit_per_line ([#126](https://github.com/hyprpilot/hyprpilot.nvim/issues/126)) ([65fa499](https://github.com/hyprpilot/hyprpilot.nvim/commit/65fa499acc5521588b1a25f6c7ad2cbf118fdd2c))
+* **ux:** per-row queue ops + daemon allow/reject wire + visual-selection reliability ([#129](https://github.com/hyprpilot/hyprpilot.nvim/issues/129)) ([bb4145a](https://github.com/hyprpilot/hyprpilot.nvim/commit/bb4145abf93fc038b0ae211e9ea80b44636d5f0e))
+
 ## [1.10.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.10.1...hyprpilot.nvim-v1.10.2) (2026-05-19)
 
 
