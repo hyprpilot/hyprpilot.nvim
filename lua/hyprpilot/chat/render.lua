@@ -1965,6 +1965,12 @@ local function render_permission_request(state, record)
     -- daemons (or events the daemon couldn't classify) still get a
     -- sane Allow focus.
     default_option_id = record.defaultOptionId,
+    -- Daemon-picked allow / reject ids — consumed by the accept /
+    -- reject keymaps in `permission-row`. Older daemons omit these;
+    -- the keymap path warns + bails so the captain has to pick
+    -- explicitly via <Tab>/<CR>.
+    allow_option_id = record.allowOptionId,
+    reject_option_id = record.rejectOptionId,
     -- The diff-preview module reads `raw_input.path` /
     -- `.file_path` / `.old_string` / `.new_string` / `.content` /
     -- `.edits[]` off the entry — keep the wire shape verbatim so
@@ -2181,6 +2187,9 @@ function M.handle_permission_request(event)
       rawInput = event.rawInput,
       options = event.options,
       formatted = event.formatted,
+      defaultOptionId = event.defaultOptionId,
+      allowOptionId = event.allowOptionId,
+      rejectOptionId = event.rejectOptionId,
     })
   end)
 end

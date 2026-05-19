@@ -85,10 +85,10 @@ local M = {}
 --- false`, normal-mode only. Captain drains the queue explicitly;
 --- there's no auto-dispatch on turn end.
 ---@class hyprpilot.ConfigQueueStripKeymaps
----@field send_head? string | string[] | false  -- send the head entry now
----@field drop_head? string | string[] | false  -- drop the head entry without sending
----@field drop_all?  string | string[] | false  -- clear the entire queue
----@field edit_head? string | string[] | false  -- pop the head into the composer for editing
+---@field send? string | string[] | false      -- send the row at cursor now (header row falls back to head)
+---@field drop? string | string[] | false      -- drop the row at cursor without sending
+---@field drop_all? string | string[] | false  -- clear the entire queue
+---@field edit? string | string[] | false      -- pop the row at cursor into the composer for editing
 
 --- Permission-row keybindings. Each action accepts:
 ---   - a single key string (`"<C-g>"`)
@@ -170,13 +170,15 @@ local defaults = {
     end,
     keymaps = {
       -- `<C-CR>` matches the composer's submit binding — sending
-      -- the head feels like a chained submit. `dd` matches vim's
-      -- delete-line idiom for "drop this row". `D` (capital)
-      -- extends that to "drop everything".
-      send_head = "<C-CR>",
-      drop_head = "dd",
+      -- the row at cursor feels like a chained submit. `dd` matches
+      -- vim's delete-line idiom for "drop this row". `D` (capital)
+      -- extends that to "drop everything". Per-row actions read the
+      -- cursor's line and resolve against `items[row - 1]`; cursor
+      -- on the header row (`row == 1`) defaults to the head item.
+      send = "<C-CR>",
+      drop = "dd",
       drop_all = "D",
-      edit_head = "e",
+      edit = "e",
     },
   },
   permission_row = {

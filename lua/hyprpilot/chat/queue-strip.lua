@@ -16,12 +16,14 @@
 --- pops or mutates locally.
 ---
 --- Keymaps (configurable via `config.queue_strip.keymaps`):
----   send_head — `queue/dispatch` (no itemId = head)
----   drop_head — `queue/remove` of the head id
----   drop_all  — `queue/clear`
----   edit_head — pop the head into the composer for in-place edit
----     (composer's submit then calls `queue/edit` instead of
----     `prompts/send` — see `composer/init.lua` editing-slot path)
+---   send     — `queue/dispatch` for the row at cursor (header
+---     row falls back to the head)
+---   drop     — `queue/remove` of the row-at-cursor's id
+---   drop_all — `queue/clear`
+---   edit     — pop the row at cursor into the composer for
+---     in-place edit (composer's submit then calls `queue/edit`
+---     instead of `prompts/send` — see `composer/init.lua`
+---     editing-slot path)
 
 local buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
@@ -135,18 +137,18 @@ local function display_key(keymaps, action)
 end
 
 --- Compose the hint segments from config so a captain who rebinds
---- `send_head` from `<C-CR>` to `<CR>` (or disables `drop_all`) sees
---- the truth on the strip — was hard-coded `<C-CR> · dd · D` before
---- AND silently dropped the `edit_head` action (configured + bound,
---- never advertised).
+--- `send` from `<C-CR>` to `<CR>` (or disables `drop_all`) sees the
+--- truth on the strip. Per-row actions act on the row at the
+--- cursor; the captain moves to the row they want and fires the
+--- key — header row falls back to the head.
 ---@param keymaps table
 ---@return string
 local function compose_hints(keymaps)
   local segments = {}
   local actions = {
-    { name = "send_head", label = "send head" },
-    { name = "edit_head", label = "edit head" },
-    { name = "drop_head", label = "drop head" },
+    { name = "send", label = "send" },
+    { name = "edit", label = "edit" },
+    { name = "drop", label = "drop" },
     { name = "drop_all", label = "drop all" },
   }
   for _, a in ipairs(actions) do
@@ -179,7 +181,7 @@ local function compose(instance_id)
   for i, entry in ipairs(items) do
     -- Strip newlines + trim long entries to one row so the strip
     -- stays compact. Captain pops into the composer for the full
-    -- text via the `edit_head` keymap.
+    -- text via the `edit` keymap.
     local preview = (entry.text or ""):gsub("\n", " ⏎ ")
     table.insert(lines, string.format("  %d. %s", i, preview))
   end
@@ -208,7 +210,7 @@ end
 ---Closes the window when the queue is empty.
 ---
 ---Stamps `M._rendered_instance_id` on every successful refresh so
----keymap closures (send_head / drop_head / drop_all / edit_head)
+---keymap closures (send / drop / drop_all / edit)
 ---operate on the instance the strip was VISUALLY showing at the
 ---moment the captain pressed the key — not whatever
 ---`window.active_instance()` happens to return at fire time.
@@ -262,36 +264,66 @@ local function rendered_instance()
   return M._rendered_instance_id or window.active_instance()
 end
 
----Send the head entry NOW: `queue/dispatch` (no itemId = head).
+---Resolve the queued item the cursor is currently sitting on. The
+---strip's buffer is `header` + `1. ...` + `2. ...` etc., so the
+---cursor's 1-based line N maps to items[N - 1]. Cursor on the
+---header row falls back to the head item (most common keypress
+---right after the strip pops in). Returns nil when the cursor is
+---past the last item or the strip's buffer isn't the current one
+---(keymap fired from a different surface — defensive guard).
+---@param instance_id string
+---@return hyprpilot.QueueItem?
+local function item_at_cursor(instance_id)
+  local items = M.items(instance_id)
+  if #items == 0 then
+    return nil
+  end
+
+  local winid = M._winid
+  if winid == nil or not vim.api.nvim_win_is_valid(winid) then
+    return items[1]
+  end
+
+  local row = vim.api.nvim_win_get_cursor(winid)[1]
+  if row <= 1 then
+    return items[1]
+  end
+  return items[row - 1]
+end
+
+---Send the row-at-cursor entry NOW: `queue/dispatch` with its id.
 ---Daemon pops the item, fires its prompt, broadcasts a new
 ---`QueueChanged` snapshot which our event listener will reflect.
-local function send_head()
+local function send_at_cursor()
   local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
-  rpc_queue.dispatch(instance_id, nil, function(err, result)
+  local item = item_at_cursor(instance_id)
+  if item == nil then
+    return
+  end
+  rpc_queue.dispatch(instance_id, item.id, function(err, result)
     if err ~= nil then
-      log.warn("queue_strip.send_head: %s", err.message)
+      log.warn("queue_strip.send: %s", err.message)
       return
     end
-    log.debug("queue_strip.send_head: instance=%s accepted=%s", instance_id, tostring(result and result.accepted))
+    log.debug("queue_strip.send: instance=%s item=%s accepted=%s", instance_id, item.id, tostring(result and result.accepted))
   end)
 end
 
-local function drop_head()
+local function drop_at_cursor()
   local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
-  local items = M.items(instance_id)
-  local head = items[1]
-  if head == nil then
+  local item = item_at_cursor(instance_id)
+  if item == nil then
     return
   end
-  rpc_queue.remove(instance_id, head.id, function(err)
+  rpc_queue.remove(instance_id, item.id, function(err)
     if err ~= nil then
-      log.warn("queue_strip.drop_head: %s", err.message)
+      log.warn("queue_strip.drop: %s", err.message)
     end
   end)
 end
@@ -310,27 +342,26 @@ local function drop_all()
   end)
 end
 
----Edit the head queued item in the composer. Item STAYS in the
----queue (no pop) — composer pre-fills with the item's text +
----attachments and stamps the editing-slot pointer so the next
+---Edit the row-at-cursor queued item in the composer. Item STAYS
+---in the queue (no pop) — composer pre-fills with the item's text
+---+ attachments and stamps the editing-slot pointer so the next
 ---submit calls `queue/edit` (preserving the slot's id /
 ---enqueued_seq / enqueued_at) instead of `prompts/send`.
-local function edit_head()
+local function edit_at_cursor()
   local instance_id = rendered_instance()
   if instance_id == nil then
     return
   end
-  local items = M.items(instance_id)
-  local head = items[1]
-  if head == nil then
+  local item = item_at_cursor(instance_id)
+  if item == nil then
     return
   end
   -- Composer's `set_text` accepts an editing-slot opt that stamps
   -- the per-instance state so the next submit routes through
   -- `queue/edit` instead of `prompts/send`.
-  require("hyprpilot.composer").set_text(instance_id, head.text or "", {
-    editing_queue_item_id = head.id,
-    editing_queue_attachments = head.attachments,
+  require("hyprpilot.composer").set_text(instance_id, item.text or "", {
+    editing_queue_item_id = item.id,
+    editing_queue_attachments = item.attachments,
   })
 end
 
@@ -339,10 +370,10 @@ local apply_action = require("hyprpilot.ui.keymaps").apply_action
 ---@param bufnr integer
 local function install_keymaps(bufnr)
   local keymaps = (config.options.queue_strip or {}).keymaps or {}
-  apply_action(bufnr, keymaps.send_head, send_head, "send queued head now")
-  apply_action(bufnr, keymaps.drop_head, drop_head, "drop queued head")
+  apply_action(bufnr, keymaps.send, send_at_cursor, "send queued row at cursor")
+  apply_action(bufnr, keymaps.drop, drop_at_cursor, "drop queued row at cursor")
   apply_action(bufnr, keymaps.drop_all, drop_all, "drop entire queue")
-  apply_action(bufnr, keymaps.edit_head, edit_head, "edit queued head in composer")
+  apply_action(bufnr, keymaps.edit, edit_at_cursor, "edit queued row at cursor in composer")
 end
 
 -- Test-only seam.

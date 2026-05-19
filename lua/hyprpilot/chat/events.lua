@@ -207,6 +207,11 @@ local function dispatch(raw)
         -- `PermissionRequestSnapshot::default_option_id` in
         -- `src-tauri/src/adapters/permission.rs`).
         default_option_id = event.defaultOptionId,
+        -- Daemon-picked allow / reject option ids — accept / reject
+        -- keymaps in `permission-row` consume these directly so the
+        -- plugin never pattern-matches option names.
+        allow_option_id = event.allowOptionId,
+        reject_option_id = event.rejectOptionId,
         raw_input = event.rawInput,
       })
     elseif event.event == "permission_resolved" then

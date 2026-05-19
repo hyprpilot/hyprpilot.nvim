@@ -51,15 +51,15 @@ local function is_hyprpilot_window(winid)
 end
 
 ---@class hyprpilot.ui.window.FocusOpts
----@field target? "composer" | "chat" | "permission"  -- default: composer (where the captain types)
+---@field target? "composer" | "chat" | "permission" | "queue"  -- default: composer (where the captain types)
 
 ---Resolve the winid to focus on for `target_name`. Composer is the
 ---default but may not exist yet (no active instance, placeholder
 ---buffer, post-hide reopen) — fall back to chat in that case.
----`permission` resolves only when the permission row is currently
----visible (it auto-opens on `permission_request` events; nothing for
----us to focus when no permission is pending).
----@param target_name "composer" | "chat" | "permission"
+---`permission` and `queue` resolve only when their strip is
+---currently visible (they auto-open on daemon events / queue
+---activity; nothing for us to focus when not pending).
+---@param target_name "composer" | "chat" | "permission" | "queue"
 ---@return integer? target_winid, integer? composer_winid
 local function resolve_target_winid(target_name)
   local composer_winid = (package.loaded["hyprpilot.composer"] or {})._winid
@@ -72,6 +72,14 @@ local function resolve_target_winid(target_name)
     local permission_winid = (package.loaded["hyprpilot.chat.permission-row"] or {})._winid
     if permission_winid ~= nil and vim.api.nvim_win_is_valid(permission_winid) then
       return permission_winid, composer_winid
+    end
+    return nil, composer_winid
+  end
+
+  if target_name == "queue" then
+    local queue_winid = (package.loaded["hyprpilot.chat.queue-strip"] or {})._winid
+    if queue_winid ~= nil and vim.api.nvim_win_is_valid(queue_winid) then
+      return queue_winid, composer_winid
     end
     return nil, composer_winid
   end

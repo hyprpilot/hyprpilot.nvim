@@ -585,15 +585,16 @@ M.tools.select = {
     local start_line = math.max(1, math.min(args.start_line, max_lines))
     local end_line = math.max(start_line, math.min(args.end_line, max_lines))
 
-    -- Drive line-wise visual selection from the start row, then move
-    -- the cursor down to the end row inside the visual mode. `nvim_*`
-    -- doesn't expose a direct "select range" call, so we rely on the
-    -- normal-mode `V` keystroke. `vzv` opens any folds the range is
-    -- hidden under.
+    -- Drive line-wise visual selection from the start row, then
+    -- extend down to the end row INSIDE the same normal-mode
+    -- command — `V<end_line>Gzv` enters visual mode and jumps to
+    -- `end_line` as the selection's other anchor in one keystroke.
+    -- The previous shape (`V` followed by `nvim_win_set_cursor`)
+    -- exited visual mode the moment the cursor moved, leaving the
+    -- captain with the wrong (single-line) selection.
     vim.api.nvim_win_call(winid, function()
       pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
-      pcall(vim.cmd, "normal! Vzv")
-      pcall(vim.api.nvim_win_set_cursor, winid, { end_line, 0 })
+      pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
     end)
 
     return {
