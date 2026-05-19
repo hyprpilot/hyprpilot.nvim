@@ -263,6 +263,19 @@ local function dispatch(raw)
       -- whatever else cares about "currently selected profile"
       -- can subscribe without touching the wire layer.
       emit("ProfileChanged", { profile_id = event.profileId })
+    elseif event.event == "notifications_changed" then
+      -- Daemon-global "needs attention" surface: full per-instance
+      -- entry list, idempotent on lossy broadcast (wholesale-
+      -- replace mirror). Plugin's local mirror lives in
+      -- `notification.daemon`; auto-clear paths (focus / prompt /
+      -- permission-resolve / clean Ended) are daemon-side, so the
+      -- plugin never explicitly clears — daemon broadcasts the
+      -- post-clear empty list and the mirror updates from this
+      -- same handler. `HyprpilotNotificationsChanged` User
+      -- autocmd fires off the mirror's `apply` for any external
+      -- consumer (lualine / statusline / etc.).
+      local rpc_notifs = require("hyprpilot.rpc.notifications")
+      require("hyprpilot.notification.daemon").apply(rpc_notifs.items_from_wire(event.items))
     elseif event.event == "lagged" then
       -- Daemon dropped events on us (subscription overflow). The
       -- correct recovery is to refetch the latest page so the local
@@ -516,6 +529,15 @@ require("hyprpilot.client").on_state_change(function(state)
       M.full_reset()
     end
     _was_connected = true
+    -- Cold-connect hydration for the daemon-notifications mirror.
+    -- Steady-state updates ride `notifications_changed` broadcasts;
+    -- this one-shot covers the connect-window gap where the daemon
+    -- already has entries pending but no broadcast has fired yet.
+    -- Fire on EVERY connect (reconnect too — the prior mirror may
+    -- be stale after we missed broadcasts during the disconnect).
+    pcall(function()
+      require("hyprpilot.notification.daemon").hydrate()
+    end)
   elseif state == "disconnected" then
     -- Drop the subscribed flag immediately so a manual
     -- ensure_subscribed() between disconnect + reconnect doesn't

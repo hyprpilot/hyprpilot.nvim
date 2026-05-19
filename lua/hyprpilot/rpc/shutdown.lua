@@ -68,6 +68,13 @@ function M.shutdown()
   step("bell._reset", function()
     require("hyprpilot.notification.bell")._reset()
   end)
+  -- Daemon-notifications mirror — drops the cached items list +
+  -- subscriber table so a hot-reload starts from a fresh empty
+  -- mirror and the next connect's `hydrate()` repopulates from
+  -- the daemon's authoritative state.
+  step("notification.daemon._reset", function()
+    require("hyprpilot.notification.daemon")._reset()
+  end)
   -- Status — drop the per-instance activity table + reset the
   -- one-shot `wired` flag. Without this, a hot-reload inherits
   -- stale activity badges from the prior session.
