@@ -709,7 +709,7 @@ function M.cleanup_owned()
   if #owned == 0 then
     return
   end
-  log.debug("instances.cleanup_owned: shutting down %d owned instance(s)", #owned)
+  log.info("instances.cleanup_owned: shutting down %d owned instance(s)", #owned)
 
   -- Per-instance done flags + a single `vim.wait` that blocks
   -- until ALL acks come back. Each request gets a short timeout
@@ -719,7 +719,11 @@ function M.cleanup_owned()
     pending[id] = true
     client.request("instances/shutdown", { instanceId = id }, { timeout_ms = 1500 }, function(err)
       if err ~= nil then
-        log.debug("instances.cleanup_owned: shutdown(%s) failed: %s", id, tostring(err.message))
+        -- Surface failures at warn so a captain who doesn't run
+        -- with `log_level = TRACE` still sees them in their
+        -- notify backend — orphan-tracking trail when the daemon
+        -- rejects / times out / dies mid-shutdown.
+        log.warn("instances.cleanup_owned: shutdown(%s) failed: %s", id, tostring(err.message))
       else
         log.debug("instances.cleanup_owned: shutdown(%s) ok", id)
       end
