@@ -1,10 +1,11 @@
 --- Behavioural tests for `permission_row::default_focused_idx`.
---- The daemon supplies a `default_option_id` hint on every
---- permission request snapshot (see
---- `PermissionRequestSnapshot::default_option_id` in
---- `src-tauri/src/adapters/permission.rs`); the row honours it
---- verbatim when the option is in the list, falls back to local
---- kind / name heuristics otherwise.
+--- The daemon's `PermissionRequestSnapshot::default_option_id` is
+--- the source of truth (see daemon's `pick_allow_once_id`, which
+--- ships an id ONLY when the agent offered `kind == "allow_once"`
+--- exactly). The plugin honours it verbatim when the id is in the
+--- list, else renders no focused default — captain navigates with
+--- <Tab> / <S-Tab>. No local fallback to `allow_always` / first
+--- option / kind-prefix substring.
 
 local T = MiniTest.new_set()
 
@@ -14,7 +15,7 @@ local OPTIONS = {
   { optionId = "reject-once", name = "Reject", kind = "reject_once" },
 }
 
-T["enqueue: daemon-supplied default_option_id wins over local Allow heuristic"] = function()
+T["enqueue: daemon-supplied default_option_id is honoured verbatim"] = function()
   local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
@@ -22,19 +23,16 @@ T["enqueue: daemon-supplied default_option_id wins over local Allow heuristic"] 
     request_id = "req-default-pick",
     tool = "Bash",
     options = OPTIONS,
-    -- Daemon picked the second option (allow-always) — the local
-    -- heuristic would have picked the first (allow-once). Test
-    -- proves the daemon hint is honoured first.
-    default_option_id = "allow-always",
+    default_option_id = "allow-once",
     formatted = { title = "ls", stats = {}, fields = {} },
   })
 
-  MiniTest.expect.equality(pr._queue[1].focused_idx, 2)
+  MiniTest.expect.equality(pr._queue[1].focused_idx, 1)
 
   pr.reset()
 end
 
-T["enqueue: missing default_option_id → falls back to first allow-shaped option"] = function()
+T["enqueue: missing default_option_id → nil focused_idx (no local fallback)"] = function()
   local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
@@ -45,14 +43,15 @@ T["enqueue: missing default_option_id → falls back to first allow-shaped optio
     formatted = { title = "ls", stats = {}, fields = {} },
   })
 
-  -- No daemon hint → kind-based heuristic kicks in: first option
-  -- with `kind:match("^allow")` is option 1.
-  MiniTest.expect.equality(pr._queue[1].focused_idx, 1)
+  -- No daemon hint → no focused default. Captain navigates with
+  -- <Tab> / <S-Tab>; never accidentally lands on `allow-always`
+  -- or whatever the first option happens to be.
+  MiniTest.expect.equality(pr._queue[1].focused_idx, nil)
 
   pr.reset()
 end
 
-T["enqueue: default_option_id pointing at unknown id falls back to heuristic (no crash)"] = function()
+T["enqueue: default_option_id pointing at unknown id → nil focused_idx (no crash, no fallback)"] = function()
   local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
 
@@ -64,8 +63,9 @@ T["enqueue: default_option_id pointing at unknown id falls back to heuristic (no
     formatted = { title = "ls", stats = {}, fields = {} },
   })
 
-  -- Bad hint → local heuristic, picks first allow-kind option.
-  MiniTest.expect.equality(pr._queue[1].focused_idx, 1)
+  -- Stale / race id → no focused default. Captain navigates
+  -- explicitly rather than picking a plausible-but-wrong fallback.
+  MiniTest.expect.equality(pr._queue[1].focused_idx, nil)
 
   pr.reset()
 end

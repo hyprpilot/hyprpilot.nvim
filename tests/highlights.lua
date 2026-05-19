@@ -147,9 +147,13 @@ T["permission_row enqueue paints the header/button highlights on its own buffer"
   permission_row.enqueue("inst-1", {
     request_id = "req-1",
     tool = "Bash",
+    -- Daemon-supplied default_option_id is the ONLY way to seed
+    -- focus now (post `pick_allow_once_id` strictness); without
+    -- it `focused_idx` is nil and no `[> Label <]` row renders.
+    default_option_id = "allow-once",
     options = {
-      { optionId = "allow-once", name = "Allow" },
-      { optionId = "reject-once", name = "Reject" },
+      { optionId = "allow-once", name = "Allow", kind = "allow_once" },
+      { optionId = "reject-once", name = "Reject", kind = "reject_once" },
     },
     formatted = { title = "ls", stats = {}, fields = {} },
   })
