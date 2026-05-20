@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.12.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.11.0...hyprpilot.nvim-v1.12.0) (2026-05-20)
+
+
+### Features
+
+* **palette:** instances.open_attached — local-only switcher ([#130](https://github.com/hyprpilot/hyprpilot.nvim/issues/130)) ([aa6dfdd](https://github.com/hyprpilot/hyprpilot.nvim/commit/aa6dfddc1bf9c9f0b4cbf4de31e79c6f8b8f5f1f))
+
+
+### Bug Fixes
+
+* **instances:** close auto-shutdown gaps in attach + sessions/load ([#132](https://github.com/hyprpilot/hyprpilot.nvim/issues/132)) ([207c6a1](https://github.com/hyprpilot/hyprpilot.nvim/commit/207c6a188c6a2496b9ba3d66e833278340f3a6ac))
+
 ## [1.11.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.10.2...hyprpilot.nvim-v1.11.0) (2026-05-19)
 
 
