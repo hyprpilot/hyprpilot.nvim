@@ -13,6 +13,7 @@ local M = {}
 ---@field on_pick? fun(instance_id: string): nil  -- override commit (default: chat.window.switch)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
 ---@field cwd? string | false                       -- filter by cwd; default `vim.fn.getcwd()`; `false` disables (every instance). Mirrors `palettes/sessions.lua`.
+---@field with_shutdown? boolean                    -- forwarded to `instances.attach` on pick; default true (cleanup_owned fires on quit). Pass `false` for peek-at-foreign-instance.
 
 ---Compose the row display string. Active instance gets a `* `
 ---prefix so it's visible in pickers without a "selected" indicator.
@@ -159,7 +160,7 @@ function M.open(opts)
     -- does. For locally-known ids it falls through to
     -- `window.show` which is the existing switch behaviour.
     local commit = opts.on_pick or function(id)
-      hp_instances.attach(id)
+      hp_instances.attach(id, { with_shutdown = opts.with_shutdown })
     end
 
     pickers.open({

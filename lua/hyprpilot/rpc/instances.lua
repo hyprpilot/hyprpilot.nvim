@@ -200,11 +200,18 @@ end
 ---`instances/list` should bring it back into the captain's UI
 ---without forcing a respawn — that's exactly what this does.
 ---@param instance_id string
----@param opts? { show?: boolean, callback?: hyprpilot.InstanceCallback }
+---@param opts? { show?: boolean, with_shutdown?: boolean, callback?: hyprpilot.InstanceCallback }
 function M.attach(instance_id, opts)
   opts = opts or {}
   local show_after = opts.show ~= false
   local callback = opts.callback
+  -- Mirror `spawn` / `focus`: `with_shutdown` defaults TRUE
+  -- (captain-driven attach is a "this instance is under my UI"
+  -- gesture, so `cleanup_owned` fires on quit). Captains running
+  -- multi-frontend setups OR a pure peek-at-foreign-instance flow
+  -- opt out with `with_shutdown = false` so quitting nvim leaves
+  -- the daemon-side instance running.
+  local with_shutdown = opts.with_shutdown ~= false
 
   if type(instance_id) ~= "string" or instance_id == "" then
     log.warn("instances.attach: instance_id must be a non-empty string")
@@ -230,7 +237,9 @@ function M.attach(instance_id, opts)
   -- the right name, then mint + hydrate. `attach()` (the local
   -- helper above) handles the mint / register / show / hydrate
   -- choreography so spawn / focus / load_session / attach all
-  -- converge on the same path.
+  -- converge on the same path. `with_shutdown` carries the opt
+  -- through to the registry stamp; default-true semantics are
+  -- documented at the local resolution above.
   M.info(instance_id, function(err, info)
     if err ~= nil then
       log.warn("instances.attach: info failed for %s: %s", instance_id, err.message)
@@ -246,7 +255,7 @@ function M.attach(instance_id, opts)
       end
       return
     end
-    attach(info, show_after)
+    attach(info, show_after, with_shutdown)
     if callback ~= nil then
       callback(nil, info)
     end
