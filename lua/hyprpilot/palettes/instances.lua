@@ -196,6 +196,90 @@ function M.open(opts)
   end)
 end
 
+---@class hyprpilot.palettes.instances.AttachedOpts
+---@field on_pick? fun(instance_id: string): nil  -- override commit (default: chat.window.switch)
+---@field picker? "auto" | "snacks" | "vim.ui.select"
+
+---Local-only variant of `M.open`: picker over instances the plugin
+---has ALREADY attached to (chat buffer minted + state registered
+---in `chat.window._instances`). No `instances/list` round-trip, no
+---`cwd` filter — just "jump to one of these N tabs I already
+---have open." Pick → `chat.window.switch` (cheap local buffer swap)
+---instead of `instances.attach` (RPC + hydrate).
+---
+---Use when the captain wants a fast switcher across THEIR live
+---instances. `M.open` is still the right call when the captain
+---wants to see every instance the daemon knows about (including
+---ones spawned from the desktop overlay / a sibling nvim that
+---this session hasn't attached to yet).
+---@param opts? hyprpilot.palettes.instances.AttachedOpts
+function M.open_attached(opts)
+  opts = opts or {}
+
+  local active_id = window.active_instance()
+  local items = {}
+  for id, state in pairs(window._instances) do
+    -- Project the local state into the same shape `format_item` /
+    -- `format_preview` consume so we reuse the existing renderers.
+    -- Meta fields (agent / profile / cwd / mode) come from the
+    -- winbar cache when available — captain might not have meta
+    -- yet for a freshly-attached instance, in which case we ship
+    -- nil and the renderer just skips the field.
+    local meta = (package.loaded["hyprpilot.chat.winbar"] or {})._meta or {}
+    local m = meta[id] or {}
+    table.insert(items, {
+      id = id,
+      name = state.name or m.name,
+      agent_id = m.agent_id,
+      profile_id = m.profile_id,
+      mode = m.current_mode_id,
+      cwd = m.cwd,
+      session_id = m.session_id,
+    })
+  end
+
+  if #items == 0 then
+    log.warn("palettes.instances.open_attached: no attached instances — use `palettes.instances.open()` to attach one")
+    return
+  end
+
+  local commit = opts.on_pick or function(id)
+    window.switch(id)
+  end
+
+  pickers.open({
+    items = items,
+    title = "attached instances",
+    kind = "hyprpilot.instances.attached",
+    picker = opts.picker,
+    format_item = function(item)
+      return format_item(item, active_id)
+    end,
+    preview = function(item)
+      return format_preview(item, active_id)
+    end,
+    on_pick = function(choice)
+      if choice.id == active_id and opts.on_pick == nil then
+        log.debug("palettes.instances.open_attached: chose active instance (%s) — no-op", active_id)
+        return
+      end
+      commit(choice.id)
+    end,
+    actions = {
+      -- Mirror the `<C-d>` shutdown action on `M.open` so the
+      -- captain has the same delete affordance regardless of
+      -- which picker variant they opened.
+      delete = {
+        key = "<C-d>",
+        handler = function(item)
+          require("hyprpilot.rpc.instances").shutdown(item.id)
+          require("hyprpilot.chat.window").close(item.id)
+        end,
+      },
+    },
+  })
+end
+
 M.format_item = format_item
 M.format_preview = format_preview
 
