@@ -31,6 +31,7 @@ local M = {}
 ---@field cwd? string | false         -- filter & load cwd; default `vim.fn.getcwd()`; `false` disables the filter (every session)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
 ---@field with_config? hyprpilot.ConfigPatch[]
+---@field with_shutdown? boolean      -- default true; the loaded instance is stamped owned so `cleanup_owned` fires on `VimLeavePre`. Captains who want the session to outlive nvim pass `false`.
 --- Same shape as `instances.spawn`'s `with_config`. Stacks on top of
 --- `config.options.with_config`; daemon folds the merged list onto
 --- the resolved profile before spawning the resumed instance and
@@ -235,7 +236,20 @@ function M.open(opts)
             local bufnr = require("hyprpilot.chat.buffer").create(info.id)
             -- Captain explicitly picked this session — activate it so
             -- the next composer submit lands on the loaded instance.
-            require("hyprpilot.chat.window").register({ bufnr = bufnr, instance_id = info.id, name = info.name }, { activate = true })
+            -- `spawned_with_shutdown` defaults true: a session-load
+            -- is a captain-driven spawn-equivalent (the daemon
+            -- minted a fresh actor under the picked session), so the
+            -- instance is tied to this nvim session — `cleanup_owned`
+            -- fires on `VimLeavePre`. Captains who want the loaded
+            -- session to outlive nvim pass `with_shutdown = false`
+            -- on the picker open call, or call
+            -- `instances.set_keep_alive(id, true)` afterwards.
+            require("hyprpilot.chat.window").register({
+              bufnr = bufnr,
+              instance_id = info.id,
+              name = info.name,
+              spawned_with_shutdown = opts.with_shutdown ~= false,
+            }, { activate = true })
             require("hyprpilot.chat.window").show(info.id)
           end)
         end)

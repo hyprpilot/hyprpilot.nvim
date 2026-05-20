@@ -192,4 +192,42 @@ T["shutdown: last instance closes the chat window; registry wiped"] = function()
   restore_client()
 end
 
+T["attach: with_shutdown defaults true (palette-picked instance is owned)"] = function()
+  local restore_client = helpers.stub_client_with({
+    ["instances/info"] = { result = { instanceId = "inst-attached" } },
+    ["instance/snapshot/chat"] = { result = { items = {}, latestSeq = 0, oldestSeq = 0, hasMore = false } },
+    ["events/subscribe"] = { result = vim.NIL },
+    ["instance/snapshot/meta"] = { result = {} },
+    ["instance/snapshot/queue"] = { result = { items = {} } },
+  })
+
+  require("hyprpilot.rpc.instances").attach("inst-attached", { show = false })
+
+  local state = require("hyprpilot.chat.window")._instances["inst-attached"]
+  MiniTest.expect.equality(state ~= nil, true)
+  MiniTest.expect.equality(state.spawned_with_shutdown, true)
+
+  helpers.cleanup_instance("inst-attached")
+  restore_client()
+end
+
+T["attach: with_shutdown=false opts out (peek-at-foreign-instance flow)"] = function()
+  local restore_client = helpers.stub_client_with({
+    ["instances/info"] = { result = { instanceId = "inst-peeked" } },
+    ["instance/snapshot/chat"] = { result = { items = {}, latestSeq = 0, oldestSeq = 0, hasMore = false } },
+    ["events/subscribe"] = { result = vim.NIL },
+    ["instance/snapshot/meta"] = { result = {} },
+    ["instance/snapshot/queue"] = { result = { items = {} } },
+  })
+
+  require("hyprpilot.rpc.instances").attach("inst-peeked", { show = false, with_shutdown = false })
+
+  local state = require("hyprpilot.chat.window")._instances["inst-peeked"]
+  MiniTest.expect.equality(state ~= nil, true)
+  MiniTest.expect.equality(state.spawned_with_shutdown, false)
+
+  helpers.cleanup_instance("inst-peeked")
+  restore_client()
+end
+
 return T
