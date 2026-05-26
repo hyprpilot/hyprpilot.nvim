@@ -222,4 +222,22 @@ T["pending fold queue flushes when window appears"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["foldtext preserves trailing stats while truncating the title"] = function()
+  local render = require("hyprpilot.chat.render")
+  local line = "[ok] execute · run the extremely long command with many args · [234ms] [$0.01]"
+
+  local out = render._truncate_foldtext_for_tests(line, 48)
+
+  MiniTest.expect.equality(out, "[ok] execute · run the… · [234ms] [$0.01]")
+end
+
+T["foldtext truncates on word boundaries without stats"] = function()
+  local render = require("hyprpilot.chat.render")
+  local line = "### tools with a very long collapsible title"
+
+  local out = render._truncate_foldtext_for_tests(line, 24)
+
+  MiniTest.expect.equality(out, "### tools with a very…")
+end
+
 return T

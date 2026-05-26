@@ -3073,23 +3073,134 @@ function M.state_for(instance_id)
   return M._states[instance_id]
 end
 
----Custom foldtext: returns the head row VERBATIM. Section headers
+---Custom foldtext: returns the head row with width-aware truncation. Section headers
 ---(`### thoughts` / `### tools` / etc.) and pilot turn headers
 ---(`## pilot [123 in/45 out tok · $0.001]`) already carry their stat
 ---pills written in-line via `repaint_section_header` /
 ---`repaint_pilot_header` — appending a second `[N items]` chip in
 ---the foldtext was the regression that hid stats behind a
----duplicated count and pushed pilot pills off-screen on narrow
----chat sidebars. Now the foldtext is the head row, untouched.
+---duplicated count and pushed pilot pills off-screen on narrow chat
+---sidebars. The returned line preserves trailing stat pills and
+---space-truncates the title/body before them.
 ---
 ---The line-count chrome Neovim adds by default is unhelpful for our
 ---use case (the body of a tool-block fold is the same content the
 ---captain would expand to read; line count is meaningless context),
 ---so we deliberately don't append it.
+local FOLDTEXT_ELLIPSIS = "…"
+
+---@param text string
+---@return integer
+local function display_width(text)
+  return vim.fn.strdisplaywidth(text)
+end
+
+---@param text string
+---@param width integer
+---@return string
+local function prefix_with_width(text, width)
+  if width <= 0 then
+    return ""
+  end
+
+  local low = 0
+  local high = vim.fn.strchars(text)
+  while low < high do
+    local mid = math.ceil((low + high) / 2)
+    local candidate = vim.fn.strcharpart(text, 0, mid)
+    if display_width(candidate) <= width then
+      low = mid
+    else
+      high = mid - 1
+    end
+  end
+
+  return vim.fn.strcharpart(text, 0, low)
+end
+
+---@param text string
+---@param width integer
+---@return string
+local function space_aware_prefix(text, width)
+  local cut = prefix_with_width(text, width):gsub("%s+$", "")
+  if cut == text then
+    return cut
+  end
+
+  local next_char = vim.fn.strcharpart(text, vim.fn.strchars(cut), 1)
+  if next_char ~= "" and not next_char:match("%s") then
+    local before_last_word = cut:match("^(.*)%s+%S*$")
+    if before_last_word ~= nil and before_last_word ~= "" and display_width(before_last_word) >= math.floor(width * 0.5) then
+      return before_last_word:gsub("%s+$", "")
+    end
+  end
+
+  return cut
+end
+
+---@param line string
+---@return string body
+---@return string suffix
+local function split_stats_suffix(line)
+  local body = line
+  local suffix = ""
+  while true do
+    local prefix, pill = body:match("^(.-)(%s+%[[^%]]+%])%s*$")
+    if prefix == nil then
+      break
+    end
+    body = prefix
+    suffix = pill .. suffix
+  end
+
+  if suffix ~= "" then
+    local before_separator = body:match("^(.-)%s+·$")
+    if before_separator ~= nil then
+      body = before_separator
+      suffix = " ·" .. suffix
+    end
+  end
+
+  return body, suffix
+end
+
+---@param line string
+---@param width integer
+---@return string
+local function truncate_foldtext(line, width)
+  if width <= 0 or display_width(line) <= width then
+    return line
+  end
+
+  local body, suffix = split_stats_suffix(line)
+  local suffix_width = display_width(suffix)
+  local ellipsis_width = display_width(FOLDTEXT_ELLIPSIS)
+  if suffix ~= "" and suffix_width + ellipsis_width <= width then
+    local body_width = width - suffix_width - ellipsis_width
+
+    return space_aware_prefix(body, body_width) .. FOLDTEXT_ELLIPSIS .. suffix
+  end
+
+  local body_width = width - ellipsis_width
+  if body_width <= 0 then
+    return FOLDTEXT_ELLIPSIS
+  end
+
+  return space_aware_prefix(line, body_width) .. FOLDTEXT_ELLIPSIS
+end
+
 function M.foldtext()
   local fs = vim.v.foldstart or 1
-  return vim.fn.getline(fs) or ""
+  local line = vim.fn.getline(fs) or ""
+  local ok, width = pcall(vim.api.nvim_win_get_width, 0)
+  if not ok or type(width) ~= "number" then
+    return line
+  end
+
+  return truncate_foldtext(line, width)
 end
+
+M._truncate_foldtext_for_tests = truncate_foldtext
 
 ---Iterate every tracked state. `fn` receives `(instance_id, state)`
 ---per entry; return value ignored. Public accessor so consumers
