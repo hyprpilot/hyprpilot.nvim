@@ -8,6 +8,7 @@
 --- option / kind-prefix substring.
 
 local T = MiniTest.new_set()
+local helpers = require("tests.helpers")
 
 local OPTIONS = {
   { optionId = "allow-once", name = "Allow", kind = "allow_once" },
@@ -68,6 +69,33 @@ T["enqueue: default_option_id pointing at unknown id → nil focused_idx (no cra
   MiniTest.expect.equality(pr._queue[1].focused_idx, nil)
 
   pr.reset()
+end
+
+T["render: long option labels are truncated in the button row"] = function()
+  local pr = require("hyprpilot.chat.permission-row")
+  pr.reset()
+
+  local restore_active = helpers.stub_active_instance("inst-1")
+  pr.enqueue("inst-1", {
+    request_id = "req-long-label",
+    tool = "Bash",
+    options = {
+      {
+        optionId = "allow-once",
+        name = "Allow this specific very long approval option label",
+        kind = "allow_once",
+      },
+    },
+    default_option_id = "allow-once",
+    formatted = { title = "ls", stats = {}, fields = {} },
+  })
+  pr.refresh()
+
+  local lines = vim.api.nvim_buf_get_lines(pr._bufnr, 0, -1, false)
+  MiniTest.expect.equality(lines[1], "  [> Allow this specific very long ap... <]")
+
+  pr.reset()
+  restore_active()
 end
 
 return T

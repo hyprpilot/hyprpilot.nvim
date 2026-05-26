@@ -10,6 +10,7 @@
 --- coupling chat / composer / permissions to this module directly.
 
 local log = require("hyprpilot.log")
+local instances = require("hyprpilot.instances")
 
 local M = {}
 
@@ -42,7 +43,14 @@ end
 ---can mutate freely without touching internal state.
 ---@return hyprpilot.notification.attention.Entry[]
 function M.list()
-  return vim.deepcopy(entries)
+  local out = {}
+  for _, entry in ipairs(entries) do
+    if instances.get(entry.instance_id) ~= nil then
+      table.insert(out, vim.deepcopy(entry))
+    end
+  end
+
+  return out
 end
 
 ---True when at least one entry needs the captain's attention. With
@@ -52,7 +60,10 @@ end
 ---@return boolean
 function M.is_attention_needed(instance_id)
   if instance_id == nil then
-    return #entries > 0
+    return #M.list() > 0
+  end
+  if instances.get(instance_id) == nil then
+    return false
   end
   for _, entry in ipairs(entries) do
     if entry.instance_id == instance_id then
@@ -83,6 +94,10 @@ end
 ---@param bufnr? integer
 ---@param request_id string
 function M._add_permission(instance_id, bufnr, request_id)
+  if instances.get(instance_id) == nil then
+    return
+  end
+
   for _, entry in ipairs(entries) do
     if entry.kind == "permission" and entry.request_id == request_id then
       return
@@ -106,6 +121,10 @@ end
 ---@param instance_id string
 ---@param bufnr? integer
 function M._add_turn_ended(instance_id, bufnr)
+  if instances.get(instance_id) == nil then
+    return
+  end
+
   for _, entry in ipairs(entries) do
     if entry.kind == "turn_ended" and entry.instance_id == instance_id then
       entry.added_at = vim.uv.hrtime()

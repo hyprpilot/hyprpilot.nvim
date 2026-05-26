@@ -9,7 +9,10 @@ local T = MiniTest.new_set()
 
 local function fresh_attention()
   local attention = require("hyprpilot.notification.attention")
+  local instances = require("hyprpilot.instances")
+  instances._reset()
   attention._reset()
+
   return attention
 end
 
@@ -46,6 +49,9 @@ end
 
 T["palettes.attention: pick → switch + focus chat"] = function()
   local attention = fresh_attention()
+  local instances = require("hyprpilot.instances")
+  instances.register({ instance_id = "inst-1", bufnr = 42 })
+  instances.register({ instance_id = "inst-2", bufnr = 43 })
   attention._add_permission("inst-1", 42, "req-1")
   attention._add_turn_ended("inst-2", 43)
 
@@ -69,6 +75,7 @@ end
 
 T["palettes.attention: on_pick override receives the full entry"] = function()
   local attention = fresh_attention()
+  require("hyprpilot.instances").register({ instance_id = "inst-7", bufnr = 42 })
   attention._add_permission("inst-7", 42, "req-7")
 
   local picked

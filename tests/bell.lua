@@ -9,8 +9,13 @@ local T = MiniTest.new_set()
 local function fresh()
   local bell = require("hyprpilot.notification.bell")
   local attention = require("hyprpilot.notification.attention")
+  local instances = require("hyprpilot.instances")
+  instances._reset()
   bell._reset()
   attention._reset()
+  instances.register({ instance_id = "inst-1", bufnr = 1 })
+  instances.register({ instance_id = "inst-2", bufnr = 2 })
+
   return bell, attention
 end
 
@@ -54,6 +59,20 @@ T["bell rings on attention-list growth when enabled"] = function()
   attention._add_turn_ended("inst-2", 2)
   vim.wait(20)
   MiniTest.expect.equality(counter.count, 2)
+  restore()
+end
+
+T["bell ignores attention for instances not managed by this nvim"] = function()
+  local bell, attention = fresh()
+  config.options.notification = { bell = { enabled = true } }
+
+  local restore, counter = stub_ring(bell)
+  bell.ensure_listeners()
+
+  attention._add_permission("foreign", 3, "req-foreign")
+  attention._add_turn_ended("foreign", 3)
+  vim.wait(20)
+  MiniTest.expect.equality(counter.count, 0)
   restore()
 end
 
