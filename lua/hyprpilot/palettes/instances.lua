@@ -3,6 +3,7 @@
 --- switches to that instance's buffer.
 
 local hp_instances = require("hyprpilot.rpc.instances")
+local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
 local pickers = require("hyprpilot.palettes.pickers")
 local window = require("hyprpilot.chat.window")
@@ -203,7 +204,7 @@ end
 
 ---Local-only variant of `M.open`: picker over instances the plugin
 ---has ALREADY attached to (chat buffer minted + state registered
----in `chat.window._instances`). No `instances/list` round-trip, no
+---in `hyprpilot.instances`). No `instances/list` round-trip, no
 ---`cwd` filter — just "jump to one of these N tabs I already
 ---have open." Pick → `chat.window.switch` (cheap local buffer swap)
 ---instead of `instances.attach` (RPC + hydrate).
@@ -219,7 +220,7 @@ function M.open_attached(opts)
 
   local active_id = window.active_instance()
   local items = {}
-  for id, state in pairs(window._instances) do
+  for id, state in pairs(instances.list()) do
     -- Project the local state into the same shape `format_item` /
     -- `format_preview` consume so we reuse the existing renderers.
     -- Meta fields (agent / profile / cwd / mode) come from the

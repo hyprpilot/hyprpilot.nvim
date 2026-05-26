@@ -41,7 +41,7 @@ T["spawn: with_shutdown defaults to true (stamps registry without the opt)"] = f
     show = false,
   })
 
-  local state = require("hyprpilot.chat.window")._instances["inst-owned"]
+  local state = require("hyprpilot.instances").get("inst-owned")
   MiniTest.expect.equality(state ~= nil, true)
   MiniTest.expect.equality(state.spawned_with_shutdown, true)
 
@@ -60,7 +60,7 @@ T["spawn: with_shutdown=false opts out of cleanup (instance survives nvim exit)"
     with_shutdown = false,
   })
 
-  local state = require("hyprpilot.chat.window")._instances["inst-survives"]
+  local state = require("hyprpilot.instances").get("inst-survives")
   MiniTest.expect.equality(state ~= nil, true)
   MiniTest.expect.equality(state.spawned_with_shutdown, false)
 
@@ -79,7 +79,7 @@ T["focus(ensure=true) defaults with_shutdown true; ensure=false (pure focus) nev
     show = false,
   })
 
-  local owned_state = require("hyprpilot.chat.window")._instances["inst-foc"]
+  local owned_state = require("hyprpilot.instances").get("inst-foc")
   MiniTest.expect.equality(owned_state.spawned_with_shutdown, true)
   helpers.cleanup_instance("inst-foc")
 
@@ -92,7 +92,7 @@ T["focus(ensure=true) defaults with_shutdown true; ensure=false (pure focus) nev
     with_shutdown = true,
   })
 
-  local borrowed_state = require("hyprpilot.chat.window")._instances["inst-foc"]
+  local borrowed_state = require("hyprpilot.instances").get("inst-foc")
   MiniTest.expect.equality(borrowed_state.spawned_with_shutdown, false)
 
   helpers.cleanup_instance("inst-foc")
@@ -108,14 +108,12 @@ T["cleanup_owned fires instances/shutdown for owned instances only"] = function(
   local buffer = require("hyprpilot.chat.buffer")
   local instances = require("hyprpilot.instances")
 
-  -- Wipe `_instances` first so owned-default spawns from earlier
-  -- tests don't pollute the iteration. The cleanup helper only
-  -- forgets render state; the window registry is owned separately.
-  for id, state in pairs(window._instances) do
+  -- Wipe the local registry first so owned-default spawns from earlier
+  -- tests don't pollute the iteration.
+  for id, state in pairs(instances.list()) do
     if vim.api.nvim_buf_is_valid(state.bufnr) then
       pcall(vim.api.nvim_buf_delete, state.bufnr, { force = true })
     end
-    window._instances[id] = nil
     instances.forget(id)
   end
 
@@ -149,8 +147,8 @@ T["cleanup_owned fires instances/shutdown for owned instances only"] = function(
 
   helpers.cleanup_instance("inst-owned")
   helpers.cleanup_instance("inst-borrowed")
-  window._instances["inst-owned"] = nil
-  window._instances["inst-borrowed"] = nil
+  instances.forget("inst-owned")
+  instances.forget("inst-borrowed")
   restore_client()
 end
 
@@ -172,16 +170,16 @@ T["shutdown: last instance closes the chat window; registry wiped"] = function()
   }, { activate = true })
 
   -- Snapshot the pre-shutdown state.
-  MiniTest.expect.equality(window._instances["solo"] ~= nil, true)
+  MiniTest.expect.equality(require("hyprpilot.instances").get("solo") ~= nil, true)
 
   -- Fire the manual shutdown.
   instances.shutdown("solo")
 
   -- After the (synchronous stub) RPC callback: instance wiped + window hidden.
-  MiniTest.expect.equality(window._instances["solo"], nil)
+  MiniTest.expect.equality(require("hyprpilot.instances").get("solo"), nil)
   -- Window is not visible (was never opened in headless; `hide()` is a no-op
   -- when not visible — key assertion is that the registry is empty).
-  MiniTest.expect.equality(next(window._instances), nil)
+  MiniTest.expect.equality(require("hyprpilot.instances").is_empty(), true)
 
   -- Exactly one `instances/shutdown` wire call.
   local shutdown_calls = vim.tbl_filter(function(c)
@@ -205,7 +203,7 @@ T["attach: with_shutdown defaults true (palette-picked instance is owned)"] = fu
 
   require("hyprpilot.rpc.instances").attach("inst-attached", { show = false })
 
-  local state = require("hyprpilot.chat.window")._instances["inst-attached"]
+  local state = require("hyprpilot.instances").get("inst-attached")
   MiniTest.expect.equality(state ~= nil, true)
   MiniTest.expect.equality(state.spawned_with_shutdown, true)
 
@@ -224,7 +222,7 @@ T["attach: with_shutdown=false opts out (peek-at-foreign-instance flow)"] = func
 
   require("hyprpilot.rpc.instances").attach("inst-peeked", { show = false, with_shutdown = false })
 
-  local state = require("hyprpilot.chat.window")._instances["inst-peeked"]
+  local state = require("hyprpilot.instances").get("inst-peeked")
   MiniTest.expect.equality(state ~= nil, true)
   MiniTest.expect.equality(state.spawned_with_shutdown, false)
 

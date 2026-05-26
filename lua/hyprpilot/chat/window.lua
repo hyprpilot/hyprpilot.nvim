@@ -1,14 +1,12 @@
 local buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
+local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
 
 local M = {}
 
 ---@type integer?
 M._winid = nil
-
----@type table<string, hyprpilot.InstanceState>
-M._instances = {}
 
 ---@type string?
 M._last_active_id = nil
@@ -143,8 +141,7 @@ end
 function M.register(state, opts)
   opts = opts or {}
   local previous = M._last_active_id
-  M._instances[state.instance_id] = state
-  require("hyprpilot.instances").register(state)
+  instances.register(state)
 
   local activate = opts.activate or previous == nil
   if activate then
@@ -175,15 +172,14 @@ function M.close(instance_id)
     return
   end
 
-  local state = M._instances[id]
+  local state = instances.get(id)
 
   if state == nil then
     return
   end
 
   buffer.wipe(state.bufnr)
-  M._instances[id] = nil
-  require("hyprpilot.instances").forget(id)
+  instances.forget(id)
 
   require("hyprpilot.chat.render").forget(id)
   require("hyprpilot.chat.winbar").forget(id)
@@ -211,7 +207,7 @@ function M.close(instance_id)
   end)
 
   if M._last_active_id == id then
-    M._last_active_id = next(M._instances)
+    M._last_active_id = instances.first_id()
   end
 
   log.debug("window.close: instance=%s", id)
@@ -222,7 +218,7 @@ end
 ---@return integer bufnr
 local function resolve_target_buffer(instance_id)
   if instance_id ~= nil then
-    local state = M._instances[instance_id]
+    local state = instances.get(instance_id)
 
     if state ~= nil and vim.api.nvim_buf_is_valid(state.bufnr) then
       return state.bufnr
@@ -230,7 +226,7 @@ local function resolve_target_buffer(instance_id)
   end
 
   if M._last_active_id ~= nil then
-    local state = M._instances[M._last_active_id]
+    local state = instances.get(M._last_active_id)
 
     if state ~= nil and vim.api.nvim_buf_is_valid(state.bufnr) then
       return state.bufnr
@@ -302,7 +298,7 @@ end
 ---buffer plus a "spawn one" instruction.
 ---@return boolean
 local function has_no_instances()
-  return next(M._instances) == nil
+  return instances.is_empty()
 end
 
 ---Snapshot the captain's "associated" buffer — the working file they
@@ -407,7 +403,7 @@ function M._show_inner(instance_id)
   -- placeholder buffer with a stale `_last_active_id` — the old code
   -- left the UI lying about which instance was active and composer
   -- submits would dispatch to the wrong instance.
-  if instance_id ~= nil and M._instances[instance_id] == nil then
+  if instance_id ~= nil and instances.get(instance_id) == nil then
     log.warn("window.show: unknown instance=%s — refusing to silently render placeholder", instance_id)
     return
   end
@@ -432,10 +428,10 @@ function M._show_inner(instance_id)
 
   local resolved_id = nil
 
-  if instance_id ~= nil and M._instances[instance_id] ~= nil then
+  if instance_id ~= nil and instances.get(instance_id) ~= nil then
     M._last_active_id = instance_id
     resolved_id = instance_id
-  elseif M._last_active_id ~= nil and M._instances[M._last_active_id] ~= nil then
+  elseif M._last_active_id ~= nil and instances.get(M._last_active_id) ~= nil then
     resolved_id = M._last_active_id
   end
 
@@ -609,7 +605,7 @@ end
 ---back to B surfaces the row immediately.
 ---@param instance_id string
 function M.switch(instance_id)
-  local state = M._instances[instance_id]
+  local state = instances.get(instance_id)
 
   if state == nil then
     log.warn("window.switch: unknown instance=%s", instance_id)
@@ -684,7 +680,7 @@ end
 ---@param instance_id string
 ---@return integer?
 function M.get_bufnr(instance_id)
-  local state = M._instances[instance_id]
+  local state = instances.get(instance_id)
   if state == nil then
     return nil
   end

@@ -14,8 +14,8 @@
 --- is the AUTHORITATIVE cross-frontend state: an overlay running
 --- on the same daemon and an nvim attached to the same daemon both
 --- receive the same raw notifications list because the daemon owns
---- it. Captain-facing reads filter that raw list to instances this
---- Neovim frontend manages via `hyprpilot.instances`.
+--- it. Captain-facing reads filter that raw list to instances in
+--- the local `hyprpilot.instances` registry.
 ---
 --- Subscribers (palette, future statusline integration) read via
 --- `on_change(fn)`; fires with a fresh snapshot on every apply.
@@ -24,6 +24,7 @@
 --- `M.dismiss_all()` which round-trip via RPC; the post-clear
 --- daemon broadcast updates the mirror.
 
+local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
 local rpc = require("hyprpilot.rpc.notifications")
 
@@ -35,24 +36,6 @@ local items = {}
 ---@type table<integer, fun(snapshot: hyprpilot.NotificationEntry[]): nil>
 local subscribers = {}
 local subscriber_counter = 0
-
----@param instance_id any
----@return boolean
-local function is_managed(instance_id)
-  return require("hyprpilot.instances").is_managed(instance_id)
-end
-
----@return hyprpilot.NotificationEntry[]
-local function managed_items()
-  local out = {}
-  for _, item in ipairs(items) do
-    if is_managed(item.instance_id) then
-      table.insert(out, vim.deepcopy(item))
-    end
-  end
-
-  return out
-end
 
 ---@param snapshot hyprpilot.NotificationEntry[]
 local function fire_change(snapshot)
@@ -72,7 +55,14 @@ end
 ---touching the internal table.
 ---@return hyprpilot.NotificationEntry[]
 function M.list()
-  return managed_items()
+  local out = {}
+  for _, item in ipairs(items) do
+    if instances.get(item.instance_id) ~= nil then
+      table.insert(out, vim.deepcopy(item))
+    end
+  end
+
+  return out
 end
 
 ---@return integer
@@ -85,7 +75,7 @@ end
 ---@param instance_id? string
 ---@return hyprpilot.NotificationEntry?
 function M.get(instance_id)
-  if not is_managed(instance_id) then
+  if instances.get(instance_id) == nil then
     return nil
   end
   for _, entry in ipairs(items) do

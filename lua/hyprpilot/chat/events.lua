@@ -457,12 +457,12 @@ function M.full_reset()
     require("hyprpilot.chat.permission-row").reset()
   end)
 
-  -- Walk the union of `window._instances` (registered keyset) AND
+  -- Walk the union of `hyprpilot.instances` (registered keyset) AND
   -- `render._states` so a meta-only instance (registered but never
   -- emitted a transcript yet) doesn't keep stale per-instance state
   -- past reconnect. Render-state-only iteration would miss those.
   local known_ids = {}
-  for instance_id, _ in pairs(require("hyprpilot.chat.window")._instances) do
+  for instance_id, _ in pairs(require("hyprpilot.instances").list()) do
     known_ids[instance_id] = true
   end
   for instance_id, _ in pairs(require("hyprpilot.chat.render")._states) do

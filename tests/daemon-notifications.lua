@@ -1,6 +1,6 @@
 --- Behavioural tests for the daemon-notifications mirror. The daemon
 --- snapshot is global, but captain-facing reads are scoped to daemon
---- instances managed by this Neovim frontend.
+--- instances registered in this Neovim frontend.
 
 local T = MiniTest.new_set()
 
@@ -22,18 +22,18 @@ local function entry(instance_id)
   }
 end
 
-T["list filters daemon notifications to managed instances"] = function()
+T["list filters daemon notifications to registered instances"] = function()
   local instances, daemon = fresh()
-  instances.register({ instance_id = "managed", bufnr = 42 })
+  instances.register({ instance_id = "local", bufnr = 42 })
 
-  daemon.apply({ entry("managed"), entry("foreign") })
+  daemon.apply({ entry("local"), entry("foreign") })
 
   local items = daemon.list()
   MiniTest.expect.equality(#items, 1)
-  MiniTest.expect.equality(items[1].instance_id, "managed")
+  MiniTest.expect.equality(items[1].instance_id, "local")
   MiniTest.expect.equality(daemon.count(), 1)
   MiniTest.expect.equality(daemon.is_attention_needed(), true)
-  MiniTest.expect.equality(daemon.is_attention_needed("managed"), true)
+  MiniTest.expect.equality(daemon.is_attention_needed("local"), true)
   MiniTest.expect.equality(daemon.is_attention_needed("foreign"), false)
 end
 
@@ -65,7 +65,7 @@ end
 
 T["subscribers and autocmds receive filtered counts"] = function()
   local instances, daemon = fresh()
-  instances.register({ instance_id = "managed", bufnr = 42 })
+  instances.register({ instance_id = "local", bufnr = 42 })
 
   local subscriber_count = nil
   daemon.on_change(function(snapshot)
@@ -82,17 +82,17 @@ T["subscribers and autocmds receive filtered counts"] = function()
     end,
   })
 
-  daemon.apply({ entry("managed"), entry("foreign") })
+  daemon.apply({ entry("local"), entry("foreign") })
 
   MiniTest.expect.equality(subscriber_count, 1)
   MiniTest.expect.equality(autocmd_count, 1)
   vim.api.nvim_del_augroup_by_id(group)
 end
 
-T["dismiss_all clears only managed daemon notification entries"] = function()
+T["dismiss_all clears only registered daemon notification entries"] = function()
   local instances, daemon = fresh()
-  instances.register({ instance_id = "managed", bufnr = 42 })
-  daemon.apply({ entry("managed"), entry("foreign") })
+  instances.register({ instance_id = "local", bufnr = 42 })
+  daemon.apply({ entry("local"), entry("foreign") })
 
   local rpc = require("hyprpilot.rpc.notifications")
   local original = rpc.clear
@@ -103,7 +103,7 @@ T["dismiss_all clears only managed daemon notification entries"] = function()
 
   daemon.dismiss_all()
 
-  MiniTest.expect.equality(cleared, { "managed" })
+  MiniTest.expect.equality(cleared, { "local" })
   rpc.clear = original
 end
 

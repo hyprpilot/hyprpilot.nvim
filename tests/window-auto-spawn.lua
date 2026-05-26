@@ -12,11 +12,11 @@ T["window.show with no instances + no id calls instances.spawn({}) and reroutes"
   local instances = require("hyprpilot.rpc.instances")
 
   -- Nuke whatever state lingered from the runner — the auto-spawn
-  -- branch only fires when `_instances` is empty AND no id was
+  -- branch only fires when the registry is empty AND no id was
   -- passed. Clear directly (the public `window.close` only works
   -- on registered ids and depends on state being intact, which
   -- earlier tests may have left in odd shape).
-  window._instances = {}
+  require("hyprpilot.instances")._reset()
   window._last_active_id = nil
 
   -- Stub events.hydrate so the re-entry into show() doesn't

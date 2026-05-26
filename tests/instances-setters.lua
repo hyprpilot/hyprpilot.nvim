@@ -186,7 +186,7 @@ T["attach with id only in daemon hydrates via instances/info"] = function()
 
   local window = require("hyprpilot.chat.window")
   -- Sanity: not in local registry yet.
-  MiniTest.expect.equality(window._instances[id], nil)
+  MiniTest.expect.equality(require("hyprpilot.instances").get(id), nil)
 
   local original_show = window.show
   local shown_id
@@ -202,8 +202,9 @@ T["attach with id only in daemon hydrates via instances/info"] = function()
   MiniTest.expect.equality(calls[1].params.instanceId, id)
 
   -- Local-side: registry now carries the id + show fired against it.
-  MiniTest.expect.equality(window._instances[id] ~= nil, true)
-  MiniTest.expect.equality(window._instances[id].name, "from-daemon")
+  local state = require("hyprpilot.instances").get(id)
+  MiniTest.expect.equality(state ~= nil, true)
+  MiniTest.expect.equality(state.name, "from-daemon")
   MiniTest.expect.equality(shown_id, id)
 
   window.show = original_show
