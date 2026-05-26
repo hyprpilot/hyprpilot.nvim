@@ -1,8 +1,8 @@
 --- Captain-facing window UI helpers — `focus`, `toggle`, `show`,
 --- `hide`. Lives under `ui/` so captain keymaps reach for one
 --- namespace ("UI surface"); the actual visibility primitives stay
---- in `chat.window` (which manages buffer registry, header, queue
---- strip, etc.). This module is the thin captain-side facade plus a
+--- in `chat.window` (which owns header, queue strip, composer
+--- choreography, etc.). This module is the thin captain-side facade plus a
 --- focus helper that tracks the captain's previous window for
 --- "jump in / jump back" toggling.
 

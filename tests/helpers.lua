@@ -17,6 +17,13 @@ end
 ---created. Idempotent; safe to call from `post_case` hooks.
 ---@param instance_id string
 function M.cleanup_instance(instance_id)
+  local instances = require("hyprpilot.instances")
+  local window_state = instances.get(instance_id)
+  if window_state ~= nil and vim.api.nvim_buf_is_valid(window_state.bufnr) then
+    pcall(vim.api.nvim_buf_delete, window_state.bufnr, { force = true })
+  end
+  instances.forget(instance_id)
+
   local render = require("hyprpilot.chat.render")
   local state = render._states[instance_id]
 

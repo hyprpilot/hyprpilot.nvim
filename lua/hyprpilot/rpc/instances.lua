@@ -11,6 +11,7 @@
 
 local buffer = require("hyprpilot.chat.buffer")
 local client = require("hyprpilot.client")
+local instances = require("hyprpilot.instances")
 local log = require("hyprpilot.log")
 local window = require("hyprpilot.chat.window")
 
@@ -223,7 +224,7 @@ function M.attach(instance_id, opts)
 
   -- Already known locally — just show. `window.show` handles the
   -- already-visible / not-visible cases idempotently.
-  if window._instances[instance_id] ~= nil then
+  if instances.get(instance_id) ~= nil then
     if show_after then
       window.show(instance_id)
     end
@@ -497,7 +498,7 @@ function M.shutdown(instance_id, callback)
     -- entire sidebar. The captain shut down the only session — no
     -- content to show, so close the pane rather than leaving an
     -- empty placeholder sitting on screen.
-    if next(window._instances) == nil then
+    if instances.is_empty() then
       window.hide()
       log.debug("instances.shutdown: last instance gone — hiding chat window")
     end
@@ -617,7 +618,7 @@ function M.is_keep_alive(instance_id)
   if id == nil then
     return nil
   end
-  local state = window._instances[id]
+  local state = instances.get(id)
   if state == nil then
     return nil
   end
@@ -642,7 +643,7 @@ function M.set_keep_alive(instance_id, keep)
     log.warn("instances.set_keep_alive: no active instance and none specified")
     return nil
   end
-  local state = window._instances[id]
+  local state = instances.get(id)
   if state == nil then
     log.warn("instances.set_keep_alive: unknown instance=%s", id)
     return nil
@@ -702,7 +703,7 @@ end
 ---guarantees the round-trip completed and the daemon's
 ---`shutdown_one` actually ran (idempotent for already-dead
 ---instances, so a captain who already shut down via the palette
----just sees a fast ack from `_instances`-less daemon state).
+---just sees a fast ack from registry-less daemon state).
 ---
 ---Per-request timeout is short (1500ms) so a hung daemon doesn't
 ---stall the captain's exit — the worst case is the captain quits,
@@ -710,7 +711,7 @@ end
 ---may leak as orphans (re-attachable on next launch).
 function M.cleanup_owned()
   local owned = {}
-  for id, state in pairs(window._instances) do
+  for id, state in pairs(instances.list()) do
     if state.spawned_with_shutdown == true then
       table.insert(owned, id)
     end
