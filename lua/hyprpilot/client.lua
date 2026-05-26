@@ -10,12 +10,14 @@
 --- N-attempt retry on failure (no exponential back-off — the socket
 --- is local and either there or not). Public surface: `request`,
 --- `notify`, `on_notification`, `on_state_change`, `state`, `connect`,
---- `disconnect`, `reconnect`.
+--- `disconnect`, `reconnect`, and the `instances` facade for local
+--- daemon-instance ownership.
 
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 
 local M = {}
+M.instances = require("hyprpilot.client.instances")
 
 ---@alias hyprpilot.client.State "disconnected" | "connecting" | "connected"
 
@@ -557,6 +559,7 @@ function M._reset()
   timeout_streak = 0
   reconnect_attempt_count = 0
   auto_reconnect_pending = false
+  M.instances._reset()
 end
 
 return M

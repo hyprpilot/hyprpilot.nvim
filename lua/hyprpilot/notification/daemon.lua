@@ -13,9 +13,9 @@
 --- events + turn_ended observed by this nvim). The daemon mirror
 --- is the AUTHORITATIVE cross-frontend state: an overlay running
 --- on the same daemon and an nvim attached to the same daemon both
---- see the same notifications list because the daemon owns it.
---- The two can coexist; over time the local attention module may
---- fold into this one.
+--- receive the same raw notifications list because the daemon owns
+--- it. Captain-facing reads filter that raw list to instances this
+--- Neovim frontend manages via `client.instances`.
 ---
 --- Subscribers (palette, future statusline integration) read via
 --- `on_change(fn)`; fires with a fresh snapshot on every apply.
@@ -36,6 +36,24 @@ local items = {}
 local subscribers = {}
 local subscriber_counter = 0
 
+---@param instance_id any
+---@return boolean
+local function is_managed(instance_id)
+  return require("hyprpilot.client").instances.is_managed(instance_id)
+end
+
+---@return hyprpilot.NotificationEntry[]
+local function managed_items()
+  local out = {}
+  for _, item in ipairs(items) do
+    if is_managed(item.instance_id) then
+      table.insert(out, vim.deepcopy(item))
+    end
+  end
+
+  return out
+end
+
 ---@param snapshot hyprpilot.NotificationEntry[]
 local function fire_change(snapshot)
   for _, handler in pairs(subscribers) do
@@ -54,12 +72,12 @@ end
 ---touching the internal table.
 ---@return hyprpilot.NotificationEntry[]
 function M.list()
-  return vim.deepcopy(items)
+  return managed_items()
 end
 
 ---@return integer
 function M.count()
-  return #items
+  return #M.list()
 end
 
 ---Lookup the entry for `instance_id` (or nil when not pending).
@@ -67,7 +85,7 @@ end
 ---@param instance_id? string
 ---@return hyprpilot.NotificationEntry?
 function M.get(instance_id)
-  if type(instance_id) ~= "string" or instance_id == "" then
+  if not is_managed(instance_id) then
     return nil
   end
   for _, entry in ipairs(items) do
@@ -82,7 +100,7 @@ end
 ---@return boolean
 function M.is_attention_needed(instance_id)
   if instance_id == nil then
-    return #items > 0
+    return M.count() > 0
   end
   return M.get(instance_id) ~= nil
 end
@@ -131,7 +149,9 @@ end
 
 ---Dismiss every pending entry.
 function M.dismiss_all()
-  rpc.clear_all()
+  for _, entry in ipairs(M.list()) do
+    rpc.clear(entry.instance_id)
+  end
 end
 
 ---Test-only reset hook. Drops every entry + subscription.

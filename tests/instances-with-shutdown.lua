@@ -106,6 +106,7 @@ T["cleanup_owned fires instances/shutdown for owned instances only"] = function(
 
   local window = require("hyprpilot.chat.window")
   local buffer = require("hyprpilot.chat.buffer")
+  local client = require("hyprpilot.client")
 
   -- Wipe `_instances` first so owned-default spawns from earlier
   -- tests don't pollute the iteration. The cleanup helper only
@@ -115,6 +116,7 @@ T["cleanup_owned fires instances/shutdown for owned instances only"] = function(
       pcall(vim.api.nvim_buf_delete, state.bufnr, { force = true })
     end
     window._instances[id] = nil
+    client.instances.forget(id)
   end
 
   -- Two instances: one owned (with_shutdown stamped), one borrowed.

@@ -617,7 +617,7 @@ function M.is_keep_alive(instance_id)
   if id == nil then
     return nil
   end
-  local state = window._instances[id]
+  local state = client.instances.get(id)
   if state == nil then
     return nil
   end
@@ -642,7 +642,7 @@ function M.set_keep_alive(instance_id, keep)
     log.warn("instances.set_keep_alive: no active instance and none specified")
     return nil
   end
-  local state = window._instances[id]
+  local state = client.instances.get(id)
   if state == nil then
     log.warn("instances.set_keep_alive: unknown instance=%s", id)
     return nil
@@ -710,7 +710,7 @@ end
 ---may leak as orphans (re-attachable on next launch).
 function M.cleanup_owned()
   local owned = {}
-  for id, state in pairs(window._instances) do
+  for id, state in pairs(client.instances.list()) do
     if state.spawned_with_shutdown == true then
       table.insert(owned, id)
     end

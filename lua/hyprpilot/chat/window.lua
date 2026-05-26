@@ -144,6 +144,7 @@ function M.register(state, opts)
   opts = opts or {}
   local previous = M._last_active_id
   M._instances[state.instance_id] = state
+  require("hyprpilot.client").instances.register(state)
 
   local activate = opts.activate or previous == nil
   if activate then
@@ -182,6 +183,7 @@ function M.close(instance_id)
 
   buffer.wipe(state.bufnr)
   M._instances[id] = nil
+  require("hyprpilot.client").instances.forget(id)
 
   require("hyprpilot.chat.render").forget(id)
   require("hyprpilot.chat.winbar").forget(id)
