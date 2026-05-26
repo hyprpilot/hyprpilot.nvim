@@ -23,6 +23,7 @@ local M = {}
 
 local BUFFER_NAME = "hyprpilot://permission_row"
 local NS = vim.api.nvim_create_namespace("hyprpilot.chat.permission-row")
+local MAX_BUTTON_LABEL_CHARS = 32
 
 ---@class hyprpilot.chat.permission-row.Entry
 ---@field instance_id string
@@ -234,7 +235,18 @@ local function single_line(s)
   if type(s) ~= "string" then
     return ""
   end
+
   return (s:gsub("[\r\n\t\v]+", " "))
+end
+
+---@param label string
+---@return string
+local function truncate_label(label)
+  if vim.fn.strchars(label) <= MAX_BUTTON_LABEL_CHARS then
+    return label
+  end
+
+  return vim.fn.strcharpart(label, 0, MAX_BUTTON_LABEL_CHARS) .. "..."
 end
 
 ---Compose the button line for the head entry, marking the focused
@@ -247,7 +259,7 @@ end
 local function button_line(entry)
   local parts = {}
   for i, opt in ipairs(entry.options) do
-    local label = single_line(opt.name or opt.optionId or "?")
+    local label = truncate_label(single_line(opt.name or opt.optionId or "?"))
     if i == entry.focused_idx then
       table.insert(parts, "[> " .. label .. " <]")
     else

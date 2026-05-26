@@ -7,7 +7,12 @@ local T = MiniTest.new_set()
 
 local function fresh()
   local attention = require("hyprpilot.notification.attention")
+  local instances = require("hyprpilot.instances")
+  instances._reset()
   attention._reset()
+  instances.register({ instance_id = "inst-1", bufnr = 42 })
+  instances.register({ instance_id = "inst-2", bufnr = 43 })
+
   return attention
 end
 
@@ -35,6 +40,29 @@ T["_add_permission appends an entry + fires subscribers"] = function()
   MiniTest.expect.equality(a.is_attention_needed("inst-1"), true)
   MiniTest.expect.equality(a.is_attention_needed("inst-other"), false)
   MiniTest.expect.equality(#seen, 1)
+end
+
+T["_add_permission ignores instances not managed by this nvim"] = function()
+  local a = fresh()
+  local seen = {}
+  a.on_change(function(snapshot)
+    table.insert(seen, #snapshot)
+  end)
+
+  a._add_permission("foreign", 99, "req-foreign")
+
+  MiniTest.expect.equality(#a.list(), 0)
+  MiniTest.expect.equality(a.is_attention_needed(), false)
+  MiniTest.expect.equality(a.is_attention_needed("foreign"), false)
+  MiniTest.expect.equality(#seen, 0)
+end
+
+T["_add_turn_ended ignores instances not managed by this nvim"] = function()
+  local a = fresh()
+
+  a._add_turn_ended("foreign", 99)
+
+  MiniTest.expect.equality(#a.list(), 0)
 end
 
 T["_add_permission dedups by request_id (silent no-op on duplicate)"] = function()

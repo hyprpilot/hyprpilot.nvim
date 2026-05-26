@@ -9,6 +9,7 @@ local function fresh()
   local instances = require("hyprpilot.instances")
   local daemon = require("hyprpilot.notification.daemon")
   client._reset()
+  instances._reset()
   daemon._reset()
 
   return instances, daemon
