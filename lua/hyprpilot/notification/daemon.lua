@@ -15,7 +15,7 @@
 --- on the same daemon and an nvim attached to the same daemon both
 --- receive the same raw notifications list because the daemon owns
 --- it. Captain-facing reads filter that raw list to instances this
---- Neovim frontend manages via `client.instances`.
+--- Neovim frontend manages via `hyprpilot.instances`.
 ---
 --- Subscribers (palette, future statusline integration) read via
 --- `on_change(fn)`; fires with a fresh snapshot on every apply.
@@ -39,7 +39,7 @@ local subscriber_counter = 0
 ---@param instance_id any
 ---@return boolean
 local function is_managed(instance_id)
-  return require("hyprpilot.client").instances.is_managed(instance_id)
+  return require("hyprpilot.instances").is_managed(instance_id)
 end
 
 ---@return hyprpilot.NotificationEntry[]

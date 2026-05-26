@@ -17,7 +17,7 @@ end
 ---created. Idempotent; safe to call from `post_case` hooks.
 ---@param instance_id string
 function M.cleanup_instance(instance_id)
-  require("hyprpilot.client").instances.forget(instance_id)
+  require("hyprpilot.instances").forget(instance_id)
 
   local window = require("hyprpilot.chat.window")
   local window_state = window._instances[instance_id]

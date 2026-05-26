@@ -14,7 +14,7 @@ local items = {}
 ---@param state hyprpilot.InstanceState
 function M.register(state)
   if type(state) ~= "table" or type(state.instance_id) ~= "string" or state.instance_id == "" then
-    log.debug("client.instances.register: ignoring invalid instance state %s", vim.inspect(state))
+    log.debug("instances.register: ignoring invalid instance state %s", vim.inspect(state))
 
     return
   end

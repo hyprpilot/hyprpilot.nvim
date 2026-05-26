@@ -6,10 +6,12 @@ local T = MiniTest.new_set()
 
 local function fresh()
   local client = require("hyprpilot.client")
+  local instances = require("hyprpilot.instances")
   local daemon = require("hyprpilot.notification.daemon")
   client._reset()
   daemon._reset()
-  return client, daemon
+
+  return instances, daemon
 end
 
 local function entry(instance_id)
@@ -21,8 +23,8 @@ local function entry(instance_id)
 end
 
 T["list filters daemon notifications to managed instances"] = function()
-  local client, daemon = fresh()
-  client.instances.register({ instance_id = "managed", bufnr = 42 })
+  local instances, daemon = fresh()
+  instances.register({ instance_id = "managed", bufnr = 42 })
 
   daemon.apply({ entry("managed"), entry("foreign") })
 
@@ -36,34 +38,34 @@ T["list filters daemon notifications to managed instances"] = function()
 end
 
 T["newly registered instances appear from the existing daemon snapshot"] = function()
-  local client, daemon = fresh()
+  local instances, daemon = fresh()
 
   daemon.apply({ entry("inst-1") })
   MiniTest.expect.equality(#daemon.list(), 0)
   MiniTest.expect.equality(daemon.is_attention_needed(), false)
 
-  client.instances.register({ instance_id = "inst-1", bufnr = 42 })
+  instances.register({ instance_id = "inst-1", bufnr = 42 })
 
   MiniTest.expect.equality(#daemon.list(), 1)
   MiniTest.expect.equality(daemon.list()[1].instance_id, "inst-1")
 end
 
 T["forgotten instances disappear from the filtered daemon snapshot"] = function()
-  local client, daemon = fresh()
-  client.instances.register({ instance_id = "inst-1", bufnr = 42 })
+  local instances, daemon = fresh()
+  instances.register({ instance_id = "inst-1", bufnr = 42 })
 
   daemon.apply({ entry("inst-1") })
   MiniTest.expect.equality(#daemon.list(), 1)
 
-  client.instances.forget("inst-1")
+  instances.forget("inst-1")
 
   MiniTest.expect.equality(#daemon.list(), 0)
   MiniTest.expect.equality(daemon.is_attention_needed(), false)
 end
 
 T["subscribers and autocmds receive filtered counts"] = function()
-  local client, daemon = fresh()
-  client.instances.register({ instance_id = "managed", bufnr = 42 })
+  local instances, daemon = fresh()
+  instances.register({ instance_id = "managed", bufnr = 42 })
 
   local subscriber_count = nil
   daemon.on_change(function(snapshot)
@@ -88,8 +90,8 @@ T["subscribers and autocmds receive filtered counts"] = function()
 end
 
 T["dismiss_all clears only managed daemon notification entries"] = function()
-  local client, daemon = fresh()
-  client.instances.register({ instance_id = "managed", bufnr = 42 })
+  local instances, daemon = fresh()
+  instances.register({ instance_id = "managed", bufnr = 42 })
   daemon.apply({ entry("managed"), entry("foreign") })
 
   local rpc = require("hyprpilot.rpc.notifications")
