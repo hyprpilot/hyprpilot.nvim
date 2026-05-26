@@ -261,8 +261,7 @@ function M.ensure_listeners()
         return
       end
 
-      local instances = require("hyprpilot.instances").list()
-      for instance_id, state in pairs(instances) do
+      for instance_id, state in pairs(instances.list()) do
         if state.bufnr == bufnr then
           M._clear_turn_ended(instance_id)
           return
