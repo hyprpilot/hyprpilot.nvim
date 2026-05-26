@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.1...hyprpilot.nvim-v1.12.2) (2026-05-26)
+
+
+### Bug Fixes
+
+* **chat:** scope attention UI and truncate buttons ([#136](https://github.com/hyprpilot/hyprpilot.nvim/issues/136)) ([2ae7078](https://github.com/hyprpilot/hyprpilot.nvim/commit/2ae7078bb6736d9a31fb7c588f0a188960ebe751))
+* **chat:** truncate foldtext before stats ([#138](https://github.com/hyprpilot/hyprpilot.nvim/issues/138)) ([349a2bf](https://github.com/hyprpilot/hyprpilot.nvim/commit/349a2bfe45a791700d613e806bab10454a29dda1))
+
 ## [1.12.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.0...hyprpilot.nvim-v1.12.1) (2026-05-26)
 
 
