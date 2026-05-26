@@ -110,4 +110,84 @@ T["WinClosed for an unrelated winid does not reset _winid"] = function()
   window._winid = nil
 end
 
+local function set_lines(bufnr, lines)
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+end
+
+T["open_aux_split: sticky chat stays at tail after scheduled restore"] = function()
+  local window = require("hyprpilot.chat.window")
+  local buffer = require("hyprpilot.chat.buffer")
+  local previous_chat = window._winid
+  local home = vim.api.nvim_get_current_win()
+
+  vim.cmd("vsplit")
+  local chat_win = vim.api.nvim_get_current_win()
+  local chat_buf = vim.api.nvim_get_current_buf()
+  vim.bo[chat_buf].filetype = "hyprpilot"
+  set_lines(chat_buf, { "one", "two", "three", "four", "five" })
+  vim.api.nvim_win_set_cursor(chat_win, { 5, 0 })
+  window._winid = chat_win
+  vim.api.nvim_set_current_win(home)
+
+  local aux_buf = vim.api.nvim_create_buf(false, true)
+  local aux_win = buffer.open_aux_split({
+    direction = "belowright 1split",
+    bufnr = aux_buf,
+  })
+
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), home)
+
+  set_lines(chat_buf, { "one", "two", "three", "four", "five", "six" })
+  vim.api.nvim_win_set_cursor(chat_win, { 6, 0 })
+  vim.wait(20)
+
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(chat_win)[1], 6)
+
+  if aux_win ~= nil and vim.api.nvim_win_is_valid(aux_win) then
+    pcall(vim.api.nvim_win_close, aux_win, true)
+  end
+  if vim.api.nvim_win_is_valid(chat_win) then
+    pcall(vim.api.nvim_win_close, chat_win, true)
+  end
+  window._winid = previous_chat
+end
+
+T["open_aux_split: scrolled chat keeps saved view"] = function()
+  local window = require("hyprpilot.chat.window")
+  local buffer = require("hyprpilot.chat.buffer")
+  local previous_chat = window._winid
+  local home = vim.api.nvim_get_current_win()
+
+  vim.cmd("vsplit")
+  local chat_win = vim.api.nvim_get_current_win()
+  local chat_buf = vim.api.nvim_get_current_buf()
+  vim.bo[chat_buf].filetype = "hyprpilot"
+  set_lines(chat_buf, { "one", "two", "three", "four", "five" })
+  vim.api.nvim_win_set_cursor(chat_win, { 2, 0 })
+  window._winid = chat_win
+  vim.api.nvim_set_current_win(home)
+
+  local aux_buf = vim.api.nvim_create_buf(false, true)
+  local aux_win = buffer.open_aux_split({
+    direction = "belowright 1split",
+    bufnr = aux_buf,
+  })
+
+  set_lines(chat_buf, { "one", "two", "three", "four", "five", "six" })
+  vim.wait(20)
+
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), home)
+  MiniTest.expect.equality(vim.api.nvim_win_get_cursor(chat_win)[1], 2)
+
+  if aux_win ~= nil and vim.api.nvim_win_is_valid(aux_win) then
+    pcall(vim.api.nvim_win_close, aux_win, true)
+  end
+  if vim.api.nvim_win_is_valid(chat_win) then
+    pcall(vim.api.nvim_win_close, chat_win, true)
+  end
+  window._winid = previous_chat
+end
+
 return T

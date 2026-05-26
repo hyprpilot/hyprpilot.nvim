@@ -468,6 +468,51 @@ do
   })
 end
 
+---@class hyprpilot.chat.buffer.ChatViewSnapshot
+---@field winid integer
+---@field view table?
+---@field was_at_tail boolean
+
+---@param winid integer?
+---@return hyprpilot.chat.buffer.ChatViewSnapshot?
+local function capture_chat_view(winid)
+  if winid == nil or not vim.api.nvim_win_is_valid(winid) then
+    return nil
+  end
+
+  local bufnr = vim.api.nvim_win_get_buf(winid)
+  local cursor = vim.api.nvim_win_get_cursor(winid)
+  local total = vim.api.nvim_buf_line_count(bufnr)
+  local ok_view, view = pcall(vim.api.nvim_win_call, winid, vim.fn.winsaveview)
+
+  return {
+    winid = winid,
+    view = ok_view and view or nil,
+    was_at_tail = cursor[1] >= total,
+  }
+end
+
+---@param snapshot hyprpilot.chat.buffer.ChatViewSnapshot?
+local function restore_chat_view(snapshot)
+  if snapshot == nil or not vim.api.nvim_win_is_valid(snapshot.winid) then
+    return
+  end
+
+  if snapshot.was_at_tail then
+    local bufnr = vim.api.nvim_win_get_buf(snapshot.winid)
+    local total = vim.api.nvim_buf_line_count(bufnr)
+    pcall(vim.api.nvim_win_set_cursor, snapshot.winid, { total, 0 })
+
+    return
+  end
+
+  if snapshot.view ~= nil then
+    pcall(vim.api.nvim_win_call, snapshot.winid, function()
+      vim.fn.winrestview(snapshot.view)
+    end)
+  end
+end
+
 ---@class hyprpilot.chat.buffer.AuxSplitOpts
 ---@field direction string                       -- ex-cmd suffix, e.g. `"belowright 1split"` / `"aboveleft 1split"`
 ---@field bufnr integer                          -- buffer to attach to the new split
@@ -501,18 +546,13 @@ function M.open_aux_split(opts)
   -- shrinks the chat's row count, which makes vim re-flow its
   -- cursor / topline to keep the cursor on-screen — captain saw
   -- the chat jump to a random row whenever a permission row or
-  -- queue strip popped in (a tail-following chat would lose its
-  -- bottom-anchor and land mid-buffer). Restoring `winsaveview`
-  -- after the split lands re-pins both topline and cursor to
-  -- where the captain had them.
-  local chat_winid = window._winid
-  local chat_view = nil
-  if chat_winid ~= nil and vim.api.nvim_win_is_valid(chat_winid) then
-    local ok_view, view = pcall(vim.api.nvim_win_call, chat_winid, vim.fn.winsaveview)
-    if ok_view then
-      chat_view = view
-    end
-  end
+  -- queue strip popped in. A tail-following chat needs special
+  -- handling: scheduled `winrestview` with the old cursor can run
+  -- after new streamed text lands and pull the cursor OFF the new
+  -- tail. Capture the "was at tail" intent separately so restore
+  -- can choose between "keep manual scrollback view" and "follow
+  -- the current tail".
+  local chat_snapshot = capture_chat_view(window._winid)
 
   local ok_split, split_err = pcall(vim.cmd, opts.direction)
   if not ok_split then
@@ -570,27 +610,19 @@ function M.open_aux_split(opts)
     end
   end
 
-  -- Restore the chat window's pre-split view. Routes through
-  -- `nvim_win_call` so winrestview runs against the chat win
-  -- regardless of which window is current at this point in the
-  -- choreography. Also schedule a second restore on the next
-  -- tick — edgy's deferred layout pass (queued via
-  -- `nudge_edgy_layout` above) and any peer-plugin `WinResized`
-  -- listeners run AFTER this function returns, and they can
-  -- nudge the chat's topline again. Two restores (one immediate,
-  -- one scheduled) keep the captain pinned through both phases.
-  if chat_view ~= nil and chat_winid ~= nil and vim.api.nvim_win_is_valid(chat_winid) then
-    pcall(vim.api.nvim_win_call, chat_winid, function()
-      vim.fn.winrestview(chat_view)
-    end)
-    vim.schedule(function()
-      if vim.api.nvim_win_is_valid(chat_winid) then
-        pcall(vim.api.nvim_win_call, chat_winid, function()
-          vim.fn.winrestview(chat_view)
-        end)
-      end
-    end)
-  end
+  -- Restore the chat window's pre-split viewport intent. Manual
+  -- scrollback gets the saved `winsaveview`; sticky-tail windows
+  -- get parked on the CURRENT tail instead of the stale pre-split
+  -- line. Also schedule a second restore on the next tick — edgy's
+  -- deferred layout pass (queued via `nudge_edgy_layout` above) and
+  -- any peer-plugin `WinResized` listeners run AFTER this function
+  -- returns, and they can nudge the chat's topline again. Two
+  -- restores (one immediate, one scheduled) keep the captain pinned
+  -- through both phases.
+  restore_chat_view(chat_snapshot)
+  vim.schedule(function()
+    restore_chat_view(chat_snapshot)
+  end)
 
   if vim.api.nvim_win_is_valid(previous_win) then
     pcall(vim.api.nvim_set_current_win, previous_win)
