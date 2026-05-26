@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.0...hyprpilot.nvim-v1.12.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **chat:** preserve tail autoscroll across aux splits ([#135](https://github.com/hyprpilot/hyprpilot.nvim/issues/135)) ([162382b](https://github.com/hyprpilot/hyprpilot.nvim/commit/162382b4f962a8884912680caaf1c461fc84061e))
+* **notifications:** scope daemon notifications to managed instances ([#133](https://github.com/hyprpilot/hyprpilot.nvim/issues/133)) ([dfd5119](https://github.com/hyprpilot/hyprpilot.nvim/commit/dfd5119fe6a18aa92c64d676a816e22ed1cfe0e3))
+
 ## [1.12.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.11.0...hyprpilot.nvim-v1.12.0) (2026-05-20)
 
 
