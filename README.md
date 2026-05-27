@@ -49,7 +49,8 @@ end, { desc = "hyprpilot: spawn instance" })
 
 Hit `<leader>at` to open the side split, `<leader>as` to spawn an
 instance. The composer opens below the chat buffer in insert mode;
-type a prompt and submit with `<C-CR>`.
+type a prompt and submit with `<C-s>` from insert mode or `<CR>` from
+normal mode.
 
 ## Configuration
 
@@ -71,32 +72,39 @@ require("hyprpilot").setup({
       end
       return 80
     end,
+    auto_resize_with_layout_manager = false,  -- opt into Edgy dynamic resizing
   },
 
   client = {
     timeout_ms = 5000,                        -- per-request timeout
-    connect_attempts = 3,                     -- connect tries before giving up
-    retry_delay_ms = 1000,                    -- ms between attempts
+    retry_delay_ms = 1000,                    -- ms before EOF/stale auto-reconnect
   },
 
   composer = {
-    height = 5,                               -- integer | fun(lines): number
+    min_height = 14,                          -- integer | fun(lines): number
+    max_height = function(lines)
+      return math.max(14, math.floor(lines * 0.5))
+    end,
     keymaps = {
-      submit = { normal = "<C-CR>", insert = "<C-CR>" },
-      cancel = { normal = "<C-c>",  insert = "<C-c>" },
-      close  = { normal = "<Esc><Esc>" },
+      submit = { normal = "<CR>", insert = "<C-s>" },
+      cancel = { normal = "<localleader>c", insert = "<C-c>" },
+      close  = { normal = "q" },
     },
   },
 
   permission_row = {
+    max_height = function(lines)
+      return math.max(5, math.floor(lines * 0.5))
+    end,
     -- Each action accepts `string | string[] | false`. The row is
     -- read-only / normal-mode-only, so no per-mode nesting.
     keymaps = {
-      accept     = "<C-g>",                   -- smart-match `^allow|^accept|^proceed`
-      reject     = "<C-r>",                   -- smart-match `^reject|^deny|^abort|^cancel`
+      accept     = "<localleader>a",
+      reject     = "<localleader>d",
       submit     = "<CR>",                    -- commit currently-focused option
       cycle_next = "<Tab>",
       cycle_prev = "<S-Tab>",
+      show_diff  = "<localleader>o",
     },
   },
 
@@ -108,10 +116,10 @@ require("hyprpilot").setup({
     -- captain drains explicitly via these keymaps. Cancel-turn
     -- flushes the queue alongside the cancelled head.
     keymaps = {
-      send_head = "<C-CR>",                   -- send the head entry now
-      drop_head = "dd",                       -- drop the head entry
-      drop_all  = "D",                        -- clear the queue
-      edit_head = "e",                        -- send head via composer for editing
+      send     = "<C-CR>",                    -- send the row at cursor now
+      drop     = "dd",                        -- drop the row at cursor
+      drop_all = "D",                         -- clear the queue
+      edit     = "e",                         -- edit row via composer
     },
   },
 
@@ -128,7 +136,7 @@ require("hyprpilot").setup({
     -- `path` is excluded by default — Neovim's native path completion
     -- (omnifunc, blink.cmp's `path` provider) handles that better
     -- than a daemon round-trip. Extend if the daemon advertises more.
-    sources = { "skills" },
+    sources = { "skills", "commands" },
   },
 
   -- Global baseline `withConfig` overlay applied to every spawn-

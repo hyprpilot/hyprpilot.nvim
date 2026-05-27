@@ -450,6 +450,9 @@ function M.open()
       vim.wo[w].wrap = false
       vim.wo[w].winhighlight = "Normal:HyprpilotHeader"
       if buffer.layout_manager_active() then
+        if not buffer.layout_manager_auto_resize_enabled() then
+          return
+        end
         -- Cooperate with edgy: set its dynamic-sizing hook to 1 row
         -- so adopted layouts honour our intent. The captain's slot
         -- config (`size = { height = 1 }`, `wo = { winbar = false }`)

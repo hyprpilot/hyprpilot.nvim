@@ -2051,7 +2051,7 @@ end
 ---Forward a permission request to the pinned permission row. Chat
 ---buffer stays untouched on purpose — the captain doesn't want
 ---permission prompts cluttering the conversation history; the row
----is the single interaction surface (auto-grows up to 40% vh,
+---is the single interaction surface (auto-grows up to 50% vh,
 ---default-focuses the Allow-shaped option, exposes Tab/CR/g/d
 ---keymaps).
 ---@param state hyprpilot.render.State

@@ -324,16 +324,16 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
   - Rejected: monotonic integer + `id_generator` helper — captain
     pushed back; UUID is plenty for our scale and removes the helper.
 
-- **Reconnect: simple N-attempt with fixed delay (shipped in #12)**
-  - Chose: configurable `connect_attempts` (default 3) and
-    `retry_delay_ms` (default 1000) via
-    `setup({ client = { ... } })`.
-  - Why: the daemon socket is local IPC. Either it's up or it's not.
-    Exponential back-off is over-engineering; a couple of fast
-    retries and a clean failure is enough.
-  - Rejected: `1s → 2s → 5s → 10s → 30s → 60s` exponential ladder
-    (the original design). Captain pushed back as "overengineering
-    bullshit" for a local socket.
+- **Initial connect: one immediate socket attempt**
+  - Chose: `client.connect()` calls `sockconnect` once and fails fast
+    when the socket is missing/unreachable. `retry_delay_ms` applies
+    only to auto-reconnect after an already-established channel sees
+    EOF / stale timeouts.
+  - Why: the daemon socket is local IPC. If the socket is gone, it may
+    represent a different daemon/session boundary; delayed retries just
+    stall frontend commands before they can do local cleanup.
+  - Rejected: configurable `connect_attempts` (the old default was 3)
+    for initial connection failures.
 
 - **Composer keymaps shape (shipped in #15)**
   - Chose: nested per-mode config —
@@ -589,6 +589,19 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
     each tracking their own re-entry). The cascade is the unit of
     work; the guard wraps the unit.
 
+- **Layout-manager dynamic resizing is opt-in**
+  - Chose: when Edgy (or a future layout manager) is loaded,
+    hyprpilot does not set `vim.w.edgy_height` or call
+    `edgy.layout.layout()` by default. Captains can restore the old
+    dynamic behaviour with `ui.auto_resize_with_layout_manager = true`.
+  - Why: Edgy layout passes can steal focus/cursor while reflowing
+    auxiliary surfaces during ordinary prompt/permission events. The
+    layout manager should own sizes unless the captain explicitly asks
+    the plugin to drive them.
+  - Rejected: hiding auto-opened permission/composer surfaces under
+    Edgy. That would make prompts less discoverable; the bug is the
+    resize/layout nudge, not the presence of the surface.
+
 - **`palettes/instances` cwd filter (sessions-style API)**
   - Chose: `palettes.instances.open({ cwd? })` filters rows
     against `item.cwd`. `nil` → `vim.fn.getcwd()` default,
@@ -615,9 +628,10 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
 - **`vim.uv.new_pipe()` for the daemon socket (#9)** — captain
   rejected: "we can generally use the native neovim lua mechanisms".
   Re-implemented with `vim.fn.sockconnect` in #12.
-- **Exponential reconnect back-off (#9)** — captain rejected:
-  "overengineering bullshit" for a local IPC socket. Replaced with
-  configurable N-attempt + fixed delay.
+- **Exponential initial-connect back-off (#9)** — captain rejected:
+  "overengineering bullshit" for a local IPC socket. The current shape
+  is one immediate initial attempt; only EOF/stale recovery uses a
+  deferred reconnect cadence.
 - **Forward-looking config knobs (`autoclose`, `enable_exec_lua`,
   defensive logger wrapper `trace()`, etc.)** — every one got pulled
   in review under "config knobs ship with their behaviour, not

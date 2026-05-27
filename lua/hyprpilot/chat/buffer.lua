@@ -199,13 +199,20 @@ end
 ---is loaded. Multiple plugin surfaces gate their own
 ---window-management — `winfixheight` / `winfixwidth` pins,
 ---`nvim_win_set_height` resizes — on this so we don't fight the
----layout manager's `apply_size` pass. Edgy patches
----`nvim_win_set_height` globally and re-asserts its own computed
----heights on every layout tick; our resize calls visibly flicker
----and lose every race against it.
+---layout manager's `apply_size` pass.
 ---@return boolean
 function M.layout_manager_active()
   return package.loaded["edgy"] ~= nil
+end
+
+---True when the captain explicitly wants hyprpilot to drive dynamic
+---layout-manager sizes (`vim.w.edgy_height` + layout nudges). Default
+---false: Edgy's layout pass can move focus/cursor while it reflows, so
+---we leave adopted windows at the captain's Edgy slot sizes unless they
+---opt back into the older plugin-driven resizing behaviour.
+---@return boolean
+function M.layout_manager_auto_resize_enabled()
+  return ((require("hyprpilot.config").options.ui or {}).auto_resize_with_layout_manager == true)
 end
 
 --- Debounce window for `M.nudge_edgy_layout`. 100 ms feels invisible
@@ -219,10 +226,15 @@ local _edgy_layout_pending = false
 ---Nudge edgy to recompute the layout on the next tick. Coalesces
 ---bursts of calls — at most one `edgy.layout.layout()` runs per
 ---100 ms window regardless of caller count. Safe to call when
----edgy is not loaded (no-op). The captain prefers a fix over a
----blanket disable; this is it.
+---edgy is not loaded (no-op). Also no-ops unless the captain opted into
+---layout-manager auto-resizing; the default is to let Edgy own sizes so
+---its reflow cannot steal focus during ordinary typing / prompt events.
 function M.nudge_edgy_layout()
   if not M.layout_manager_active() then
+    return
+  end
+  if not M.layout_manager_auto_resize_enabled() then
+    log.debug("buffer.nudge_edgy_layout: skipped (ui.auto_resize_with_layout_manager=false)")
     return
   end
   if _edgy_layout_pending then
@@ -586,7 +598,7 @@ function M.open_aux_split(opts)
 
   M.clean_window_chrome(winid)
 
-  -- Nudge edgy to re-scan AFTER the buffer swap. The aux-split
+  -- Optionally nudge edgy to re-scan AFTER the buffer swap. The aux-split
   -- open path is `<dir>split` (creates a scratch window with
   -- empty filetype) → `nvim_win_set_buf` (swap to our pre-typed
   -- buffer). Edgy's `BufWinEnter` listener fires on the scratch
@@ -594,13 +606,15 @@ function M.open_aux_split(opts)
   -- the window; the post-swap `BufWinEnter` doesn't always
   -- re-fire a fresh layout pass, leaving the now-correctly-typed
   -- window floating in the editor area instead of in edgy's
-  -- column. Routed through the debounced helper so a burst of
-  -- aux-split opens during `window.show()` collapses to one
-  -- layout pass — calling `edgy.layout.layout()` synchronously
-  -- inside the open path could re-enter buffer-attach autocmds
-  -- (`WinEnter` / `BufWinEnter`) on the same tick, which under
-  -- a sibling-collapse race produced the "infinite layout
-  -- restore" the captain saw.
+  -- column. This path is now opt-in through
+  -- `ui.auto_resize_with_layout_manager`; the default leaves Edgy's
+  -- layout untouched because even deferred layout passes can steal
+  -- focus/cursor during ordinary prompt events. When enabled, the
+  -- debounced helper collapses bursts during `window.show()` into one
+  -- layout pass — calling `edgy.layout.layout()` synchronously inside
+  -- the open path could re-enter buffer-attach autocmds (`WinEnter` /
+  -- `BufWinEnter`) on the same tick, which under a sibling-collapse race
+  -- produced the "infinite layout restore" the captain saw.
   M.nudge_edgy_layout()
 
   if opts.after ~= nil then

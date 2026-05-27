@@ -481,8 +481,32 @@ function M.restart(instance_id, callback)
   end)
 end
 
----Shut down a daemon-side instance. The local buffer stays put — call
----`require("hyprpilot").close(id)` to also wipe the buffer.
+---@param id string
+local function cleanup_shutdown_local(id)
+  local ok, err = pcall(function()
+    -- Drop the local registry entry + wipe the buffer even when the
+    -- daemon RPC failed. The frontend owns its own window/buffer state;
+    -- a missing socket should not strand stale chrome on screen.
+    window.close(id)
+
+    -- When the shutdown leaves no instances registered, hide the
+    -- entire sidebar. The captain shut down the only local session — no
+    -- content to show, so close the pane rather than leaving an empty
+    -- placeholder sitting on screen.
+    if instances.is_empty() then
+      window.hide()
+      log.debug("instances.shutdown: last local instance gone — hiding chat window")
+    end
+  end)
+
+  if not ok then
+    log.warn("instances.shutdown: local cleanup failed for %s: %s", id, tostring(err))
+    pcall(vim.notify, string.format("hyprpilot: local shutdown cleanup failed for %s — %s", id, tostring(err)), vim.log.levels.WARN)
+  end
+end
+
+---Shut down a daemon-side instance and always wipe local frontend state.
+---Daemon failures warn but do not block local window/buffer cleanup.
 ---Defaults to the active instance.
 ---@param instance_id string?
 ---@param callback hyprpilot.InstanceCallback?
@@ -501,6 +525,11 @@ function M.shutdown(instance_id, callback)
 
   client.request("instances/shutdown", { instanceId = id }, nil, function(err, result)
     if err ~= nil then
+      log.warn("instances.shutdown: daemon shutdown failed for %s: %s", id, err.message)
+      pcall(vim.notify, string.format("hyprpilot: daemon shutdown failed for %s — cleaned local UI only (%s)", id, tostring(err.message)), vim.log.levels.WARN)
+
+      cleanup_shutdown_local(id)
+
       if callback ~= nil then
         callback(err, nil)
       end
@@ -508,22 +537,10 @@ function M.shutdown(instance_id, callback)
       return
     end
 
-    -- Drop the local registry entry + wipe the buffer so the chat
-    -- doesn't keep showing a stale instance that the daemon has
-    -- already torn down.
-    window.close(id)
-
-    -- When the shutdown leaves no instances registered, hide the
-    -- entire sidebar. The captain shut down the only session — no
-    -- content to show, so close the pane rather than leaving an
-    -- empty placeholder sitting on screen.
-    if instances.is_empty() then
-      window.hide()
-      log.debug("instances.shutdown: last instance gone — hiding chat window")
-    end
+    cleanup_shutdown_local(id)
 
     if callback ~= nil then
-      callback(nil, { id = result.instanceId })
+      callback(nil, { id = (type(result) == "table" and result.instanceId) or id })
     end
   end)
 end

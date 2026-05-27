@@ -89,12 +89,12 @@ end
 
 ---@return integer
 local function resolve_min_height()
-  return resolve_height_field("min_height", 8)
+  return resolve_height_field("min_height", 14)
 end
 
 ---@return integer
 local function resolve_max_height()
-  return resolve_height_field("max_height", math.max(8, math.floor(vim.o.lines * 0.4)))
+  return resolve_height_field("max_height", math.max(14, math.floor(vim.o.lines * 0.5)))
 end
 
 ---Reverse-lookup the instance id that owns a composer bufnr.
@@ -158,6 +158,9 @@ function M.resize()
 
   local buffer_mod = require("hyprpilot.chat.buffer")
   if buffer_mod.layout_manager_active() then
+    if not buffer_mod.layout_manager_auto_resize_enabled() then
+      return
+    end
     -- Cooperate with edgy's apply_size pass instead of fighting it:
     -- `vim.w[winid].edgy_height` is edgy's documented dynamic-sizing
     -- hook (`win:dim("height")` reads this first, falls back to

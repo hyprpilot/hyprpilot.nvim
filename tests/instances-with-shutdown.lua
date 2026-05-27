@@ -192,6 +192,42 @@ T["shutdown: last instance closes the chat window; registry wiped"] = function()
   restore_client()
 end
 
+T["shutdown: daemon error still cleans local registry and reports warning path"] = function()
+  local window = require("hyprpilot.chat.window")
+  local instances = require("hyprpilot.rpc.instances")
+  local buffer = require("hyprpilot.chat.buffer")
+
+  local restore_client, calls = helpers.stub_client_with({
+    ["instances/shutdown"] = { err = { kind = "transport", message = "socket missing" } },
+  })
+
+  local bufnr = buffer.create("local-only")
+  window.register({
+    bufnr = bufnr,
+    instance_id = "local-only",
+    spawned_with_shutdown = true,
+  }, { activate = true })
+
+  local callback_err = nil
+  instances.shutdown("local-only", function(err)
+    callback_err = err
+  end)
+
+  MiniTest.expect.equality(callback_err ~= nil, true)
+  MiniTest.expect.equality(callback_err.message, "socket missing")
+  MiniTest.expect.equality(require("hyprpilot.instances").get("local-only"), nil)
+  MiniTest.expect.equality(require("hyprpilot.instances").is_empty(), true)
+
+  local shutdown_calls = vim.tbl_filter(function(c)
+    return c.method == "instances/shutdown"
+  end, calls)
+  MiniTest.expect.equality(#shutdown_calls, 1)
+  MiniTest.expect.equality(shutdown_calls[1].params.instanceId, "local-only")
+
+  helpers.cleanup_instance("local-only")
+  restore_client()
+end
+
 T["attach: with_shutdown defaults true (palette-picked instance is owned)"] = function()
   local restore_client = helpers.stub_client_with({
     ["instances/info"] = { result = { instanceId = "inst-attached" } },

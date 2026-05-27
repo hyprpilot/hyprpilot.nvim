@@ -6,9 +6,10 @@
 --- newline split + JSON-RPC dispatch because Neovim ships no NDJSON
 --- JSON-RPC client for non-LSP use cases.
 ---
---- Single plugin-global connection. Lazy first connect, simple
---- N-attempt retry on failure (no exponential back-off — the socket
---- is local and either there or not). Public surface: `request`,
+--- Single plugin-global connection. Lazy first connect, one immediate
+--- attempt on failure (the socket is local; if it is gone, fail fast).
+--- EOF / stale-timeout recovery keeps a separate deferred reconnect path
+--- for sockets that were already established. Public surface: `request`,
 --- `notify`, `on_notification`, `on_state_change`, `state`, `connect`,
 --- `disconnect`, and `reconnect`.
 
@@ -64,16 +65,13 @@ local STALE_TIMEOUT_THRESHOLD = 3
 --- Cleared by the deferred callback right before it actually runs.
 local auto_reconnect_pending = false
 
---- Consecutive auto-reconnect-attempt counter for exponential
---- back-off. Increments on every `schedule_auto_reconnect`; reset
---- on the next successful reply (`dispatch_payload`) — a real
---- reply proves the channel is healthy AND that the most recent
---- reconnect actually worked, so we restart back-off from zero.
---- Without back-off a daemon that connects-then-EOFs in a loop
---- would re-fire `events.full_reset` once per `retry_delay_ms`
---- forever, and each `full_reset` re-hydrates every tracked
---- instance — a daemon-flap cascade the captain would feel as a
---- continuous CPU + nvim freeze spike.
+--- Consecutive EOF/stale auto-reconnect counter for exponential
+--- back-off. Increments on every `schedule_auto_reconnect`; reset on the
+--- next successful reply (`dispatch_payload`) — a real reply proves the
+--- channel is healthy, so the next EOF/stale recovery starts fresh.
+--- This does NOT keep polling a missing socket: the deferred callback
+--- runs one normal `M.connect()` attempt, and initial connect failures
+--- fail fast.
 local reconnect_attempt_count = 0
 local RECONNECT_BACKOFF_MAX_MS = 30000
 
@@ -84,8 +82,9 @@ local RECONNECT_BACKOFF_MAX_MS = 30000
 ---  attempt 0 → retry_delay_ms (default 1000ms)
 ---  attempt 1 → 2 × retry_delay_ms
 ---  attempt N → min(MAX, retry_delay_ms × 2^N)
----Capped at 30s so a long-down daemon still gets retried on a
----reasonable cadence when it eventually comes back.
+---Capped at 30s for repeated EOF/stale cycles. If the next connect sees
+---a missing socket, that attempt fails fast and no further reconnect is
+---queued until another explicit connect/reconnect path runs.
 ---@param reason string
 local function schedule_auto_reconnect(reason)
   if auto_reconnect_pending then
@@ -323,16 +322,12 @@ local function on_data(_chan, data, _name)
   end
 end
 
----Try `sockconnect` once, retry up to `connect_attempts` times with
----`retry_delay_ms` between attempts. Final failure flips to
----`disconnected` with the underlying error.
----@param attempt integer
-local function try_connect(attempt)
+---Try `sockconnect` once. A missing local socket likely means the daemon
+---session is gone, so initial connection failures fail fast instead of
+---looping through delayed retries. EOF / stale-timeout recovery uses the
+---separate auto-reconnect scheduler after a connection has existed.
+local function try_connect()
   set_state("connecting")
-
-  local cfg = config.options.client or {}
-  local max_attempts = cfg.connect_attempts or 3
-  local retry_delay = cfg.retry_delay_ms or 1000
 
   local path = socket_path()
   if path == nil then
@@ -352,17 +347,7 @@ local function try_connect(attempt)
 
   local err = type(chan_or_err) == "string" and chan_or_err or "sockconnect failed"
 
-  if attempt < max_attempts then
-    log.warn("client: connect attempt %d/%d failed (%s); retrying in %dms", attempt, max_attempts, err, retry_delay)
-
-    vim.defer_fn(function()
-      try_connect(attempt + 1)
-    end, retry_delay)
-
-    return
-  end
-
-  log.error("client: connect failed after %d attempts: %s", max_attempts, err)
+  log.error("client: connect failed: %s", err)
 
   set_state("disconnected", err)
 end
@@ -374,7 +359,7 @@ function M.connect()
     return
   end
 
-  try_connect(1)
+  try_connect()
 end
 
 ---Close the connection. Fails every in-flight request with a
