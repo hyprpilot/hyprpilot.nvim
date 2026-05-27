@@ -72,7 +72,7 @@ require("hyprpilot").setup({
       end
       return 80
     end,
-    auto_resize_with_layout_manager = false,  -- opt into Edgy dynamic resizing
+    auto_resize_with_layout_manager = false,  -- opt into ongoing Edgy dynamic resizing
   },
 
   client = {

@@ -166,9 +166,7 @@ function M.resize()
     -- hook (`win:dim("height")` reads this first, falls back to
     -- view.size.height). Set the captain's expected height; edgy
     -- redistributes leftover into the absorber view (the chat).
-    pcall(function()
-      vim.w[M._winid].edgy_height = target
-    end)
+    buffer_mod.set_layout_manager_height(M._winid, target)
     -- Nudge edgy to recompute, debounced so a keystroke burst
     -- doesn't fire N full-layout passes per second (the captain
     -- saw UI thrash + occasional hangs from the un-debounced path).
@@ -1035,6 +1033,8 @@ function M.open(opts)
     return
   end
   buffer_mod.clean_window_chrome(M._winid)
+  buffer_mod.set_layout_manager_height(M._winid, compute_target_height(bufnr))
+  buffer_mod.nudge_edgy_layout({ force = true })
   vim.wo[M._winid].wrap = true
   vim.wo[M._winid].linebreak = true
   -- `winfixheight` protects against `equalalways` redistributing

@@ -446,25 +446,12 @@ function M.open()
   local winid, err = require("hyprpilot.chat.buffer").open_aux_split({
     direction = "aboveleft 1split",
     bufnr = bufnr,
+    layout_manager_height = 1,
     after = function(w)
       vim.wo[w].wrap = false
       vim.wo[w].winhighlight = "Normal:HyprpilotHeader"
       if buffer.layout_manager_active() then
-        if not buffer.layout_manager_auto_resize_enabled() then
-          return
-        end
-        -- Cooperate with edgy: set its dynamic-sizing hook to 1 row
-        -- so adopted layouts honour our intent. The captain's slot
-        -- config (`size = { height = 1 }`, `wo = { winbar = false }`)
-        -- also feeds in; this hook wins on the per-window read.
-        pcall(function()
-          vim.w[w].edgy_height = 1
-        end)
-        -- Debounced — shared helper coalesces with composer / queue
-        -- strip / permission row resize nudges into one layout pass
-        -- per 100ms window. Header height is static (1 row) so this
-        -- mostly fires once at open and stays put.
-        require("hyprpilot.chat.buffer").nudge_edgy_layout()
+        return
       else
         -- Lock to one row. `winfixheight` protects against
         -- `equalalways` redistributing height when sibling splits

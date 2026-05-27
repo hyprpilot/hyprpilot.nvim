@@ -257,9 +257,7 @@ function M.refresh()
       if not buffer.layout_manager_auto_resize_enabled() then
         return
       end
-      pcall(function()
-        vim.w[M._winid].edgy_height = target
-      end)
+      buffer.set_layout_manager_height(M._winid, target)
       -- Debounced nudge — under streaming events the queue strip
       -- can re-render many times per second; the shared helper
       -- coalesces across composer + queue strip so we don't run
@@ -419,6 +417,7 @@ local function open_window()
   local winid, err = buffer.open_aux_split({
     direction = string.format("belowright %dsplit", initial_height),
     bufnr = bufnr,
+    layout_manager_height = initial_height,
     after = function(w)
       install_keymaps(bufnr)
       vim.wo[w].wrap = false
