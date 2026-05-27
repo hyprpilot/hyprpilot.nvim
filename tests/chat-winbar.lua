@@ -119,10 +119,15 @@ T["hydrate maps camelCase snapshot fields onto state"] = function()
     profileId = "default",
     sessionId = "sess-1",
     cwd = "/tmp",
+    title = "Fix issue",
+    updatedAt = "2026-05-27T18:00:00Z",
     currentModeId = "plan",
     currentModelId = "sonnet",
     availableModes = { { id = "plan", name = "Plan" } },
     availableModels = { { id = "sonnet", name = "Sonnet" } },
+    configOptions = {
+      { id = "effort", currentValue = "high", options = { { value = "high", name = "High" } } },
+    },
     mcpsCount = 2,
     usage = { used = 42, size = 100 },
   })
@@ -130,8 +135,41 @@ T["hydrate maps camelCase snapshot fields onto state"] = function()
   local out = render_in_window(winid)
   MiniTest.expect.equality(out:find("Plan", 1, true) ~= nil, true)
   MiniTest.expect.equality(out:find("Sonnet", 1, true) ~= nil, true)
+  MiniTest.expect.equality(out:find("High", 1, true) ~= nil, true)
   MiniTest.expect.equality(out:find("42/100", 1, true) ~= nil, true)
   MiniTest.expect.equality(out:find("+2 mcps", 1, true) ~= nil, true)
+  MiniTest.expect.equality(winbar._meta[id].title, "Fix issue")
+  MiniTest.expect.equality(winbar._meta[id].updated_at, "2026-05-27T18:00:00Z")
+
+  helpers.close_window(winid)
+  helpers.cleanup_instance(id)
+  winbar.forget(id)
+end
+
+T["config_options_update merges effort categories and updates effort chip"] = function()
+  local id = helpers.unique_id()
+  local _, winid = open_chat_window_for(id)
+  local winbar = require("hyprpilot.chat.winbar")
+
+  winbar.update_config_options(id, {
+    { id = "other", currentValue = "enabled", options = { { value = "enabled", name = "Enabled" } } },
+    {
+      id = "effort",
+      currentValue = "low",
+      options = { { value = "low", name = "Low" }, { value = "high", name = "High" } },
+    },
+  })
+  MiniTest.expect.equality(render_in_window(winid):find("Low", 1, true) ~= nil, true)
+
+  winbar.update_config_options(id, {
+    {
+      id = "effort",
+      currentValue = "high",
+      options = { { value = "low", name = "Low" }, { value = "high", name = "High" } },
+    },
+  })
+  MiniTest.expect.equality(render_in_window(winid):find("High", 1, true) ~= nil, true)
+  MiniTest.expect.equality(winbar._meta[id].config_options[1].id, "other")
 
   helpers.close_window(winid)
   helpers.cleanup_instance(id)

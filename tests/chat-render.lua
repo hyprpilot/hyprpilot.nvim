@@ -413,6 +413,47 @@ T["tool_call falls through to description when formatted.diff is absent"] = func
   helpers.cleanup_instance(id)
 end
 
+T["tool_call suppresses duplicate output when it matches description through a fence"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-dedupe",
+          toolKind = "fetch",
+          title = "fetch",
+          state = "completed",
+          formatted = {
+            title = "fetch",
+            stats = {},
+            fields = {},
+            description = '```json\n{"ok":true}\n```',
+            output = '{"ok":true}',
+          },
+        },
+      },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local count = 0
+  for _, line in ipairs(lines) do
+    if line == '{"ok":true}' then
+      count = count + 1
+    end
+  end
+  MiniTest.expect.equality(count, 1)
+
+  helpers.cleanup_instance(id)
+end
+
 T["plan renders checklist with done count"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
@@ -441,6 +482,36 @@ T["plan renders checklist with done count"] = function()
   MiniTest.expect.equality(helpers.has_line_containing(lines, "[x] Read"), true)
   MiniTest.expect.equality(helpers.has_line_containing(lines, "[~] Write"), true)
   MiniTest.expect.equality(helpers.has_line_containing(lines, "[ ] Test"), true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["compaction renders as a dedicated section"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "compaction",
+          text = "summarized older transcript",
+          auto = true,
+          overflow = true,
+          tailStartId = "msg-42",
+        },
+      },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "### compaction"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "summarized older transcript"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "auto · overflow · tail msg-42"), true)
 
   helpers.cleanup_instance(id)
 end

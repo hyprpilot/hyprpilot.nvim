@@ -59,6 +59,22 @@ T["apply: stamps merged list onto params.withConfig in-place"] = function()
   reset_config()
 end
 
+T["apply: preserves strategic merge dollar keys verbatim"] = function()
+  require("hyprpilot.config").setup({
+    with_config = {
+      { ["$match"] = { agent = "opencode" }, agents = { { id = "opencode", ["$patch"] = "replace" } } },
+    },
+  })
+
+  local params = { instanceId = "inst-1" }
+  require("hyprpilot.rpc.with-config").apply(params, { { ["$patch"] = "delete", id = "legacy" } })
+
+  MiniTest.expect.equality(params.withConfig[1]["$match"].agent, "opencode")
+  MiniTest.expect.equality(params.withConfig[1].agents[1]["$patch"], "replace")
+  MiniTest.expect.equality(params.withConfig[2]["$patch"], "delete")
+  reset_config()
+end
+
 T["apply: nothing to send → leaves params.withConfig unset"] = function()
   reset_config()
 

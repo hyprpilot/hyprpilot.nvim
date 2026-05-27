@@ -37,6 +37,7 @@ local rescan_code_block_folds
 ---| "user_message"
 ---| "tool_call"
 ---| "plan"
+---| "compaction"
 ---| "permission_request"
 ---| "placeholder"
 ---| "adapter"
@@ -339,12 +340,13 @@ end
 ---changes (mode / model / effort flips, system prompt injection)
 ---that frame everything else in the turn — captain sees "what is
 ---this turn running with" before reading what the agent did.
-local SECTION_ORDER = { adapter = 0, tasks = 1, thoughts = 2, tools = 3, attachments = 4 }
+local SECTION_ORDER = { adapter = 0, tasks = 1, thoughts = 2, compaction = 3, tools = 4, attachments = 5 }
 
 local SECTION_HEADER = {
   adapter = "### adapter",
   tasks = "### tasks",
   thoughts = "### thoughts",
+  compaction = "### compaction",
   tools = "### tools",
   attachments = "### attachments",
 }
@@ -702,6 +704,8 @@ local function section_header_line(kind, section, state)
     unit = item_count == 1 and "file" or "files"
   elseif kind == "adapter" then
     unit = item_count == 1 and "change" or "changes"
+  elseif kind == "compaction" then
+    unit = item_count == 1 and "event" or "events"
   else
     unit = "items"
   end
@@ -1276,6 +1280,31 @@ local function cap_tool_text(raw)
   return string.format("[%d earlier bytes elided]\n", elided) .. raw:sub(-MAX)
 end
 
+---@param s string
+---@return string
+local function trim(s)
+  return (s:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+---@param raw string?
+---@return string?
+local function normalized_tool_text(raw)
+  if type(raw) ~= "string" then
+    return nil
+  end
+
+  local text = trim(raw)
+  local lines = vim.split(text, "\n", { plain = true })
+  if #lines >= 2 then
+    local fence = lines[1]:match("^(`+)%s*[%w_+%.%-]*%s*$")
+    if fence ~= nil and #fence >= 3 and trim(lines[#lines]) == fence then
+      text = trim(table.concat(vim.list_slice(lines, 2, #lines - 1), "\n"))
+    end
+  end
+
+  return text
+end
+
 local function tool_body_lines(formatted, kind)
   if type(formatted) ~= "table" then
     return wrap_in_rules({})
@@ -1326,6 +1355,12 @@ local function tool_body_lines(formatted, kind)
   local diff_text = formatted.diff
   local description_text = cap_tool_text(formatted.description)
   local output_text = cap_tool_text(formatted.output)
+  local output_normalized = normalized_tool_text(output_text)
+  if output_normalized ~= nil then
+    if output_normalized == normalized_tool_text(description_text) or output_normalized == normalized_tool_text(diff_text) then
+      output_text = nil
+    end
+  end
 
   if type(diff_text) == "string" and diff_text ~= "" then
     local diff_para = { "````diff" }
@@ -2077,6 +2112,52 @@ function M.mark_permission_resolved(state, request_id, resolved_label)
   require("hyprpilot.chat.permission-row").resolve(request_id, resolved_label)
 end
 
+---Render a transcript compaction marker as its own folded section.
+---@param state hyprpilot.render.State
+---@param record table
+local function render_compaction(state, record)
+  state.active_text_block = nil
+
+  local lines = { "---", "" }
+  if type(record.text) == "string" and record.text ~= "" then
+    vim.list_extend(lines, vim.split(record.text, "\n", { plain = true }))
+  else
+    table.insert(lines, "(transcript compacted)")
+  end
+
+  local details = {}
+  if record.auto == true then
+    table.insert(details, "auto")
+  end
+  if record.overflow == true then
+    table.insert(details, "overflow")
+  end
+  if type(record.tailStartId) == "string" and record.tailStartId ~= "" then
+    table.insert(details, "tail " .. record.tailStartId)
+  end
+  if #details > 0 then
+    table.insert(lines, "")
+    table.insert(lines, table.concat(details, " · "))
+  end
+  table.insert(lines, "")
+  table.insert(lines, "---")
+
+  local block = insert_block_into_section(
+    state,
+    state.current_turn,
+    "compaction",
+    "compaction:" .. tostring(state.current_turn or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time()),
+    "compaction",
+    lines
+  )
+  if block == nil then
+    log.debug("render_compaction: no turn layout for instance=%s turn=%s — appending inline", state.instance_id, tostring(state.current_turn))
+    chat_buffer.with_buffer(state.bufnr, function()
+      append_lines(state, flatten_lines(vim.list_extend({ "### compaction", "" }, lines)))
+    end)
+  end
+end
+
 ---Render one transcript item (from snapshot or live transcript event).
 ---@param state hyprpilot.render.State
 ---@param turn_id? string
@@ -2157,6 +2238,8 @@ function M.render_item(state, turn_id, item)
     M.handle_tool_call_update(state.instance_id, item)
   elseif kind == "plan" then
     render_plan(state, item)
+  elseif kind == "compaction" then
+    render_compaction(state, item)
   elseif kind == "permission_request" then
     render_permission_request(state, item)
   elseif kind == "agent_attachment" then
