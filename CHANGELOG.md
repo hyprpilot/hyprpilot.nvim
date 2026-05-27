@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.4](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.3...hyprpilot.nvim-v1.12.4) (2026-05-27)
+
+
+### Bug Fixes
+
+* **chat:** render hydrated acp errors ([#141](https://github.com/hyprpilot/hyprpilot.nvim/issues/141)) ([7ed9974](https://github.com/hyprpilot/hyprpilot.nvim/commit/7ed99746583724fc39869078ae5782ae4c4276c9))
+
 ## [1.12.3](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.2...hyprpilot.nvim-v1.12.3) (2026-05-27)
 
 
