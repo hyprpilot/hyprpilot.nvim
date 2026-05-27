@@ -439,9 +439,7 @@ function M.refresh()
       end
       -- Cooperate with edgy: set its dynamic-sizing hook + nudge
       -- a layout pass so the change takes effect immediately.
-      pcall(function()
-        vim.w[M._winid].edgy_height = target
-      end)
+      buffer.set_layout_manager_height(M._winid, target)
       -- Debounced — shared with composer / queue-strip so burst
       -- events collapse to one layout pass per 100ms.
       require("hyprpilot.chat.buffer").nudge_edgy_layout()
@@ -614,6 +612,7 @@ local function open_window()
   local winid, err = buffer.open_aux_split({
     direction = string.format("belowright %dsplit", initial_height),
     bufnr = bufnr,
+    layout_manager_height = initial_height,
     after = function(w)
       install_keymaps(bufnr)
       vim.wo[w].wrap = true

@@ -591,13 +591,15 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
 
 - **Layout-manager dynamic resizing is opt-in**
   - Chose: when Edgy (or a future layout manager) is loaded,
-    hyprpilot does not set `vim.w.edgy_height` or call
-    `edgy.layout.layout()` by default. Captains can restore the old
-    dynamic behaviour with `ui.auto_resize_with_layout_manager = true`.
+    hyprpilot seeds `vim.w.edgy_height` once when opening an auxiliary
+    surface and does one deferred layout nudge so Edgy does not
+    equalize header / queue / permission / composer heights. Ongoing
+    content-driven `vim.w.edgy_height` updates and layout nudges remain
+    opt-in with `ui.auto_resize_with_layout_manager = true`.
   - Why: Edgy layout passes can steal focus/cursor while reflowing
-    auxiliary surfaces during ordinary prompt/permission events. The
-    layout manager should own sizes unless the captain explicitly asks
-    the plugin to drive them.
+    auxiliary surfaces during ordinary prompt/permission events, but
+    leaving every adopted aux surface auto-sized lets Edgy distribute
+    the column equally and destroys the intended layout.
   - Rejected: hiding auto-opened permission/composer surfaces under
     Edgy. That would make prompts less discoverable; the bug is the
     resize/layout nudge, not the presence of the surface.

@@ -120,7 +120,7 @@ local M = {}
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
 ---@field width? number | (fun(columns: number): number?)
----@field auto_resize_with_layout_manager? boolean  -- true drives layout-manager dynamic heights (`vim.w.edgy_height` + layout nudge)
+---@field auto_resize_with_layout_manager? boolean  -- true drives ongoing layout-manager dynamic heights after initial open sizing
 
 ---@class hyprpilot.ConfigClient
 ---@field timeout_ms? integer        -- per-request timeout
