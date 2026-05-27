@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.5](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.4...hyprpilot.nvim-v1.12.5) (2026-05-27)
+
+
+### Bug Fixes
+
+* **rpc:** avoid daemon focus on actions ([#143](https://github.com/hyprpilot/hyprpilot.nvim/issues/143)) ([bbc3103](https://github.com/hyprpilot/hyprpilot.nvim/commit/bbc31032f9b2ebc94c890a9d0daa8e4439bd5fcc))
+
 ## [1.12.4](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.3...hyprpilot.nvim-v1.12.4) (2026-05-27)
 
 
