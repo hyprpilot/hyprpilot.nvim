@@ -17,6 +17,7 @@
 local buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
+local tool_kind = require("hyprpilot.tool_kind")
 local window = require("hyprpilot.chat.window")
 
 local M = {}
@@ -649,7 +650,7 @@ end
 ---visible and pre-focuses the daemon-supplied (or Allow-shaped)
 ---option.
 ---@param instance_id string
----@param record { request_id: string, tool: string, tool_kind?: string, options: table[], formatted?: table, default_option_id?: string, allow_option_id?: string, reject_option_id?: string, raw_input?: table }
+---@param record { request_id: string, tool: string, tool_kind?: string|table, options: table[], formatted?: table, default_option_id?: string, allow_option_id?: string, reject_option_id?: string, raw_input?: table }
 function M.enqueue(instance_id, record)
   for _, entry in ipairs(M._queue) do
     if entry.request_id == record.request_id then
@@ -662,7 +663,7 @@ function M.enqueue(instance_id, record)
     instance_id = instance_id,
     request_id = record.request_id,
     tool = record.tool,
-    tool_kind = record.tool_kind,
+    tool_kind = tool_kind.classify(record.tool_kind),
     options = options,
     formatted = record.formatted,
     focused_idx = default_focused_idx(options, record.default_option_id),

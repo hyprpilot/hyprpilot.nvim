@@ -9,6 +9,7 @@ local client = require("hyprpilot.client")
 local log = require("hyprpilot.log")
 local render = require("hyprpilot.chat.render")
 local status = require("hyprpilot.status")
+local tool_kind = require("hyprpilot.tool_kind")
 local winbar = require("hyprpilot.chat.winbar")
 
 ---Resolve the human label for an in-flight tool call.
@@ -24,10 +25,7 @@ local function tool_label(item)
   if type(item.title) == "string" then
     return item.title
   end
-  if type(item.toolKind) == "string" then
-    return item.toolKind
-  end
-  return nil
+  return tool_kind.label(item.toolKind)
 end
 
 ---Translate a `transcript` event's item into an activity update for
@@ -201,7 +199,8 @@ local function dispatch(raw)
       emit_for_instance("PermissionRequested", event.instanceId, {
         request_id = event.requestId,
         tool = event.tool,
-        tool_kind = event.toolKind,
+        tool_kind = tool_kind.classify(event.toolKind),
+        tool_kind_raw = event.toolKind,
         options = event.options,
         -- Daemon-computed allow-shaped pre-selected option (see
         -- `PermissionRequestSnapshot::default_option_id` in

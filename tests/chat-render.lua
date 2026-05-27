@@ -267,6 +267,35 @@ T["tool_call renders header + body, update patches the same block"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["tool_call renders structured mcp toolKind as server/tool label"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      {
+        turnId = "t1",
+        item = {
+          kind = "tool_call",
+          id = "tc-mcp",
+          toolKind = { type = "mcp", server = "memory", tool = "read_graph" },
+          state = "completed",
+          formatted = { stats = {}, fields = {} },
+        },
+      },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "memory/read_graph"), true)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "table:"), false)
+
+  helpers.cleanup_instance(id)
+end
+
 T["tool_call with formatted.diff renders a fenced diff block (skips Shiki-marker description)"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
