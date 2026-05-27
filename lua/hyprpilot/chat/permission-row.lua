@@ -3,7 +3,7 @@
 --- This is the SOLE interaction surface for permission prompts —
 --- chat-buffer rendering for permissions was dropped on purpose.
 --- The row renders the request title + tool details + button group;
---- the window auto-resizes to fit (clamped to 40% of `vim.o.lines`)
+--- the window auto-resizes to fit (clamped to 50% of `vim.o.lines`)
 --- so a Bash command with a multi-line description grows the row
 --- without the captain having to scroll.
 ---
@@ -381,7 +381,7 @@ local function compose()
   return lines, btn_row, header_row
 end
 
----Resolve the row's max height from config (40% of `vim.o.lines` by
+---Resolve the row's max height from config (50% of `vim.o.lines` by
 ---default), with a sane floor.
 ---@return integer
 local function resolve_max_height()
@@ -396,7 +396,17 @@ local function resolve_max_height()
   if type(raw) == "number" then
     return math.max(1, math.floor(raw))
   end
-  return math.max(3, math.floor(vim.o.lines * 0.4))
+  return math.max(5, math.floor(vim.o.lines * 0.5))
+end
+
+---@param lines string[]
+---@return integer
+local function target_height(lines)
+  local target = math.min(#lines, resolve_max_height())
+  if target < 1 then
+    return 1
+  end
+  return target
 end
 
 ---Re-paint the row buffer + resize the window to fit content.
@@ -422,11 +432,11 @@ function M.refresh()
   end)
 
   if M.is_visible() then
-    local target = math.min(#lines, resolve_max_height())
-    if target < 1 then
-      target = 1
-    end
+    local target = target_height(lines)
     if buffer.layout_manager_active() then
+      if not buffer.layout_manager_auto_resize_enabled() then
+        return
+      end
       -- Cooperate with edgy: set its dynamic-sizing hook + nudge
       -- a layout pass so the change takes effect immediately.
       pcall(function()
@@ -599,8 +609,10 @@ local function open_window()
   end
 
   local bufnr = ensure_buffer()
+  local lines = compose()
+  local initial_height = target_height(lines)
   local winid, err = buffer.open_aux_split({
-    direction = "belowright 1split",
+    direction = string.format("belowright %dsplit", initial_height),
     bufnr = bufnr,
     after = function(w)
       install_keymaps(bufnr)

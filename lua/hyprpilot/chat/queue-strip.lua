@@ -206,6 +206,16 @@ local function resolve_max_height()
   return math.max(3, math.floor(vim.o.lines * 0.4))
 end
 
+---@param lines string[]
+---@return integer
+local function target_height(lines)
+  local target = math.min(#lines, resolve_max_height())
+  if target < 1 then
+    return 1
+  end
+  return target
+end
+
 ---Repaint the strip with the active instance's cached queue.
 ---Closes the window when the queue is empty.
 ---
@@ -242,8 +252,11 @@ function M.refresh()
   end)
 
   if M.is_visible() then
-    local target = math.min(#lines, resolve_max_height())
+    local target = target_height(lines)
     if buffer.layout_manager_active() then
+      if not buffer.layout_manager_auto_resize_enabled() then
+        return
+      end
       pcall(function()
         vim.w[M._winid].edgy_height = target
       end)
@@ -401,8 +414,10 @@ local function open_window()
   end
 
   local bufnr = ensure_buffer()
+  local lines = compose(instance_id)
+  local initial_height = target_height(lines or { "" })
   local winid, err = buffer.open_aux_split({
-    direction = "belowright 1split",
+    direction = string.format("belowright %dsplit", initial_height),
     bufnr = bufnr,
     after = function(w)
       install_keymaps(bufnr)

@@ -73,7 +73,7 @@ local M = {}
 --- completion sources that don't need a daemon round-trip.
 
 ---@class hyprpilot.ConfigPermissionRow
----@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 40% vh)
+---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for the auto-sized row (default 50% vh)
 ---@field keymaps? hyprpilot.ConfigPermissionRowKeymaps
 
 ---@class hyprpilot.ConfigQueueStrip
@@ -120,15 +120,15 @@ local M = {}
 ---@class hyprpilot.ConfigUi
 ---@field position? "left" | "right"
 ---@field width? number | (fun(columns: number): number?)
+---@field auto_resize_with_layout_manager? boolean  -- true drives layout-manager dynamic heights (`vim.w.edgy_height` + layout nudge)
 
 ---@class hyprpilot.ConfigClient
 ---@field timeout_ms? integer        -- per-request timeout
----@field connect_attempts? integer  -- connect tries before giving up
----@field retry_delay_ms? integer    -- delay between connect attempts
+---@field retry_delay_ms? integer    -- delay before auto-reconnect after an established socket goes stale/EOFs
 
 ---@class hyprpilot.ConfigComposer
 ---@field min_height? integer | (fun(lines: number): number?)  -- minimum / initial composer rows
----@field max_height? integer | (fun(lines: number): number?)  -- ceiling for auto-grow (default 40% vh)
+---@field max_height? integer | (fun(lines: number): number?)  -- ceiling for auto-grow (default 50% vh)
 ---@field keymaps? hyprpilot.ConfigComposerKeymaps
 ---@field attach? hyprpilot.ConfigComposerAttach
 
@@ -158,10 +158,10 @@ local defaults = {
 
       return 80
     end,
+    auto_resize_with_layout_manager = false,
   },
   client = {
     timeout_ms = 5000,
-    connect_attempts = 3,
     retry_delay_ms = 1000,
   },
   queue_strip = {
@@ -183,7 +183,7 @@ local defaults = {
   },
   permission_row = {
     max_height = function(lines)
-      return math.max(3, math.floor(lines * 0.4))
+      return math.max(5, math.floor(lines * 0.5))
     end,
     keymaps = {
       -- `<localleader>` defaults stay clear of vim's normal-mode
@@ -315,9 +315,9 @@ local defaults = {
     },
   },
   composer = {
-    min_height = 12,
+    min_height = 14,
     max_height = function(lines)
-      return math.max(12, math.floor(lines * 0.4))
+      return math.max(14, math.floor(lines * 0.5))
     end,
     keymaps = {
       submit = { normal = "<CR>", insert = "<C-s>" },
