@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.3](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.2...hyprpilot.nvim-v1.12.3) (2026-05-27)
+
+
+### Bug Fixes
+
+* **chat:** support structured tool kinds ([#139](https://github.com/hyprpilot/hyprpilot.nvim/issues/139)) ([4e0bd82](https://github.com/hyprpilot/hyprpilot.nvim/commit/4e0bd823620964be6186e29ab488947d823b7e73))
+
 ## [1.12.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.1...hyprpilot.nvim-v1.12.2) (2026-05-26)
 
 
