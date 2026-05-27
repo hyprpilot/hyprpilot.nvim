@@ -53,8 +53,13 @@ T["meta calls instance/snapshot/meta and translates the MetaSnapshot shape"] = f
       cwd = "/tmp",
       currentModeId = "plan",
       currentModelId = "sonnet",
+      title = "Investigate bug",
+      updatedAt = "2026-05-27T18:00:00Z",
       availableModes = { { id = "plan", name = "Plan" } },
       availableModels = { { id = "sonnet", name = "Sonnet" } },
+      configOptions = {
+        { id = "effort", currentValue = "high", options = { { value = "high", name = "High" } } },
+      },
       mcpsCount = 2,
       usage = { used = 100, size = 1000 },
       latestSeq = 42,
@@ -72,6 +77,10 @@ T["meta calls instance/snapshot/meta and translates the MetaSnapshot shape"] = f
   MiniTest.expect.equality(seen.err, nil)
   MiniTest.expect.equality(seen.meta.current_mode_id, "plan")
   MiniTest.expect.equality(seen.meta.current_model_id, "sonnet")
+  MiniTest.expect.equality(seen.meta.title, "Investigate bug")
+  MiniTest.expect.equality(seen.meta.updated_at, "2026-05-27T18:00:00Z")
+  MiniTest.expect.equality(seen.meta.current_effort_id, "high")
+  MiniTest.expect.equality(seen.meta.available_efforts[1].value, "high")
   MiniTest.expect.equality(#seen.meta.available_modes, 1)
   MiniTest.expect.equality(seen.meta.available_modes[1].id, "plan")
   MiniTest.expect.equality(#seen.meta.available_models, 1)
@@ -113,6 +122,37 @@ T["set_option fires instances/setOption with configId + value"] = function()
   restore()
 end
 
+T["effort RPC helpers use first-class effort methods"] = function()
+  local restore, calls = helpers.stub_client_with({
+    ["instances/getEffort"] = { result = { effortId = "medium" } },
+    ["instances/listEfforts"] = { result = { effortId = "medium", efforts = { { value = "medium", name = "Medium" } } } },
+    ["instances/setEffort"] = { result = { ok = true } },
+  })
+
+  local got, listed, set
+  require("hyprpilot.rpc.instances").get_effort("inst-1", function(err, result)
+    got = { err = err, result = result }
+  end)
+  require("hyprpilot.rpc.instances").list_efforts("inst-1", function(err, result)
+    listed = { err = err, result = result }
+  end)
+  require("hyprpilot.rpc.instances").set_effort("inst-1", "high", function(err, result)
+    set = { err = err, result = result }
+  end)
+
+  MiniTest.expect.equality(calls[1].method, "instances/getEffort")
+  MiniTest.expect.equality(calls[1].params.instanceId, "inst-1")
+  MiniTest.expect.equality(got.result.effort_id, "medium")
+  MiniTest.expect.equality(calls[2].method, "instances/listEfforts")
+  MiniTest.expect.equality(listed.result.effort_id, "medium")
+  MiniTest.expect.equality(listed.result.efforts[1].value, "medium")
+  MiniTest.expect.equality(calls[3].method, "instances/setEffort")
+  MiniTest.expect.equality(calls[3].params.effortId, "high")
+  MiniTest.expect.equality(set.result.ok, true)
+
+  restore()
+end
+
 T["setters skip with a warn on empty input"] = function()
   local restore, calls = helpers.stub_client_request()
   local instances = require("hyprpilot.rpc.instances")
@@ -120,6 +160,7 @@ T["setters skip with a warn on empty input"] = function()
   instances.set_mode("", "plan")
   instances.set_mode("inst-1", "")
   instances.set_model("inst-1", "")
+  instances.set_effort("inst-1", "")
   instances.set_option("inst-1", "", "x")
   instances.set_option("inst-1", "effort", nil)
 

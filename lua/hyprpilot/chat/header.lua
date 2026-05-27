@@ -90,7 +90,7 @@ local function display_name(id, available)
   end
   if type(available) == "table" then
     for _, entry in ipairs(available) do
-      if type(entry) == "table" and entry.id == id then
+      if type(entry) == "table" and (entry.id == id or entry.value == id) then
         local name = entry.name
         if type(name) == "string" and name ~= "" then
           return name
@@ -295,6 +295,11 @@ local function compose_segments()
     local mode = display_name(meta.current_mode_id, meta.available_modes)
     if is_str(mode) then
       table.insert(segments, { text = mode, hl = "HyprpilotHeaderMode" })
+    end
+
+    local effort = display_name(meta.current_effort_id, meta.available_efforts)
+    if is_str(effort) then
+      table.insert(segments, { text = effort, hl = "HyprpilotHeaderMode" })
     end
 
     if meta.usage ~= nil and type(meta.usage) == "table" and (tonumber(meta.usage.size) or 0) > 0 then

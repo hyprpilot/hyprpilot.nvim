@@ -30,8 +30,13 @@ local M = {}
 ---@field cwd? string
 ---@field current_mode_id? string
 ---@field current_model_id? string
+---@field title? string
+---@field updated_at? string
 ---@field available_modes? table[]
 ---@field available_models? table[]
+---@field config_options? table[]
+---@field current_effort_id? string
+---@field available_efforts? table[]
 ---@field mcps_count? integer
 ---@field usage? hyprpilot.winbar.Usage
 ---@field session_title? string
@@ -81,13 +86,29 @@ local function display_name(id, available)
 
   if type(available) == "table" then
     for _, entry in ipairs(available) do
-      if type(entry) == "table" and entry.id == id then
-        return tostring(entry.name or entry.id)
+      if type(entry) == "table" and (entry.id == id or entry.value == id) then
+        return tostring(entry.name or entry.id or entry.value)
       end
     end
   end
 
   return id
+end
+
+---@param categories? table[]
+---@return string?, table[]?
+local function effort_from_config_options(categories)
+  if type(categories) ~= "table" then
+    return nil, nil
+  end
+
+  for _, category in ipairs(categories) do
+    if type(category) == "table" and category.id == "effort" then
+      return category.currentValue, category.options
+    end
+  end
+
+  return nil, nil
 end
 
 ---Compact `1234` → `1.2k`. Returns the original string when it's
@@ -144,6 +165,11 @@ local function format_meta(meta, activity)
   local model = display_name(meta.current_model_id, meta.available_models)
   if model ~= nil then
     table.insert(parts, model)
+  end
+
+  local effort = display_name(meta.current_effort_id, meta.available_efforts)
+  if effort ~= nil then
+    table.insert(parts, effort)
   end
 
   if meta.usage ~= nil and (meta.usage.size or 0) > 0 then
@@ -290,6 +316,42 @@ function M.update_usage(instance_id, used, size, cost)
   })
 end
 
+---Replace advertised session config option categories for an instance.
+---@param instance_id string
+---@param categories table[]
+function M.update_config_options(instance_id, categories)
+  if type(categories) ~= "table" then
+    log.debug("winbar.update_config_options: instance=%s categories is not a table", tostring(instance_id))
+    return
+  end
+
+  local merged = vim.deepcopy((M._meta[instance_id] or {}).config_options or {})
+  local by_id = {}
+  for index, category in ipairs(merged) do
+    if type(category) == "table" and type(category.id) == "string" then
+      by_id[category.id] = index
+    end
+  end
+  for _, category in ipairs(categories) do
+    if type(category) == "table" and type(category.id) == "string" then
+      local index = by_id[category.id]
+      if index ~= nil then
+        merged[index] = category
+      else
+        table.insert(merged, category)
+        by_id[category.id] = #merged
+      end
+    end
+  end
+
+  local effort_id, efforts = effort_from_config_options(merged)
+  M.update_meta(instance_id, {
+    config_options = merged,
+    current_effort_id = effort_id,
+    available_efforts = efforts,
+  })
+end
+
 ---Update the session title (currently surfaced in autocmds; not in
 ---the winbar string itself).
 ---@param instance_id string
@@ -308,14 +370,20 @@ function M.hydrate(instance_id, snapshot)
     return
   end
 
+  local effort_id, efforts = effort_from_config_options(snapshot.configOptions)
   M.update_meta(instance_id, {
     profile_id = snapshot.profileId,
     session_id = snapshot.sessionId,
     cwd = snapshot.cwd,
+    title = snapshot.title,
+    updated_at = snapshot.updatedAt,
     current_mode_id = snapshot.currentModeId,
     current_model_id = snapshot.currentModelId,
     available_modes = snapshot.availableModes,
     available_models = snapshot.availableModels,
+    config_options = snapshot.configOptions,
+    current_effort_id = effort_id,
+    available_efforts = efforts,
     mcps_count = snapshot.mcpsCount,
     usage = snapshot.usage,
   })

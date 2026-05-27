@@ -133,26 +133,20 @@ end
 -- effort
 ---------------------------------------------------------------------
 
-T["palettes.effort: picks an option → fires instances/setOption with config_id=effort"] = function()
+T["palettes.effort: picks an option → fires instances/setEffort with chosen effort id"] = function()
   local restore_active = stub_active_instance("inst-1")
   local restore_client, calls = stub_client_with({
-    ["instance/snapshot/meta"] = {
+    ["instances/listEfforts"] = {
       result = {
-        configOptions = {
-          {
-            id = "effort",
-            name = "Effort",
-            currentValue = "medium",
-            options = {
-              { value = "low", name = "Low" },
-              { value = "medium", name = "Medium" },
-              { value = "high", name = "High" },
-            },
-          },
+        effortId = "medium",
+        efforts = {
+          { value = "low", name = "Low" },
+          { value = "medium", name = "Medium" },
+          { value = "high", name = "High" },
         },
       },
     },
-    ["instances/setOption"] = { result = { ok = true } },
+    ["instances/setEffort"] = { result = { ok = true } },
   })
   local restore_select, ui_calls = stub_ui_select(function(items)
     -- Pick "high" (third row).
@@ -162,21 +156,22 @@ T["palettes.effort: picks an option → fires instances/setOption with config_id
   require("hyprpilot.palettes.effort").open()
 
   MiniTest.expect.equality(ui_calls[1].opts.kind, "hyprpilot.effort")
-  MiniTest.expect.equality(calls[2].method, "instances/setOption")
-  MiniTest.expect.equality(calls[2].params.configId, "effort")
-  MiniTest.expect.equality(calls[2].params.value, "high")
+  MiniTest.expect.equality(calls[1].method, "instances/listEfforts")
+  MiniTest.expect.equality(calls[2].method, "instances/setEffort")
+  MiniTest.expect.equality(calls[2].params.effortId, "high")
 
   restore_select()
   restore_client()
   restore_active()
 end
 
-T["palettes.effort: no effort category in configOptions → warn + no picker"] = function()
+T["palettes.effort: no effort choices → warn + no picker"] = function()
   local restore_active = stub_active_instance("inst-1")
   local restore_client = stub_client_with({
-    ["instance/snapshot/meta"] = {
+    ["instances/listEfforts"] = {
       result = {
-        configOptions = { { id = "thinking", options = {} } },
+        effortId = "medium",
+        efforts = {},
       },
     },
   })

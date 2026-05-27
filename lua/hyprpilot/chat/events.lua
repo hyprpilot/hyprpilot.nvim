@@ -226,16 +226,23 @@ local function dispatch(raw)
         profile_id = event.profileId,
         session_id = event.sessionId,
         cwd = event.cwd,
+        title = event.title,
+        updated_at = event.updatedAt,
         current_mode_id = event.currentModeId,
         current_model_id = event.currentModelId,
         available_modes = event.availableModes,
         available_models = event.availableModels,
+        config_options = event.configOptions,
         mcps_count = event.mcpsCount,
       })
+      if type(event.configOptions) == "table" then
+        winbar.update_config_options(event.instanceId, event.configOptions)
+      end
     elseif event.event == "current_mode_update" then
       winbar.update_mode(event.instanceId, event.currentModeId)
       render.handle_current_mode_update(event)
     elseif event.event == "config_options_update" then
+      winbar.update_config_options(event.instanceId, event.categories)
       render.handle_config_options_update(event)
     elseif event.event == "system_prompt_injected" then
       render.handle_system_prompt_injected(event)
@@ -246,6 +253,7 @@ local function dispatch(raw)
       render.handle_usage_update(event)
     elseif event.event == "session_info_update" then
       winbar.update_session(event.instanceId, event.title)
+      winbar.update_meta(event.instanceId, { updated_at = event.updatedAt })
     elseif event.event == "state" then
       winbar.update_meta(event.instanceId, { instance_state = event.state })
       emit_for_instance("InstanceStateChanged", event.instanceId, {

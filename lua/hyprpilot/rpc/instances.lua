@@ -93,9 +93,13 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@field cwd? string
 ---@field current_mode_id? string
 ---@field current_model_id? string
+---@field title? string
+---@field updated_at? string
 ---@field available_modes? table[]
 ---@field available_models? table[]
 ---@field config_options? table[]
+---@field current_effort_id? string
+---@field available_efforts? table[]
 ---@field mcps_count? integer
 ---@field usage? table
 ---@field latest_seq? integer
@@ -141,15 +145,30 @@ local function from_meta_wire(wire)
   if type(wire) ~= "table" then
     return {}
   end
+  local current_effort_id
+  local available_efforts
+  if type(wire.configOptions) == "table" then
+    for _, category in ipairs(wire.configOptions) do
+      if type(category) == "table" and category.id == "effort" then
+        current_effort_id = category.currentValue
+        available_efforts = category.options
+        break
+      end
+    end
+  end
   return {
     profile_id = wire.profileId,
     session_id = wire.sessionId,
     cwd = wire.cwd,
+    title = wire.title,
+    updated_at = wire.updatedAt,
     current_mode_id = wire.currentModeId,
     current_model_id = wire.currentModelId,
     available_modes = wire.availableModes,
     available_models = wire.availableModels,
     config_options = wire.configOptions,
+    current_effort_id = current_effort_id,
+    available_efforts = available_efforts,
     mcps_count = wire.mcpsCount,
     usage = wire.usage,
     latest_seq = wire.latestSeq,
@@ -530,6 +549,8 @@ function M.rename(instance_id, name, callback)
 end
 
 ---@alias hyprpilot.SetterCallback fun(err: hyprpilot.client.RpcError?, result: any?): nil
+---@alias hyprpilot.EffortGetCallback fun(err: hyprpilot.client.RpcError?, result: { effort_id?: string }?): nil
+---@alias hyprpilot.EffortsListCallback fun(err: hyprpilot.client.RpcError?, result: { effort_id?: string, efforts: table[] }?): nil
 
 ---Switch the instance to `mode_id`. Mode ids come from the
 ---`available_modes[].id` advertised on `acp:instance-meta` /
@@ -572,6 +593,75 @@ function M.set_model(instance_id, model_id, callback)
   end
 
   client.request("instances/setModel", { instanceId = instance_id, modelId = model_id }, nil, function(err, result)
+    if callback ~= nil then
+      callback(err, result)
+    end
+  end)
+end
+
+---Fetch the current effort id for an instance.
+---@param instance_id string
+---@param callback hyprpilot.EffortGetCallback
+function M.get_effort(instance_id, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.get_effort: instance_id must be a non-empty string")
+    if callback ~= nil then
+      callback({ message = "instance_id required" }, nil)
+    end
+    return
+  end
+
+  client.request("instances/getEffort", { instanceId = instance_id }, nil, function(err, result)
+    if err ~= nil then
+      callback(err, nil)
+      return
+    end
+
+    callback(nil, { effort_id = result and result.effortId or nil })
+  end)
+end
+
+---List effort choices advertised for an instance.
+---@param instance_id string
+---@param callback hyprpilot.EffortsListCallback
+function M.list_efforts(instance_id, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.list_efforts: instance_id must be a non-empty string")
+    if callback ~= nil then
+      callback({ message = "instance_id required" }, nil)
+    end
+    return
+  end
+
+  client.request("instances/listEfforts", { instanceId = instance_id }, nil, function(err, result)
+    if err ~= nil then
+      callback(err, nil)
+      return
+    end
+
+    callback(nil, {
+      effort_id = result and result.effortId or nil,
+      efforts = (result and type(result.efforts) == "table") and result.efforts or {},
+    })
+  end)
+end
+
+---Switch the instance to `effort_id`.
+---@param instance_id string
+---@param effort_id string
+---@param callback? hyprpilot.SetterCallback
+function M.set_effort(instance_id, effort_id, callback)
+  if type(instance_id) ~= "string" or instance_id == "" then
+    log.warn("instances.set_effort: instance_id must be a non-empty string")
+    return
+  end
+
+  if type(effort_id) ~= "string" or effort_id == "" then
+    log.warn("instances.set_effort: effort_id must be a non-empty string")
+    return
+  end
+
+  client.request("instances/setEffort", { instanceId = instance_id, effortId = effort_id }, nil, function(err, result)
     if callback ~= nil then
       callback(err, result)
     end

@@ -1,38 +1,87 @@
---- Effort palette — picker over the active instance's effort
---- config category (claude-agent-acp 0.21+ adaptive thinking).
---- The wire shape is nested (`meta.config_options[id="effort"]`)
---- rather than a flat list, so we feed `_meta_palette` a
---- `resolve_list` hook that walks the categories array.
+--- Effort palette — picker over the active instance's first-class
+--- effort RPC surface (`instances/listEfforts` / `setEffort`).
 
 local instances = require("hyprpilot.rpc.instances")
-local meta_palette = require("hyprpilot.palettes._meta-palette")
+local log = require("hyprpilot.log")
+local pickers = require("hyprpilot.palettes.pickers")
+local window = require("hyprpilot.chat.window")
 
 local M = {}
-
-local CATEGORY_ID = "effort"
 
 ---@class hyprpilot.palettes.effort.Opts
 ---@field instance_id? string
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
 
-M.open = meta_palette.build({
-  title = "effort",
-  kind = "hyprpilot.effort",
-  log_label = "effort",
-  item_id_field = "value",
-  empty_message = "instance advertises no effort options",
-  setter = function(instance_id, value, callback)
-    instances.set_option(instance_id, CATEGORY_ID, value, callback)
-  end,
-  resolve_list = function(meta)
-    local categories = (meta and meta.config_options) or {}
-    for _, c in ipairs(categories) do
-      if c.id == CATEGORY_ID then
-        return c.options or {}, c.currentValue
-      end
+---@param item table
+---@param current? string
+---@return string
+local function format_item(item, current)
+  local value = item.value or item.id
+  local prefix = value == current and "* " or "  "
+  return prefix .. tostring(item.name or value)
+end
+
+---@param item table
+---@return { lines: string[], ft: string }
+local function preview(item)
+  local headline = item.name or item.value or item.id or "(unnamed)"
+  local lines = { "# " .. headline, "" }
+  if type(item.description) == "string" and item.description ~= "" then
+    vim.list_extend(lines, vim.split(item.description, "\n", { plain = true }))
+  else
+    table.insert(lines, "_(no description advertised by the agent)_")
+  end
+  return { lines = lines, ft = "markdown" }
+end
+
+---@param opts? hyprpilot.palettes.effort.Opts
+function M.open(opts)
+  opts = opts or {}
+  local instance_id = opts.instance_id or window.active_instance()
+
+  if instance_id == nil then
+    log.warn("palettes.effort: no active instance")
+    return
+  end
+
+  instances.list_efforts(instance_id, function(err, result)
+    if err ~= nil then
+      log.warn("palettes.effort: efforts fetch failed: %s", err.message)
+      return
     end
-    return {}, nil
-  end,
-})
+
+    local items = (result and result.efforts) or {}
+    local current = result and result.effort_id or nil
+    if type(items) ~= "table" or #items == 0 then
+      log.warn("palettes.effort: instance advertises no effort options")
+      return
+    end
+
+    pickers.open({
+      items = items,
+      title = "effort",
+      kind = "hyprpilot.effort",
+      picker = opts.picker,
+      format_item = function(item)
+        return format_item(item, current)
+      end,
+      preview = preview,
+      on_pick = function(choice)
+        local value = choice.value or choice.id
+        if value == current then
+          log.debug("palettes.effort: chose current value (%s) — no-op", tostring(current))
+          return
+        end
+        instances.set_effort(instance_id, value, function(set_err)
+          if set_err ~= nil then
+            log.warn("palettes.effort: setEffort failed: %s", set_err.message)
+          else
+            log.debug("palettes.effort: set value=%s on instance=%s", tostring(value), instance_id)
+          end
+        end)
+      end,
+    })
+  end)
+end
 
 return M
