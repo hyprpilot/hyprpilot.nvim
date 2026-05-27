@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.5...hyprpilot.nvim-v1.13.0) (2026-05-27)
+
+
+### Features
+
+* **chat:** support opencode adapter wire updates ([#145](https://github.com/hyprpilot/hyprpilot.nvim/issues/145)) ([a6da944](https://github.com/hyprpilot/hyprpilot.nvim/commit/a6da944195fd8a192e72909eeb9d1cddbd7ae473))
+
+
+### Bug Fixes
+
+* **frontend:** improve resilience under daemon loss ([#147](https://github.com/hyprpilot/hyprpilot.nvim/issues/147)) ([f591d7c](https://github.com/hyprpilot/hyprpilot.nvim/commit/f591d7c283f3e803612741730ebe2af689bf3edf))
+
 ## [1.12.5](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.4...hyprpilot.nvim-v1.12.5) (2026-05-27)
 
 
