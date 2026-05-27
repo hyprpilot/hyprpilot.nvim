@@ -135,6 +135,35 @@ T["agent_text prose wraps with --- rules (no ### response subhead)"] = function(
   helpers.cleanup_instance(id)
 end
 
+T["hydrate_turns writes acp error markers from meta snapshot"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
+      { turnId = "t1", item = { kind = "agent_text", text = "partial reply" } },
+    },
+  })
+  render.hydrate_turns(state, {
+    {
+      id = "t1",
+      sessionId = "s1",
+      startedAtMs = 1000,
+      endedAtMs = 2000,
+      error = "context_window_exceeded",
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line(lines, "> context_window_exceeded"), true)
+
+  helpers.cleanup_instance(id)
+end
+
 T["agent_text opens --- wrapper only once per turn"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")

@@ -339,8 +339,19 @@ function M.hydrate(instance_id, bufnr, callback)
   M.ensure_subscribed()
 
   local state = render.state(instance_id, bufnr)
+  local chat_hydrated = false
+  local pending_meta
 
   log.debug("events.hydrate: requesting snapshots for instance=%s limit=%d", instance_id, state.snapshot_limit)
+
+  local function apply_meta(snapshot)
+    winbar.hydrate(instance_id, snapshot)
+    if chat_hydrated then
+      render.hydrate_turns(state, snapshot.turns)
+    else
+      pending_meta = snapshot
+    end
+  end
 
   client.request("instance/snapshot/chat", { instanceId = instance_id, limit = state.snapshot_limit }, nil, function(err, snapshot)
     if err ~= nil then
@@ -360,6 +371,11 @@ function M.hydrate(instance_id, bufnr, callback)
     end
 
     render.hydrate(state, snapshot)
+    chat_hydrated = true
+    if pending_meta ~= nil then
+      render.hydrate_turns(state, pending_meta.turns)
+      pending_meta = nil
+    end
 
     if callback ~= nil then
       callback(nil)
@@ -377,7 +393,7 @@ function M.hydrate(instance_id, bufnr, callback)
       return
     end
 
-    winbar.hydrate(instance_id, snapshot)
+    apply_meta(snapshot)
   end)
 end
 
