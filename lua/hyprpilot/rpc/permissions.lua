@@ -45,7 +45,7 @@ function M.respond(request_id, option_id, opts_or_callback, callback)
     opts = opts_or_callback
   end
 
-  local params = { requestId = request_id, optionId = option_id }
+  local params = { requestId = request_id, optionId = option_id, focus = false }
   if type(opts) == "table" and type(opts.feedback) == "string" and opts.feedback ~= "" then
     local diff_cfg = (require("hyprpilot.config").options.diff_preview or {})
     if diff_cfg.send_reject_feedback == true then

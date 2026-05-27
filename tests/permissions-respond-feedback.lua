@@ -8,7 +8,7 @@ local helpers = require("tests.helpers")
 
 local T = MiniTest.new_set()
 
-T["respond w/o opts: only requestId + optionId on the wire (back-compat call shape)"] = function()
+T["respond w/o opts: requestId + optionId + no-focus ride the wire"] = function()
   local restore, calls = helpers.stub_client_with({ ["permissions/respond"] = { result = {} } })
 
   require("hyprpilot.rpc.permissions").respond("req-1", "allow")
@@ -17,6 +17,7 @@ T["respond w/o opts: only requestId + optionId on the wire (back-compat call sha
   MiniTest.expect.equality(calls[1].params.requestId, "req-1")
   MiniTest.expect.equality(calls[1].params.optionId, "allow")
   MiniTest.expect.equality(calls[1].params.feedback, nil)
+  MiniTest.expect.equality(calls[1].params.focus, false)
 
   restore()
 end

@@ -108,6 +108,7 @@ T["submit includes attachments in the wire payload + clears on success"] = funct
   MiniTest.expect.equality(#calls, 1)
   MiniTest.expect.equality(calls[1].method, "prompts/send")
   MiniTest.expect.equality(calls[1].params.text, "ship it")
+  MiniTest.expect.equality(calls[1].params.focus, false)
   MiniTest.expect.equality(#calls[1].params.attachments, 1)
   MiniTest.expect.equality(calls[1].params.attachments[1].path, "/tmp/img.png")
 
@@ -169,6 +170,7 @@ T["submit without attachments omits the wire field"] = function()
 
   MiniTest.expect.equality(#calls, 1)
   MiniTest.expect.equality(calls[1].params.attachments, nil)
+  MiniTest.expect.equality(calls[1].params.focus, false)
 
   restore()
   helpers.cleanup_instance(id)

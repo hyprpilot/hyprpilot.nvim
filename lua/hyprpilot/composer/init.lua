@@ -1184,7 +1184,7 @@ function M.submit(text, opts)
     return
   end
 
-  local payload = { instanceId = instance_id, text = text }
+  local payload = { instanceId = instance_id, text = text, focus = false }
   if attachments_snapshot ~= nil and #attachments_snapshot > 0 then
     payload.attachments = attachments_snapshot
   end
@@ -1334,7 +1334,7 @@ function M.submit_per_line(opts)
   log.info("composer.submit_per_line: firing %d prompts on instance=%s", #lines, instance_id)
 
   for _, line in ipairs(lines) do
-    client.request("prompts/send", { instanceId = instance_id, text = line }, nil, function(err, result)
+    client.request("prompts/send", { instanceId = instance_id, text = line, focus = false }, nil, function(err, result)
       if err ~= nil then
         log.warn("composer.submit_per_line: prompts/send failed for %q: %s", line, err.message)
         return

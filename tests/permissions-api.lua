@@ -16,6 +16,7 @@ T["respond fires permissions/respond with camelCase params"] = function()
   MiniTest.expect.equality(calls[1].method, "permissions/respond")
   MiniTest.expect.equality(calls[1].params.requestId, "req-1")
   MiniTest.expect.equality(calls[1].params.optionId, "allow-once")
+  MiniTest.expect.equality(calls[1].params.focus, false)
 
   restore()
 end
