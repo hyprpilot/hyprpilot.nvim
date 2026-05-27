@@ -20,6 +20,7 @@ local chat_buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local permissions = require("hyprpilot.rpc.permissions")
+local tool_kind = require("hyprpilot.tool_kind")
 
 local M = {}
 
@@ -693,7 +694,7 @@ function M.is_previewable(entry)
   if entry == nil then
     return false
   end
-  if entry.tool_kind ~= "edit" then
+  if tool_kind.classify(entry.tool_kind) ~= "edit" then
     return false
   end
   local raw = entry.raw_input

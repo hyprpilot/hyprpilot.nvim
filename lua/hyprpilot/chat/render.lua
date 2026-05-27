@@ -20,6 +20,7 @@ local chat_buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
 local log = require("hyprpilot.log")
 local stats = require("hyprpilot.chat.stats")
+local tool_kind = require("hyprpilot.tool_kind")
 
 local M = {}
 
@@ -1091,11 +1092,11 @@ end
 ---defaults (nerd-font glyphs) for ASCII or alternate glyph sets.
 ---Returns `""` when nothing resolves; `tool_header_line` strips
 ---empty components so we never emit a doubled space.
----@param tool_kind? string
+---@param kind? string
 ---@return string
-local function tool_icon(tool_kind)
+local function tool_icon(kind)
   local map = (config.options.icons or {}).tool_kind or {}
-  return first_nonempty(tool_kind ~= nil and map[tool_kind] or nil, map.default, "->")
+  return first_nonempty(kind ~= nil and map[kind] or nil, map.default, "->")
 end
 
 ---Status badge for tool-call state (`pending` / `running` /
@@ -1114,8 +1115,8 @@ end
 ---fetch / write / edit fall back to plain text (no language).
 ---@param tool_kind? string
 ---@return string
-local function tool_output_lang(tool_kind)
-  if tool_kind == "execute" or tool_kind == "terminal" then
+local function tool_output_lang(kind)
+  if kind == "execute" or kind == "terminal" then
     return "console"
   end
   return ""
@@ -1125,8 +1126,8 @@ end
 ---(e.g. the command line). Mirrors `tool_output_lang` but for shell.
 ---@param tool_kind? string
 ---@return string
-local function tool_input_lang(tool_kind)
-  if tool_kind == "execute" or tool_kind == "terminal" then
+local function tool_input_lang(kind)
+  if kind == "execute" or kind == "terminal" then
     return "bash"
   end
   return ""
@@ -1177,7 +1178,7 @@ end
 ---from `tool_kind`). Always returns at least one line so the
 ---head/tail extmarks bracket distinct rows.
 ---@param formatted? table
----@param tool_kind? string
+---@param kind? string
 ---@return string[]
 --- Cap a daemon-shipped free-form text field (output / diff /
 --- description) at 256 KB. Truncates from the FRONT (captain cares
@@ -1200,13 +1201,13 @@ local function cap_tool_text(raw)
   return string.format("[%d earlier bytes elided]\n", elided) .. raw:sub(-MAX)
 end
 
-local function tool_body_lines(formatted, tool_kind)
+local function tool_body_lines(formatted, kind)
   if type(formatted) ~= "table" then
     return wrap_in_rules({})
   end
 
   local paragraphs = {}
-  local input_lang = tool_input_lang(tool_kind)
+  local input_lang = tool_input_lang(kind)
 
   if type(formatted.fields) == "table" then
     -- Single-field, single-line, command-shaped — render as a fenced
@@ -1261,7 +1262,7 @@ local function tool_body_lines(formatted, tool_kind)
   end
 
   if type(output_text) == "string" and output_text ~= "" then
-    local output_lang = tool_output_lang(tool_kind)
+    local output_lang = tool_output_lang(kind)
     local output_para = { "````" .. output_lang }
     vim.list_extend(output_para, vim.split(output_text, "\n", { plain = true }))
     table.insert(output_para, "````")
@@ -1312,7 +1313,8 @@ end
 ---@param record table
 ---@return string
 local function tool_header_line(record)
-  local title = (record.formatted and record.formatted.title) or record.title or record.toolKind or "tool"
+  local kind = tool_kind.classify(record.toolKind)
+  local title = (record.formatted and record.formatted.title) or record.title or tool_kind.label(record.toolKind) or "tool"
   local pill_labels = {}
 
   if record.formatted and type(record.formatted.stats) == "table" then
@@ -1320,7 +1322,7 @@ local function tool_header_line(record)
   end
 
   local glyph_parts = {}
-  for _, piece in ipairs({ tool_status_badge(record.state), tool_icon(record.toolKind) }) do
+  for _, piece in ipairs({ tool_status_badge(record.state), tool_icon(kind) }) do
     if type(piece) == "string" and piece ~= "" then
       table.insert(glyph_parts, piece)
     end
@@ -1356,8 +1358,9 @@ local function render_tool_call(state, record)
 
   state.active_text_block = nil
 
+  local kind = tool_kind.classify(record.toolKind)
   local header = tool_header_line(record)
-  local body = tool_body_lines(record.formatted, record.toolKind)
+  local body = tool_body_lines(record.formatted, kind)
   local lines = vim.list_extend({ header }, body)
   local block, first_row = insert_block_into_section(state, state.current_turn, "tools", record.id, "tool_call", lines)
 
@@ -1377,7 +1380,7 @@ local function render_tool_call(state, record)
   -- `tool_icon(update.toolKind)` → nil → fallback to
   -- `icons.tool_kind.default` (the cog), so every tool reverted to
   -- the cog glyph the moment it finished executing.
-  block.tool_kind = record.toolKind
+  block.tool_kind = kind
   -- Stash the raw wire stats so `recompute_section_aggregate` can
   -- sum diffs / durations across every tool_call in this section.
   -- Wholesale replacement on update mirrors how the daemon ships
@@ -1456,6 +1459,11 @@ local function render_tool_call_update_now(state, block, update)
   end
 
   local merged = vim.tbl_extend("keep", update, { toolKind = block.tool_kind })
+  local merged_kind = tool_kind.classify(merged.toolKind)
+  if merged_kind ~= nil then
+    merged.toolKind = merged_kind
+    block.tool_kind = merged_kind
+  end
 
   -- Refresh per-block stats from the merged payload so the section
   -- aggregate stays accurate as durations / diffs grow during the
@@ -1955,8 +1963,8 @@ local function render_permission_request(state, record)
 
   require("hyprpilot.chat.permission-row").enqueue(state.instance_id, {
     request_id = record.requestId,
-    tool = record.tool or record.toolKind or "tool",
-    tool_kind = record.toolKind,
+    tool = record.tool or tool_kind.label(record.toolKind) or "tool",
+    tool_kind = tool_kind.classify(record.toolKind),
     options = type(record.options) == "table" and record.options or {},
     formatted = record.formatted,
     -- Daemon-computed pre-select. Honoured by `permission-row`'s
@@ -2178,7 +2186,7 @@ function M.handle_permission_request(event)
     render_permission_request(state, {
       requestId = event.requestId,
       tool = event.tool,
-      toolKind = event.kind,
+      toolKind = event.toolKind or event.kind,
       args = event.args,
       -- The agent's structured input (path / old_string /
       -- new_string / content / edits[] for the edit family). Carried

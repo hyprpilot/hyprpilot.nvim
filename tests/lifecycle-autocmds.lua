@@ -135,6 +135,21 @@ T["dispatch fires HyprpilotPermissionRequested with tool + options"] = function(
   MiniTest.expect.equality(data.options[1].optionId, "allow-once")
 end
 
+T["dispatch normalizes structured permission toolKind"] = function()
+  local consume = capture_user_autocmd("HyprpilotPermissionRequested")
+  fire_event({
+    event = "permission_request",
+    instanceId = "inst-1",
+    requestId = "req-structured",
+    tool = "Edit",
+    toolKind = { type = "edit" },
+    options = {},
+  })
+  local data = consume()
+  MiniTest.expect.equality(data.tool_kind, "edit")
+  MiniTest.expect.equality(data.tool_kind_raw.type, "edit")
+end
+
 T["dispatch fires HyprpilotPermissionResolved with option_id"] = function()
   -- Prime the row queue so the resolve handler has a request to
   -- drop. permission_row's resolve checks state.permissions[id] in

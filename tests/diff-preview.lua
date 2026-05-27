@@ -98,6 +98,11 @@ T["is_previewable: tool_kind=edit + path field → true"] = function()
   MiniTest.expect.equality(diff_preview.is_previewable(entry), true)
 end
 
+T["is_previewable: structured edit tool_kind + path field → true"] = function()
+  local entry = mk_entry({ path = "/tmp/x.lua", old_string = "a", new_string = "b" }, { tool_kind = { type = "edit" } })
+  MiniTest.expect.equality(diff_preview.is_previewable(entry), true)
+end
+
 T["is_previewable: non-edit tool_kind → false even when raw_input has path"] = function()
   local entry = mk_entry({ path = "/tmp/x.lua", content = "c" }, { tool_kind = "execute" })
   MiniTest.expect.equality(diff_preview.is_previewable(entry), false)

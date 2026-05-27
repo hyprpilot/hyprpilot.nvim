@@ -71,6 +71,23 @@ T["enqueue: default_option_id pointing at unknown id → nil focused_idx (no cra
   pr.reset()
 end
 
+T["enqueue normalizes structured tool_kind"] = function()
+  local pr = require("hyprpilot.chat.permission-row")
+  pr.reset()
+
+  pr.enqueue("inst-1", {
+    request_id = "req-structured-kind",
+    tool = "Edit",
+    tool_kind = { type = "edit" },
+    options = OPTIONS,
+    formatted = { title = "edit", stats = {}, fields = {} },
+  })
+
+  MiniTest.expect.equality(pr._queue[1].tool_kind, "edit")
+
+  pr.reset()
+end
+
 T["render: long option labels are truncated in the button row"] = function()
   local pr = require("hyprpilot.chat.permission-row")
   pr.reset()
