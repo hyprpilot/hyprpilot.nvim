@@ -79,6 +79,7 @@ local rescan_code_block_folds
 ---@field usage? { used?: integer, size?: integer, cost?: table }  -- latest usage_update reading
 ---@field stop_reason? string                   -- turn_ended.stopReason, rendered as a status chip on the pilot header
 ---@field stop_error? string                    -- turn_ended.error (mutually exclusive with stop_reason)
+---@field end_marker_emitted? boolean           -- true after the prose-tail turn outcome marker is written
 
 ---@class hyprpilot.render.State
 ---@field bufnr integer
@@ -917,6 +918,80 @@ local function insert_at_prose_anchor(state, turn_id, lines)
   local anchor_row = vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, layout.prose_anchor_mark, {})[1]
   vim.api.nvim_buf_set_lines(state.bufnr, anchor_row, anchor_row, false, lines)
   return anchor_row
+end
+
+---@param state hyprpilot.render.State
+---@param turn_id string
+---@param event table
+local function apply_turn_outcome(state, turn_id, event)
+  local layout = state.turn_layouts[turn_id]
+  if layout == nil then
+    return
+  end
+
+  local ended_at = event.endedAt or event.ended_at or event.endedAtMs or event.ended_at_ms or (os.time() * 1000)
+  layout.ended_at_ms = ended_at
+  if event.error ~= nil then
+    layout.stop_error = tostring(event.error)
+    layout.stop_reason = nil
+  elseif event.stopReason ~= nil then
+    layout.stop_reason = tostring(event.stopReason)
+    layout.stop_error = nil
+  end
+  repaint_pilot_header(state, layout)
+
+  if not layout.end_marker_emitted and layout.response_wrap_emitted then
+    chat_buffer.with_buffer(state.bufnr, function()
+      insert_at_prose_anchor(state, turn_id, { "", "---", "" })
+    end)
+  end
+
+  local thoughts_section = layout.sections and layout.sections.thoughts or nil
+  if thoughts_section ~= nil and layout.thoughts_wrap_emitted and not layout.thoughts_wrap_closed then
+    layout.thoughts_wrap_closed = true
+    chat_buffer.with_buffer(state.bufnr, function()
+      local tail_row = section_end_row(state, thoughts_section)
+      if tail_row ~= nil then
+        vim.api.nvim_buf_set_lines(state.bufnr, tail_row, tail_row, false, { "", "---" })
+      end
+    end)
+  end
+
+  if layout.end_marker_emitted then
+    return
+  end
+  layout.end_marker_emitted = true
+
+  local hl, body
+  if event.error ~= nil then
+    hl = "HyprpilotTurnEndError"
+    body = tostring(event.error)
+  elseif event.stopReason ~= nil then
+    local reason = tostring(event.stopReason)
+    body = reason
+    if reason:lower():find("cancel", 1, true) ~= nil then
+      hl = "HyprpilotTurnEndCancelled"
+    else
+      hl = "HyprpilotTurnEndOk"
+    end
+  end
+
+  if body == nil then
+    return
+  end
+
+  local marker_lines = { "" }
+  for _, line in ipairs(vim.split(body, "\n", { plain = true })) do
+    table.insert(marker_lines, "> " .. line)
+  end
+  table.insert(marker_lines, "")
+  local first_row
+  chat_buffer.with_buffer(state.bufnr, function()
+    first_row = insert_at_prose_anchor(state, turn_id, marker_lines)
+  end)
+  for i = 1, #marker_lines - 2 do
+    apply_line_hl(state, first_row + i, hl)
+  end
 end
 
 ---Append `text` to the buffer's current `agent_text` block. Prose
@@ -2147,6 +2222,39 @@ function M.hydrate(state, snapshot)
   rescan_code_block_folds(state)
 end
 
+---@param state hyprpilot.render.State
+---@param turns table[]?
+function M.hydrate_turns(state, turns)
+  if type(turns) ~= "table" then
+    return
+  end
+
+  for _, turn in ipairs(turns) do
+    local turn_id = turn.id or turn.turnId
+    if turn_id ~= nil then
+      turn_id = tostring(turn_id)
+      local layout = state.turn_layouts[turn_id]
+      if layout ~= nil then
+        if turn.startedAtMs ~= nil then
+          layout.started_at_ms = turn.startedAtMs
+        end
+        if type(turn.usage) == "table" then
+          layout.usage = {
+            used = turn.usage.used,
+            size = turn.usage.size,
+            cost = turn.usage.cost,
+          }
+        end
+        if turn.endedAtMs ~= nil or turn.endedAt ~= nil or turn.stopReason ~= nil or turn.error ~= nil then
+          apply_turn_outcome(state, turn_id, turn)
+        else
+          repaint_pilot_header(state, layout)
+        end
+      end
+    end
+  end
+end
+
 ---Live `transcript` event handler.
 ---@param event table
 function M.handle_transcript(event)
@@ -2463,101 +2571,9 @@ function M.handle_turn_ended(event)
     end
   end
 
-  -- Stamp the turn's end timestamp + stop reason on the layout, then
-  -- repaint the pilot header so the elapsed pill freezes at its
-  -- final value. The stop reason itself is NOT emitted as a header
-  -- pill anymore — it lives as a one-line marker at the prose tail
-  -- (see the `_emit_turn_end_marker` step below) where the captain's
-  -- eyes already are after reading the response.
   local layout = state.turn_layouts[effective_turn_id]
   if layout ~= nil then
-    local ended_at = event.endedAt or event.ended_at or (os.time() * 1000)
-    layout.ended_at_ms = ended_at
-    if event.error ~= nil then
-      layout.stop_error = tostring(event.error)
-    elseif event.stopReason ~= nil then
-      layout.stop_reason = tostring(event.stopReason)
-    end
-    repaint_pilot_header(state, layout)
-
-    -- Close the response `---` wrapper opened by `append_agent_text`
-    -- (only when opened — empty pilot turns without prose skip
-    -- this). Lands at the prose anchor, which by now sits AFTER the
-    -- last prose line. Leading blank keeps the closing rule one
-    -- space below the prose tail — captain's bubble-chrome spec
-    -- (every `---` carries one space top + one space bottom).
-    -- Idempotent via the same `end_marker_emitted` flag so a
-    -- replayed event doesn't stack duplicates.
-    if not layout.end_marker_emitted and layout.response_wrap_emitted then
-      chat_buffer.with_buffer(state.bufnr, function()
-        insert_at_prose_anchor(state, effective_turn_id, { "", "---", "" })
-      end)
-    end
-
-    -- Close the thoughts `---` wrapper opened by `render_thought`
-    -- (first thought in this turn prepended `["---", ""]` to its
-    -- block body). Lands at the thoughts section's tail anchor —
-    -- which sits at the trailing blank below the section, so the
-    -- inserted `["", "---"]` produces `<thought>` / blank / `---`
-    -- / trailing-blank with one space above + below the rule.
-    -- Idempotent: gated by `thoughts_wrap_closed` so a replayed
-    -- `turn_ended` event doesn't stack duplicate rules.
-    local thoughts_section = layout.sections and layout.sections.thoughts or nil
-    if thoughts_section ~= nil and layout.thoughts_wrap_emitted and not layout.thoughts_wrap_closed then
-      layout.thoughts_wrap_closed = true
-      chat_buffer.with_buffer(state.bufnr, function()
-        local tail_row = section_end_row(state, thoughts_section)
-        if tail_row ~= nil then
-          vim.api.nvim_buf_set_lines(state.bufnr, tail_row, tail_row, false, { "", "---" })
-        end
-      end)
-    end
-
-    -- Drop a one-line outcome marker at the prose tail. Verbatim
-    -- daemon text — no `"ok " .. reason` humanisation — because
-    -- the daemon is the source of truth for the wording and
-    -- forcing a translation here means we drift from whatever the
-    -- desktop UI shows. Highlight by category (ok / cancelled /
-    -- error) via the existing `HyprpilotTurnEnd*` groups.
-    -- Idempotent per turn via `layout.end_marker_emitted` so a
-    -- replayed event doesn't stack duplicate markers.
-    if not layout.end_marker_emitted then
-      layout.end_marker_emitted = true
-
-      local hl, body
-      if event.error ~= nil then
-        hl = "HyprpilotTurnEndError"
-        body = tostring(event.error)
-      elseif event.stopReason ~= nil then
-        local reason = tostring(event.stopReason)
-        body = reason
-        if reason:lower():find("cancel", 1, true) ~= nil then
-          hl = "HyprpilotTurnEndCancelled"
-        else
-          hl = "HyprpilotTurnEndOk"
-        end
-      end
-
-      if body ~= nil then
-        -- Markdown blockquote prefix for the visual band; same shape
-        -- as the legacy error block so existing styling carries
-        -- over. Multi-line bodies (e.g. errors with stack traces)
-        -- get one quote prefix per line.
-        local marker_lines = { "" }
-        for _, line in ipairs(vim.split(body, "\n", { plain = true })) do
-          table.insert(marker_lines, "> " .. line)
-        end
-        table.insert(marker_lines, "")
-        local first_row
-        chat_buffer.with_buffer(state.bufnr, function()
-          first_row = insert_at_prose_anchor(state, effective_turn_id, marker_lines)
-        end)
-        -- Highlight the body rows (skip the leading + trailing blanks).
-        for i = 1, #marker_lines - 2 do
-          apply_line_hl(state, first_row + i, hl)
-        end
-      end
-    end
+    apply_turn_outcome(state, effective_turn_id, event)
   end
 
   -- Freeze section timing on the same turn boundary as the pilot
