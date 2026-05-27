@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.13.0...hyprpilot.nvim-v1.13.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **edgy:** seed initial auxiliary heights ([#148](https://github.com/hyprpilot/hyprpilot.nvim/issues/148)) ([0c59df1](https://github.com/hyprpilot/hyprpilot.nvim/commit/0c59df1e554cb9fb6c24e29e4654beffd84449ae))
+
 ## [1.13.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.12.5...hyprpilot.nvim-v1.13.0) (2026-05-27)
 
 
