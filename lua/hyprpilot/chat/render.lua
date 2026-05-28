@@ -30,6 +30,9 @@ local M = {}
 ---@type fun(state: hyprpilot.render.State)
 local rescan_code_block_folds
 
+---@type fun(state: hyprpilot.render.State, turn_id: string?, item: table)
+local render_change_advertisement
+
 ---@alias hyprpilot.render.BlockKind
 ---| "turn_header"
 ---| "agent_text"
@@ -81,6 +84,7 @@ local rescan_code_block_folds
 ---@field stop_reason? string                   -- turn_ended.stopReason, rendered as a status chip on the pilot header
 ---@field stop_error? string                    -- turn_ended.error (mutually exclusive with stop_reason)
 ---@field end_marker_emitted? boolean           -- true after the prose-tail turn outcome marker is written
+---@field adapter_last? table<string, string>   -- last adapter label per kind, for same-value dedup
 
 ---@class hyprpilot.render.State
 ---@field bufnr integer
@@ -2240,6 +2244,8 @@ function M.render_item(state, turn_id, item)
     render_plan(state, item)
   elseif kind == "compaction" then
     render_compaction(state, item)
+  elseif kind == "change_advertisement" then
+    render_change_advertisement(state, effective_turn_id, item)
   elseif kind == "permission_request" then
     render_permission_request(state, item)
   elseif kind == "agent_attachment" then
@@ -2451,26 +2457,6 @@ function M.handle_turn_started(event)
   end
 end
 
----Resolve the display name for a wire id via a `{ id, name }` list
----(`available_modes` / `available_models` / `options`). Falls back
----to the id when the list doesn't carry a name for it — better the
----wire id than nothing.
----@param wire_id string
----@param list table[]?
----@return string
-local function resolve_display_name(wire_id, list)
-  if type(list) == "table" then
-    for _, item in ipairs(list) do
-      if item.id == wire_id or item.value == wire_id then
-        if type(item.name) == "string" and item.name ~= "" then
-          return item.name
-        end
-      end
-    end
-  end
-  return wire_id
-end
-
 ---Mint a stable block id for an adapter note. One id per (turn,
 ---kind) pair so re-firing the same notification kind dedups against
 ---the existing block instead of stacking duplicates.
@@ -2481,17 +2467,18 @@ local function adapter_block_id(turn_id, kind)
   return "adapter:" .. turn_id .. ":" .. kind
 end
 
----Append (or dedup-update) an adapter note row in the current
----turn's `### adapter` section. `kind` is the wire-level category
----("mode" / "effort" / "model" / "system_prompt"). `label` is the
----fully-formatted display string. Dedups against the last value
----recorded for `kind` on this turn — repeating the same value is a
----silent no-op to avoid spam from a chatty daemon.
+---Append (or dedup-update) an adapter note row in a turn's `###
+---adapter` section. `kind` is the wire-level category ("mode" /
+---"effort" / "model" / "system_prompt"). `label` is the fully-formatted
+---display string. Dedups against the last value recorded for `kind`
+---on this turn — repeating the same value is a silent no-op to avoid
+---spam from a chatty daemon.
 ---@param state hyprpilot.render.State
 ---@param kind string
 ---@param label string
-local function add_adapter_note(state, kind, label)
-  local turn_id = state.current_turn
+---@param turn_id? string
+local function add_adapter_note(state, kind, label, turn_id)
+  turn_id = turn_id or state.current_turn
   if turn_id == nil then
     return
   end
@@ -2510,46 +2497,55 @@ local function add_adapter_note(state, kind, label)
   insert_block_into_section(state, turn_id, "adapter", adapter_block_id(turn_id, kind) .. ":" .. tostring(vim.uv.hrtime()), "adapter", { label })
 end
 
----Live `current_mode_update` event. Drops a `mode · <name>` row in
----the adapter section. Resolves the display name from the cached
----`available_modes` list when available; falls back to the wire id
----otherwise.
----@param event table
-function M.handle_current_mode_update(event)
-  local state = M._states[event.instanceId]
-  if state == nil then
-    return
+---@param value any
+---@return string?
+local function display_value(value)
+  if type(value) == "string" and value ~= "" then
+    return value
   end
-
-  local available = (require("hyprpilot.chat.winbar")._meta[event.instanceId] or {}).available_modes
-  local label = "mode · " .. resolve_display_name(event.currentModeId, available)
-  add_adapter_note(state, "mode", label)
+  return nil
 end
 
----Live `config_options_update` event — one row per category whose
----`currentValue` actually changed (dedup is per-kind so reruns with
----the same selection collapse). `effort` / future vendor toggles
----flow through here.
----@param event table
-function M.handle_config_options_update(event)
-  local state = M._states[event.instanceId]
-  if state == nil then
+---@param item table
+---@return string?
+local function change_advertisement_kind(item)
+  if item.type == "mode" or item.type == "model" then
+    return item.type
+  end
+
+  if item.type == "config_option" then
+    return (display_value(item.categoryId) or "config"):lower()
+  end
+
+  if type(item.type) == "string" and item.type ~= "" then
+    log.warn("render.change_advertisement: unknown type=%s", item.type)
+    return item.type:lower()
+  end
+
+  return nil
+end
+
+---Render a daemon-authored durable mode/model/config change banner.
+---@param state hyprpilot.render.State
+---@param turn_id? string
+---@param item table
+render_change_advertisement = function(state, turn_id, item)
+  if turn_id == nil then
+    log.debug("render.change_advertisement: no turn_id for instance=%s — skipping", state.instance_id)
     return
   end
 
-  local categories = event.categories
-  if type(categories) ~= "table" then
+  local kind = change_advertisement_kind(item)
+  local next_value = display_value(item.name) or display_value(item.value)
+
+  if kind == nil or next_value == nil then
+    log.warn("render.change_advertisement: malformed item for instance=%s: %s", state.instance_id, vim.inspect(item))
     return
   end
 
-  for _, category in ipairs(categories) do
-    if type(category) == "table" and type(category.id) == "string" and type(category.currentValue) == "string" then
-      local value_label = resolve_display_name(category.currentValue, category.options)
-      local category_label = (type(category.name) == "string" and category.name ~= "") and category.name or category.id
-      local label = string.format("%s · %s", category_label:lower(), value_label)
-      add_adapter_note(state, "config:" .. category.id, label)
-    end
-  end
+  local prev_value = display_value(item.prevName) or display_value(item.prevValue)
+  local label = prev_value ~= nil and string.format("%s · %s → %s", kind, prev_value, next_value) or string.format("%s · %s", kind, next_value)
+  add_adapter_note(state, "change:" .. kind, label, turn_id)
 end
 
 ---Live `system_prompt_injected` event. Drops a `system prompt ·

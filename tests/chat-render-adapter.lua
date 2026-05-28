@@ -1,16 +1,15 @@
 --- Behavioural tests for the chat's `### adapter` section.
---- Drives `render.handle_current_mode_update` / `_config_options_update`
---- / `_system_prompt_injected` against a live pilot turn and asserts
---- the section + rows appear in the buffer with the expected
---- ordering (adapter ABOVE tasks / thoughts / tools).
+--- Durable `change_advertisement` transcript items render mode / model
+--- / config chapter-break rows; `system_prompt_injected` remains the
+--- side-event-only adapter note.
 
 local helpers = require("tests.helpers")
 
 local T = MiniTest.new_set()
 
----Mint a state with a pilot turn already hydrated so adapter notes
----have a layout to attach to.
----@return integer bufnr, string instance_id
+---Mint a state with an optional hydrated transcript.
+---@param items? table[]
+---@return integer bufnr, string instance_id, table state
 local function fresh_turn(items)
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
@@ -21,20 +20,90 @@ local function fresh_turn(items)
   return bufnr, id, state
 end
 
-T["adapter: current_mode_update appends a `mode · <name>` row"] = function()
+local function lines_for(id)
+  local buffer = require("hyprpilot.chat.buffer")
+  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
+  return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+end
+
+local function count_line(lines, needle)
+  local count = 0
+  for _, line in ipairs(lines) do
+    if line == needle then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+T["adapter: live change_advertisement appends a mode row"] = function()
+  local _, id, _ = fresh_turn()
+  local render = require("hyprpilot.chat.render")
+
+  render.handle_transcript({
+    instanceId = id,
+    turnId = "t1",
+    item = {
+      kind = "change_advertisement",
+      type = "mode",
+      value = "build",
+      name = "Build",
+      prevValue = "plan",
+      prevName = "Plan",
+    },
+  })
+
+  local lines = lines_for(id)
+  MiniTest.expect.equality(helpers.has_line(lines, "### adapter [1 change]"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "mode · Plan → Build"), true)
+
+  helpers.cleanup_instance(id)
+end
+
+T["adapter: hydrate replays mode model and config advertisements"] = function()
   local _, id, _ = fresh_turn({
     { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
-    { turnId = "t1", item = { kind = "agent_text", text = "ok" } },
+    {
+      turnId = "t1",
+      item = {
+        kind = "change_advertisement",
+        type = "mode",
+        value = "build",
+        name = "Build",
+        prevValue = "plan",
+        prevName = "Plan",
+      },
+    },
+    {
+      turnId = "t1",
+      item = {
+        kind = "change_advertisement",
+        type = "model",
+        value = "gpt-5.5",
+        name = "GPT-5.5",
+        prevValue = "gpt-5",
+        prevName = "GPT-5",
+      },
+    },
+    {
+      turnId = "t1",
+      item = {
+        kind = "change_advertisement",
+        type = "config_option",
+        categoryId = "effort",
+        value = "high",
+        name = "High",
+        prevValue = "medium",
+        prevName = "Medium",
+      },
+    },
   })
-  local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
 
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
-
-  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  MiniTest.expect.equality(helpers.has_line(lines, "### adapter [1 change]"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "mode · plan"), true)
+  local lines = lines_for(id)
+  MiniTest.expect.equality(helpers.has_line(lines, "### adapter [3 changes]"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "mode · Plan → Build"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "model · GPT-5 → GPT-5.5"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "effort · Medium → High"), true)
 
   helpers.cleanup_instance(id)
 end
@@ -42,16 +111,19 @@ end
 T["adapter: section sits ABOVE tasks / thoughts / tools (priority 0)"] = function()
   local _, id, _ = fresh_turn({
     { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
+    {
+      turnId = "t1",
+      item = {
+        kind = "change_advertisement",
+        type = "mode",
+        value = "plan",
+      },
+    },
     { turnId = "t1", item = { kind = "agent_thought", text = "thinking..." } },
     { turnId = "t1", item = { kind = "agent_text", text = "done" } },
   })
-  local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
 
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
-
-  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local lines = lines_for(id)
 
   local adapter_idx, thoughts_idx
   for i, l in ipairs(lines) do
@@ -68,76 +140,57 @@ T["adapter: section sits ABOVE tasks / thoughts / tools (priority 0)"] = functio
   helpers.cleanup_instance(id)
 end
 
-T["adapter: same value re-firing is a silent no-op (dedup per kind)"] = function()
-  local _, id, _ = fresh_turn({
-    { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
-    { turnId = "t1", item = { kind = "agent_text", text = "ok" } },
-  })
+T["adapter: same advertisement re-firing is a silent no-op"] = function()
+  local _, id, _ = fresh_turn()
   local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
 
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
-
-  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  local mode_rows = 0
-  for _, l in ipairs(lines) do
-    if l == "mode · plan" then
-      mode_rows = mode_rows + 1
-    end
+  for _ = 1, 3 do
+    render.handle_transcript({
+      instanceId = id,
+      turnId = "t1",
+      item = {
+        kind = "change_advertisement",
+        type = "mode",
+        value = "plan",
+      },
+    })
   end
-  MiniTest.expect.equality(mode_rows, 1)
+
+  MiniTest.expect.equality(count_line(lines_for(id), "mode · plan"), 1)
 
   helpers.cleanup_instance(id)
 end
 
 T["adapter: different values for same kind stack as history"] = function()
-  local _, id, _ = fresh_turn({
-    { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
-    { turnId = "t1", item = { kind = "agent_text", text = "ok" } },
-  })
+  local _, id, _ = fresh_turn()
   local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
 
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "default" })
+  render.handle_transcript({
+    instanceId = id,
+    turnId = "t1",
+    item = { kind = "change_advertisement", type = "mode", value = "plan" },
+  })
+  render.handle_transcript({
+    instanceId = id,
+    turnId = "t1",
+    item = { kind = "change_advertisement", type = "mode", value = "build" },
+  })
 
-  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local lines = lines_for(id)
   MiniTest.expect.equality(helpers.has_line(lines, "mode · plan"), true)
-  MiniTest.expect.equality(helpers.has_line(lines, "mode · default"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "mode · build"), true)
 
   helpers.cleanup_instance(id)
 end
 
-T["adapter: config_options_update emits one row per category"] = function()
+T["adapter: nil-turn advertisement does not attach to stale current turn"] = function()
   local _, id, _ = fresh_turn({
     { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
     { turnId = "t1", item = { kind = "agent_text", text = "ok" } },
-  })
-  local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
-
-  render.handle_config_options_update({
-    instanceId = id,
-    categories = {
-      {
-        id = "effort",
-        name = "Effort",
-        currentValue = "high",
-        options = {
-          { value = "low", name = "Low" },
-          { value = "high", name = "High" },
-        },
-      },
-    },
+    { item = { kind = "change_advertisement", type = "mode", value = "build" } },
   })
 
-  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  MiniTest.expect.equality(helpers.has_line(lines, "effort · High"), true)
+  MiniTest.expect.equality(helpers.has_line(lines_for(id), "mode · build"), false)
 
   helpers.cleanup_instance(id)
 end
@@ -148,33 +201,28 @@ T["adapter: system_prompt_injected drops a basename-joined row"] = function()
     { turnId = "t1", item = { kind = "agent_text", text = "ok" } },
   })
   local render = require("hyprpilot.chat.render")
-  local buffer = require("hyprpilot.chat.buffer")
 
   render.handle_system_prompt_injected({
     instanceId = id,
     files = { "/repo/CLAUDE.md", "/repo/.ai/notes.md" },
   })
 
-  local bufnr = buffer.find_by_name("hyprpilot://" .. id)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  MiniTest.expect.equality(helpers.has_line(lines, "system prompt · CLAUDE.md, notes.md"), true)
+  MiniTest.expect.equality(helpers.has_line(lines_for(id), "system prompt · CLAUDE.md, notes.md"), true)
 
   helpers.cleanup_instance(id)
 end
 
-T["adapter: handler with no active turn is a silent no-op"] = function()
+T["adapter: system prompt handler with no active turn is a silent no-op"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
   local bufnr = buffer.create(id)
   render.state(id, bufnr)
 
-  -- No turn hydrated → state.current_turn is nil. Handler should
-  -- bail without throwing or writing to the buffer.
-  render.handle_current_mode_update({ instanceId = id, currentModeId = "plan" })
+  render.handle_system_prompt_injected({ instanceId = id, files = { "/repo/CLAUDE.md" } })
 
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  MiniTest.expect.equality(helpers.has_line(lines, "mode · plan"), false)
+  MiniTest.expect.equality(helpers.has_line(lines, "system prompt · CLAUDE.md"), false)
 
   helpers.cleanup_instance(id)
 end

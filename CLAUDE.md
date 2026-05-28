@@ -568,6 +568,20 @@ job and pushes `hyprpilot-nvim-mcp` to PyPI on every release.
     — captains needing the clipboard flow write a 3-line wrapper
     (`img-clip.save_image(temp_path) → attach_file(temp_path)`).
 
+- **Durable change advertisements render from transcript**
+  - Chose: mode/model/config-option chapter-break rows render from
+    daemon transcript items with `kind = "change_advertisement"`.
+    Side events (`current_mode_update`, `config_options_update`) update
+    header/winbar state only and never append chat rows.
+  - Why: the daemon persists those advertisements in
+    `instance/snapshot/chat` and also broadcasts them as ordinary
+    transcript events with `seq`. Rendering side-event overlays too
+    would double-print the same transition live, while snapshot-only
+    clients would still miss historical banners.
+  - Rejected: keeping the old side-event adapter-note path as a
+    compatibility shim. The daemon contract is now durable transcript
+    history; stale frontend-only rows would drift from replay.
+
 - **`chat.window.M.show` re-entry guard (`_show_in_progress`)**
   - Chose: top-level `M.show` is a thin wrapper that bails when
     `_show_in_progress == true`, sets the flag, pcalls

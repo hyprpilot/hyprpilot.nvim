@@ -240,10 +240,8 @@ local function dispatch(raw)
       end
     elseif event.event == "current_mode_update" then
       winbar.update_mode(event.instanceId, event.currentModeId)
-      render.handle_current_mode_update(event)
     elseif event.event == "config_options_update" then
       winbar.update_config_options(event.instanceId, event.categories)
-      render.handle_config_options_update(event)
     elseif event.event == "system_prompt_injected" then
       render.handle_system_prompt_injected(event)
     elseif event.event == "usage_update" then
