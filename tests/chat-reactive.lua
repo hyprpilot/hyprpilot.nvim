@@ -301,10 +301,58 @@ T["events.dispatch unwraps the daemon's { name, payload, instanceId } envelope"]
   MiniTest.expect.equality(winbar._meta[id].current_mode_id, "plan")
   MiniTest.expect.equality(winbar._meta[id].mcps_count, 3)
 
+  local buffer = require("hyprpilot.chat.buffer")
+  local render = require("hyprpilot.chat.render")
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "user_prompt", text = "go" } },
+      { turnId = "t1", item = { kind = "agent_text", text = "ok" } },
+    },
+  })
+
+  captured({
+    name = "acp:current-mode-update",
+    instanceId = id,
+    payload = {
+      event = "current_mode_update",
+      instanceId = id,
+      currentModeId = "build",
+    },
+  })
+  captured({
+    name = "acp:config-options-update",
+    instanceId = id,
+    payload = {
+      event = "config_options_update",
+      instanceId = id,
+      categories = {
+        {
+          id = "effort",
+          name = "Effort",
+          currentValue = "high",
+          options = {
+            { value = "medium", name = "Medium" },
+            { value = "high", name = "High" },
+          },
+        },
+      },
+    },
+  })
+
+  MiniTest.expect.equality(winbar._meta[id].current_mode_id, "build")
+  MiniTest.expect.equality(winbar._meta[id].config_options[1].currentValue, "high")
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line(lines, "mode · build"), false)
+  MiniTest.expect.equality(helpers.has_line(lines, "effort · High"), false)
+
   -- And the malformed-payload guard rails still hold for things
   -- missing the discriminator entirely.
   captured({ no = "envelope at all" })
 
+  helpers.cleanup_instance(id)
   winbar.forget(id)
 end
 
