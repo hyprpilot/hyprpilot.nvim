@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.14.0...hyprpilot.nvim-v1.14.1) (2026-05-29)
+
+
+### Bug Fixes
+
+* **diff-preview:** surface preview hints ([#153](https://github.com/hyprpilot/hyprpilot.nvim/issues/153)) ([c0d6395](https://github.com/hyprpilot/hyprpilot.nvim/commit/c0d6395372c0e2330abec0e0fe7ab8003477a041))
+
 ## [1.14.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.13.1...hyprpilot.nvim-v1.14.0) (2026-05-29)
 
 
