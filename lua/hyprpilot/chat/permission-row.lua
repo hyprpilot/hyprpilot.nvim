@@ -37,6 +37,7 @@ local MAX_BUTTON_LABEL_CHARS = 32
 ---@field allow_option_id? string -- daemon's pick for the allow-shaped option; consumed by the accept keymap (no plugin-side pattern matching)
 ---@field reject_option_id? string -- daemon's pick for the reject-shaped option; consumed by the reject keymap
 ---@field raw_input? table  -- agent's structured tool input (path / old_string / new_string / content / edits[] for the edit family). Diff preview reads from here.
+---@field content? table[] -- live ACP content blocks; edit permissions may carry `{ type = "diff", oldText, newText }` here.
 
 ---@type hyprpilot.chat.permission-row.Entry[]
 M._queue = {}
@@ -207,21 +208,18 @@ local function count_for(instance_id)
 end
 
 ---True when the head entry is edit-shaped and a diff preview can
----be opened against its `raw_input.path` / `raw_input.file_path`.
----Mirrors `diff_preview.is_previewable` without the require cycle —
----compose() needs the answer before keymaps fire, and we don't
----want the heavier module loaded just to build a button label.
+---be opened. Delegates to `diff-preview` so the rendered hint and
+---the keymap gate never diverge.
 ---@param entry hyprpilot.chat.permission-row.Entry
 ---@return boolean
 local function diff_previewable(entry)
-  if entry.tool_kind ~= "edit" or type(entry.raw_input) ~= "table" then
-    return false
-  end
-  local raw = entry.raw_input
-  if raw.notebook_path ~= nil then
-    return false
-  end
-  return type(raw.path) == "string" or type(raw.file_path) == "string"
+  return require("hyprpilot.ui.diff-preview").is_previewable(entry)
+end
+
+---@return string?
+local function diff_key_hint()
+  local keymaps = ((config.options.permission_row or {}).keymaps or {})
+  return require("hyprpilot.ui.keymaps").first_display_key(keymaps.show_diff)
 end
 
 ---Strip embedded newlines from a label so a multi-line agent-
@@ -252,9 +250,9 @@ end
 
 ---Compose the button line for the head entry, marking the focused
 ---option with `[> Label <]` and others with `[ Label ]`. Appends a
----`[ Diff ]` button at the tail when the entry is edit-previewable
----so the captain sees the affordance instead of having to remember
----the `show_diff` keymap.
+---`[ Diff: <key> ]` button at the tail when the entry is
+---edit-previewable so the captain sees the affordance and the
+---`show_diff` keymap.
 ---@param entry hyprpilot.chat.permission-row.Entry
 ---@return string
 local function button_line(entry)
@@ -268,7 +266,10 @@ local function button_line(entry)
     end
   end
   if diff_previewable(entry) then
-    table.insert(parts, "[ Diff ]")
+    local key = diff_key_hint()
+    if key ~= nil then
+      table.insert(parts, "[ Diff: " .. key .. " ]")
+    end
   end
   return "  " .. table.concat(parts, "  ")
 end
@@ -661,7 +662,7 @@ end
 ---visible and pre-focuses the daemon-supplied (or Allow-shaped)
 ---option.
 ---@param instance_id string
----@param record { request_id: string, tool: string, tool_kind?: string|table, options: table[], formatted?: table, default_option_id?: string, allow_option_id?: string, reject_option_id?: string, raw_input?: table }
+---@param record { request_id: string, tool: string, tool_kind?: string|table, options: table[], formatted?: table, default_option_id?: string, allow_option_id?: string, reject_option_id?: string, raw_input?: table, content?: table[] }
 function M.enqueue(instance_id, record)
   for _, entry in ipairs(M._queue) do
     if entry.request_id == record.request_id then
@@ -681,6 +682,7 @@ function M.enqueue(instance_id, record)
     allow_option_id = record.allow_option_id,
     reject_option_id = record.reject_option_id,
     raw_input = record.raw_input,
+    content = record.content,
   })
 
   -- Auto-pop the row only when the new request belongs to the active
