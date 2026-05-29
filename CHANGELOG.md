@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.14.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.13.1...hyprpilot.nvim-v1.14.0) (2026-05-29)
+
+
+### Features
+
+* **chat:** render change advertisements ([#150](https://github.com/hyprpilot/hyprpilot.nvim/issues/150)) ([a12e397](https://github.com/hyprpilot/hyprpilot.nvim/commit/a12e397dd88524d7797dbb91d0e947b7a45f613b))
+
+
+### Bug Fixes
+
+* **chat:** render goal transcript records ([#152](https://github.com/hyprpilot/hyprpilot.nvim/issues/152)) ([0933ac4](https://github.com/hyprpilot/hyprpilot.nvim/commit/0933ac4bbd7752e7e836b7c29c54bf4afafed1a1))
+
 ## [1.13.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.13.0...hyprpilot.nvim-v1.13.1) (2026-05-27)
 
 
