@@ -49,6 +49,59 @@ T["turn_started → thinking, transcript agent_text → streaming, turn_ended �
   MiniTest.expect.equality(seen[3], "idle")
 end
 
+T["goal transcript event updates activity to streaming"] = function()
+  local client = require("hyprpilot.client")
+  local original_on_notification = client.on_notification
+  local original_request = client.request
+  local captured
+
+  client.on_notification = function(method, handler)
+    if method == "events/changed" then
+      captured = handler
+    end
+
+    return function() end
+  end
+  client.request = function(_, _, _, callback)
+    if callback ~= nil then
+      callback(nil, { subscribed = true })
+    end
+  end
+
+  local events = require("hyprpilot.chat.events")
+  events._reset()
+  events.ensure_subscribed()
+
+  client.on_notification = original_on_notification
+  client.request = original_request
+
+  MiniTest.expect.equality(captured ~= nil, true)
+
+  local status = require("hyprpilot.status")
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  render.state(id, bufnr)
+  status._reset()
+  status.set_activity(id, { kind = "thinking" })
+
+  captured({
+    event = "transcript",
+    instanceId = id,
+    turnId = "t1",
+    item = { kind = "goal", status = "active", objective = "Ship the goal update" },
+  })
+
+  MiniTest.expect.equality(status.get(id).activity.kind, "streaming")
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "### goal"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "Ship the goal update"), true)
+
+  events._reset()
+  helpers.cleanup_instance(id)
+end
+
 T["activity transitions through tool / awaiting_permission via dispatch flow"] = function()
   local status = require("hyprpilot.status")
   status._reset()

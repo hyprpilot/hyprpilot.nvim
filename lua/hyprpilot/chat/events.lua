@@ -41,7 +41,7 @@ local function activity_for_transcript(instance_id, item)
 
   local kind = item.kind
 
-  if kind == "agent_text" or kind == "agent_thought" then
+  if kind == "agent_text" or kind == "agent_thought" or kind == "goal" then
     status.set_activity(instance_id, { kind = "streaming" })
   elseif kind == "tool_call" then
     status.set_activity(instance_id, { kind = "tool", tool_name = tool_label(item) })

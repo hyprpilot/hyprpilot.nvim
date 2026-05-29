@@ -11,10 +11,11 @@
 ---     for routing live updates / resolutions
 ---
 --- Block kinds: `turn_header`, `agent_text`, `agent_thought`,
---- `user_message`, `tool_call`, `plan`, `permission_request`,
---- `placeholder`. The folded kinds (tool_call / plan / agent_thought
---- / permission_request) carry a header line; the body lives between
---- the head + tail extmarks and gets exposed via `foldexpr`.
+--- `user_message`, `tool_call`, `plan`, `goal`, `compaction`,
+--- `permission_request`, `placeholder`. The folded kinds (tool_call /
+--- plan / goal / agent_thought / permission_request) carry a header
+--- line; the body lives between the head + tail extmarks and gets
+--- exposed via `foldexpr`.
 
 local chat_buffer = require("hyprpilot.chat.buffer")
 local config = require("hyprpilot.config")
@@ -40,6 +41,7 @@ local render_change_advertisement
 ---| "user_message"
 ---| "tool_call"
 ---| "plan"
+---| "goal"
 ---| "compaction"
 ---| "permission_request"
 ---| "placeholder"
@@ -56,6 +58,9 @@ local render_change_advertisement
 ---@field button_row? integer  -- row offset inside the block where the button line lives
 ---@field option_count? integer
 ---@field focused_idx? integer
+---@field checklist? { done?: integer, total?: integer }
+---@field goal_status? string
+---@field goal_orphan? boolean
 
 ---@class hyprpilot.render.Section
 ---@field head_mark integer                     -- extmark on the `### tasks` / `### thoughts` / `### tools` header row
@@ -77,7 +82,7 @@ local render_change_advertisement
 ---@field response_wrap_emitted? boolean        -- set true after the opening `---` prose wrapper lands on first agent_text (handle_turn_ended closes it)
 ---@field section_anchor_mark integer           -- new sections insert at this row; stays put when prose grows
 ---@field prose_anchor_mark integer             -- agent_text appends at this extmark; moves down as prose grows
----@field sections table<string, hyprpilot.render.Section>  -- "tasks" | "thoughts" | "tools" → section
+---@field sections table<string, hyprpilot.render.Section>  -- ordered inner sections (`goals`, `tasks`, `thoughts`, `tools`, ...)
 ---@field started_at_ms? integer                -- turn_started timestamp (daemon-side, ms since epoch)
 ---@field ended_at_ms? integer                  -- turn_ended timestamp (set on handle_turn_ended)
 ---@field usage? { used?: integer, size?: integer, cost?: table }  -- latest usage_update reading
@@ -91,6 +96,9 @@ local render_change_advertisement
 ---@field instance_id string
 ---@field current_turn? string
 ---@field active_text_block? hyprpilot.render.Block
+---@field active_thought_block? string
+---@field active_plan_block? string
+---@field active_goal_block? string
 ---@field last_seq? integer
 ---@field blocks table<string, hyprpilot.render.Block>
 ---@field tool_calls table<string, string>      -- daemon tool-call id → block id
@@ -344,10 +352,11 @@ end
 ---changes (mode / model / effort flips, system prompt injection)
 ---that frame everything else in the turn — captain sees "what is
 ---this turn running with" before reading what the agent did.
-local SECTION_ORDER = { adapter = 0, tasks = 1, thoughts = 2, compaction = 3, tools = 4, attachments = 5 }
+local SECTION_ORDER = { adapter = 0, goals = 1, tasks = 2, thoughts = 3, compaction = 4, tools = 5, attachments = 6 }
 
 local SECTION_HEADER = {
   adapter = "### adapter",
+  goals = "### goal",
   tasks = "### tasks",
   thoughts = "### thoughts",
   compaction = "### compaction",
@@ -555,11 +564,12 @@ local function append_turn_header(state, role, turn_id)
   state.active_text_block = nil
   -- Reset the per-turn streaming accumulators — a new role header
   -- (user OR agent) means the previous turn's blocks are closed.
-  -- Next `agent_thought` / `plan` events mint fresh accumulators
+  -- Next `agent_thought` / `plan` / `goal` events mint fresh accumulators
   -- against the new turn's layout instead of overwriting last
   -- turn's content.
   state.active_thought_block = nil
   state.active_plan_block = nil
+  state.active_goal_block = nil
 
   -- BOTH roles update `current_turn` so subsequent items
   -- (agent_attachment, agent_thought) that route via
@@ -699,8 +709,19 @@ local function section_header_line(kind, section, state)
     end
   end
 
+  if kind == "goals" and section ~= nil and state ~= nil then
+    for _, block_id in ipairs(section.block_ids) do
+      local goal_block = state.blocks[block_id]
+      if goal_block ~= nil and goal_block.kind == "goal" and type(goal_block.goal_status) == "string" and goal_block.goal_status ~= "" then
+        return base .. stats.format_pills({ flatten_text(goal_block.goal_status) })
+      end
+    end
+  end
+
   local unit
-  if kind == "tasks" then
+  if kind == "goals" then
+    unit = item_count == 1 and "goal" or "goals"
+  elseif kind == "tasks" then
     unit = item_count == 1 and "plan" or "plans"
   elseif kind == "tools" then
     unit = item_count == 1 and "call" or "calls"
@@ -761,7 +782,7 @@ local function repaint_section_header(state, kind, section)
   end)
 end
 
----Ensure the `### tasks` / `### thoughts` / `### tools` section exists
+---Ensure a `### <kind>` inner section exists
 ---in `turn_id`'s layout, inserting the header line at the correct
 ---priority-ordered position. Returns the section table (head_mark +
 ---block_ids), or `nil` when no layout is registered for the turn
@@ -839,7 +860,7 @@ end
 ---the turn has no layout (caller falls back to legacy append).
 ---@param state hyprpilot.render.State
 ---@param turn_id? string
----@param kind string                     -- section kind ("tasks" / "thoughts" / "tools")
+---@param kind string                     -- section kind ("goals" / "tasks" / "thoughts" / "tools")
 ---@param block_id string
 ---@param block_kind hyprpilot.render.BlockKind
 ---@param lines string[]
@@ -2052,6 +2073,145 @@ local function render_plan(state, record)
   end
 end
 
+---@param record table
+---@return string
+local function goal_status(record)
+  if type(record.status) ~= "string" then
+    log.warn("render_goal: missing status, using unknown")
+
+    return "unknown"
+  end
+
+  local status = flatten_text(record.status)
+  if status:match("^%s*$") then
+    log.warn("render_goal: empty status, using unknown")
+
+    return "unknown"
+  end
+
+  return status
+end
+
+---@param record table
+---@return string
+local function goal_objective(record)
+  if type(record.objective) ~= "string" then
+    log.warn("render_goal: missing objective, using placeholder")
+
+    return ""
+  end
+
+  return record.objective
+end
+
+---@param status string
+---@param objective string
+---@param include_header boolean
+---@return string[]
+local function goal_lines(status, objective, include_header)
+  local lines = {}
+  if include_header then
+    table.insert(lines, "### goal" .. stats.format_pills({ status }))
+    table.insert(lines, "")
+  end
+
+  table.insert(lines, "---")
+  table.insert(lines, "")
+
+  if objective:match("^%s*$") then
+    table.insert(lines, "(no objective)")
+  else
+    vim.list_extend(lines, vim.split(objective, "\n", { plain = true }))
+  end
+
+  table.insert(lines, "")
+  table.insert(lines, "---")
+
+  return flatten_lines(lines)
+end
+
+---Render a goal block. Multiple goal updates in the same turn
+---OVERWRITE the existing block in place so the captain sees the
+---current goal state, not every stale intermediate state.
+---@param state hyprpilot.render.State
+---@param record table
+local function render_goal(state, record)
+  state.active_text_block = nil
+
+  local status = goal_status(record)
+  local objective = goal_objective(record)
+  local active_block = state.active_goal_block ~= nil and state.blocks[state.active_goal_block] or nil
+
+  if active_block == nil or active_block.turn_id ~= state.current_turn then
+    local turn_layout = get_layout(state, state.current_turn)
+    local goals_section = turn_layout and turn_layout.sections and turn_layout.sections.goals or nil
+    if goals_section ~= nil then
+      for _, candidate_id in ipairs(goals_section.block_ids) do
+        local candidate = state.blocks[candidate_id]
+        if candidate ~= nil and candidate.kind == "goal" then
+          state.active_goal_block = candidate_id
+          active_block = candidate
+          break
+        end
+      end
+    end
+  end
+
+  local lines = goal_lines(status, objective, active_block ~= nil and active_block.goal_orphan == true)
+
+  if active_block ~= nil and active_block.turn_id == state.current_turn then
+    chat_buffer.with_buffer(state.bufnr, function()
+      local head_row, tail_row = block_range(state, active_block)
+      if head_row == nil or tail_row == nil then
+        state.active_goal_block = nil
+        active_block = nil
+
+        return
+      end
+
+      vim.api.nvim_buf_set_lines(state.bufnr, head_row, tail_row + 1, false, lines)
+      vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.head_mark)
+      vim.api.nvim_buf_del_extmark(state.bufnr, NS, active_block.tail_mark)
+      active_block.head_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, head_row, 0, { right_gravity = true })
+      active_block.tail_mark = vim.api.nvim_buf_set_extmark(state.bufnr, NS, head_row + #lines - 1, 0, { right_gravity = true })
+    end)
+
+    if active_block ~= nil then
+      active_block.goal_status = status
+      local turn_layout = get_layout(state, active_block.turn_id)
+      local goals_section = turn_layout and turn_layout.sections and turn_layout.sections.goals or nil
+      if goals_section ~= nil then
+        repaint_section_header(state, "goals", goals_section)
+      end
+
+      return
+    end
+  end
+
+  local layout = get_layout(state, state.current_turn)
+  local block_id = "goal:" .. tostring(layout and layout.turn_id or "anon") .. ":" .. tostring(vim.uv and vim.uv.hrtime() or os.time())
+  local block, first_row = insert_block_into_section(state, state.current_turn, "goals", block_id, "goal", goal_lines(status, objective, false))
+
+  if first_row == nil then
+    lines = goal_lines(status, objective, true)
+    chat_buffer.with_buffer(state.bufnr, function()
+      first_row = append_lines(state, lines)
+    end)
+    block = track_block(state, block_id, "goal", first_row, first_row + #lines - 1)
+    block.goal_orphan = true
+  end
+
+  state.active_goal_block = block_id
+  if block ~= nil then
+    block.goal_status = status
+  end
+
+  local goals_section = layout and layout.sections and layout.sections.goals or nil
+  if goals_section ~= nil then
+    repaint_section_header(state, "goals", goals_section)
+  end
+end
+
 ---Forward a permission request to the pinned permission row. Chat
 ---buffer stays untouched on purpose — the captain doesn't want
 ---permission prompts cluttering the conversation history; the row
@@ -2242,6 +2402,8 @@ function M.render_item(state, turn_id, item)
     M.handle_tool_call_update(state.instance_id, item)
   elseif kind == "plan" then
     render_plan(state, item)
+  elseif kind == "goal" then
+    render_goal(state, item)
   elseif kind == "compaction" then
     render_compaction(state, item)
   elseif kind == "change_advertisement" then
@@ -2287,6 +2449,7 @@ function M.hydrate(state, snapshot)
   state.active_text_block = nil
   state.active_thought_block = nil
   state.active_plan_block = nil
+  state.active_goal_block = nil
   state.last_seq = snapshot.latestSeq
   state.oldest_seq = snapshot.oldestSeq
   state.has_more = snapshot.hasMore == true
@@ -2692,7 +2855,7 @@ function M.handle_turn_ended(event)
   -- still ends up with a clean turn-tail.
   --
   -- Block kinds we DO fold here:
-  --   plan, agent_thought, tool_call, terminal, permission,
+  --   plan, goal, agent_thought, tool_call, terminal, permission,
   --   adapter, agent_attachment
   -- Block kinds we DON'T fold (these are the request/response
   -- pair the captain explicitly wants to stay readable):
@@ -2700,6 +2863,7 @@ function M.handle_turn_ended(event)
   --   response under `### response`), placeholder.
   local FOLDABLE_ORPHAN_KIND = {
     plan = "tasks",
+    goal = "goals",
     agent_thought = "thoughts",
     tool_call = "tools",
     terminal = "tools",
