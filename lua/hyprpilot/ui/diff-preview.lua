@@ -1,6 +1,7 @@
 --- Inline diff preview for file-edit permission requests.
 ---
---- When the captain hits `<C-o>` on a permission row for an edit
+--- When the captain hits `permission_row.keymaps.show_diff` on a
+--- permission row for an edit
 --- tool (Edit / Write / MultiEdit / similar), we render the proposed
 --- changes as virt_lines + line highlights on the actual target
 --- buffer. The buffer itself is NEVER mutated — mcphub.nvim does
@@ -9,9 +10,9 @@
 --- accept.
 ---
 --- Captain experience:
----   - `<C-o>` on the row opens the preview in the prior window
----     (or a vsplit if none is stashed). Cursor moves there.
----   - `<C-g>` / `<C-r>` from the preview buffer resolve the
+---   - `<localleader>o` by default opens the preview in the prior
+---     window (or a vsplit if none is stashed). Cursor moves there.
+---   - `<localleader>a` / `<localleader>d` from the preview buffer resolve the
 ---     permission; `<Esc>` closes the preview without resolving.
 ---   - Editing the buffer auto-closes the preview (stale).
 ---   - Permission resolution from anywhere closes the preview too.
@@ -56,6 +57,56 @@ function M.is_open()
   return true, M._state.request_id
 end
 
+---@param value any
+---@return string?
+local function nonempty_string(value)
+  if type(value) == "string" and value ~= "" then
+    return value
+  end
+  return nil
+end
+
+---@param raw table
+---@param keys string[]
+---@return string?
+local function pick_string(raw, keys)
+  for _, key in ipairs(keys) do
+    local value = nonempty_string(raw[key])
+    if value ~= nil then
+      return value
+    end
+  end
+  return nil
+end
+
+---@param path string?
+---@return string?
+local function clean_diff_path(path)
+  path = nonempty_string(path)
+  if path == nil or path == "/dev/null" then
+    return nil
+  end
+  path = path:gsub("\r$", "")
+  path = path:gsub('^"(.*)"$', "%1")
+  path = path:gsub("^[ab]/", "")
+  return nonempty_string(path)
+end
+
+---@param raw any
+---@return string?
+local function first_change_path(raw)
+  if type(raw) ~= "table" or type(raw.changes) ~= "table" then
+    return nil
+  end
+  for path, _ in pairs(raw.changes) do
+    local cleaned = clean_diff_path(path)
+    if cleaned ~= nil then
+      return cleaned
+    end
+  end
+  return nil
+end
+
 ---Extract `path / file_path` from `raw_input` regardless of which
 ---field the agent populated. Returns nil when neither is present
 ---(the caller logs + falls back to "no preview").
@@ -65,17 +116,138 @@ local function resolve_path(raw)
   if type(raw) ~= "table" then
     return nil
   end
-  if type(raw.path) == "string" and raw.path ~= "" then
-    return raw.path
+  local path = pick_string(raw, { "path", "file_path", "filePath", "filepath" })
+  if path ~= nil then
+    return path
   end
-  if type(raw.file_path) == "string" and raw.file_path ~= "" then
-    return raw.file_path
+  path = first_change_path(raw)
+  if path ~= nil then
+    return path
   end
-  if type(raw.notebook_path) == "string" and raw.notebook_path ~= "" then
+  path = pick_string(raw, { "notebook_path", "notebookPath" })
+  if path ~= nil then
     -- NotebookEdit — handled separately by the caller (no preview in v1).
-    return raw.notebook_path
+    return path
   end
   return nil
+end
+
+---@param raw any
+---@return boolean
+local function is_notebook(raw)
+  return type(raw) == "table" and (raw.notebook_path ~= nil or raw.notebookPath ~= nil)
+end
+
+---@param formatted any
+---@return string?
+local function formatted_diff(formatted)
+  if type(formatted) ~= "table" then
+    return nil
+  end
+  return nonempty_string(formatted.diff)
+end
+
+---@param diff string?
+---@return string?
+local function path_from_unified_diff(diff)
+  diff = nonempty_string(diff)
+  if diff == nil then
+    return nil
+  end
+  for line in diff:gmatch("[^\n]+") do
+    local git_path = line:match("^diff %-%-git%s+a/.-%s+b/(.+)$")
+    local cleaned = clean_diff_path(git_path)
+    if cleaned ~= nil then
+      return cleaned
+    end
+
+    local new_path = line:match("^%+%+%+%s+(.+)$")
+    cleaned = clean_diff_path(new_path)
+    if cleaned ~= nil then
+      return cleaned
+    end
+
+    local old_path = line:match("^%-%-%-%s+(.+)$")
+    cleaned = clean_diff_path(old_path)
+    if cleaned ~= nil then
+      return cleaned
+    end
+  end
+  return nil
+end
+
+---@param formatted any
+---@return string?
+local function path_from_formatted_fields(formatted)
+  if type(formatted) ~= "table" or type(formatted.fields) ~= "table" then
+    return nil
+  end
+  for _, field in ipairs(formatted.fields) do
+    if type(field) == "table" then
+      local label = tostring(field.label or ""):lower()
+      if label == "path" or label == "file" or label == "add" or label == "update" or label == "delete" or label == "change" then
+        local value = nonempty_string(field.value)
+        if value ~= nil then
+          return value
+        end
+      end
+    end
+  end
+  return nil
+end
+
+---@param content any
+---@return string?
+local function path_from_content_blocks(content)
+  if type(content) ~= "table" then
+    return nil
+  end
+  for _, block in ipairs(content) do
+    if type(block) == "table" and block.type == "diff" then
+      local path = clean_diff_path(block.path or block.file_path or block.filePath)
+      if path ~= nil then
+        return path
+      end
+    end
+  end
+  return nil
+end
+
+---@param entry hyprpilot.chat.permission-row.Entry
+---@return string?
+local function resolve_entry_path(entry)
+  local path = resolve_path(entry.raw_input)
+  if path ~= nil then
+    return path
+  end
+  path = path_from_content_blocks(entry.content)
+  if path ~= nil then
+    return path
+  end
+  path = path_from_formatted_fields(entry.formatted)
+  if path ~= nil then
+    return path
+  end
+  return path_from_unified_diff(formatted_diff(entry.formatted))
+end
+
+---@param candidate string?
+---@param target string?
+---@return boolean
+local function path_matches(candidate, target)
+  candidate = clean_diff_path(candidate)
+  target = nonempty_string(target)
+  if candidate == nil or target == nil then
+    return false
+  end
+  local normalized_candidate = vim.fs.normalize(candidate)
+  local normalized_target = vim.fs.normalize(target)
+  if normalized_candidate == normalized_target then
+    return true
+  end
+  local prefix_index = #normalized_target - #normalized_candidate
+  return normalized_target:sub(-#normalized_candidate) == normalized_candidate
+    and (#normalized_target == #normalized_candidate or normalized_target:sub(prefix_index, prefix_index) == "/")
 end
 
 ---Normalise CRLF / mixed line endings on a string into a list of LF
@@ -90,27 +262,117 @@ end
 
 ---Apply N edits sequentially to `lines` (1-indexed list), returning
 ---the resulting lines. Each edit is `{ old_string, new_string }`;
+---OpenCode's camelCase `{ oldString, newString }` is accepted too.
 ---the first occurrence of `old_string` in the joined text is replaced
 ---with `new_string`. Used for MultiEdit so hunks reflect the
 ---compound result, not parallel edits against the original.
 ---@param lines string[]
 ---@param edits table[]
----@return string[], string?   -- second return is an error reason when an edit's old_string was missing
+---@return string[], string?, "unsupported"|"out_of_sync"?   -- second return is an error reason
 local function apply_edits_sequentially(lines, edits)
   local text = table.concat(lines, "\n")
   for i, edit in ipairs(edits) do
-    local old = edit.old_string
+    local old = pick_string(edit, { "old_string", "oldString" })
     local new = edit.new_string
+    if new == nil and type(edit.newString) == "string" then
+      new = edit.newString
+    end
     if type(old) ~= "string" or type(new) ~= "string" then
-      return lines, string.format("edit %d has non-string old/new", i)
+      return lines, string.format("edit %d has non-string old/new", i), "unsupported"
     end
     local idx = text:find(old, 1, true)
     if idx == nil then
-      return lines, string.format("edit %d: old_string not found in buffer", i)
+      return lines, string.format("edit %d: old_string not found in buffer", i), "out_of_sync"
     end
     text = text:sub(1, idx - 1) .. new .. text:sub(idx + #old)
   end
   return vim.split(text, "\n", { plain = true }), nil
+end
+
+---@param raw table
+---@param path string?
+---@return table?
+local function change_for_path(raw, path)
+  if type(raw.changes) ~= "table" then
+    return nil
+  end
+  if path ~= nil then
+    for candidate, change in pairs(raw.changes) do
+      if path_matches(candidate, path) then
+        return change
+      end
+    end
+  end
+  for _, change in pairs(raw.changes) do
+    if type(change) == "table" then
+      return change
+    end
+  end
+  return nil
+end
+
+---@param raw table
+---@param path string?
+---@return table[]?
+local function edits_from_content_blocks(raw, path)
+  if type(raw) ~= "table" then
+    return nil
+  end
+
+  local edits = {}
+  for _, block in ipairs(raw) do
+    if type(block) == "table" and block.type == "diff" then
+      local block_path = block.path or block.file_path or block.filePath
+      if path == nil or block_path == nil or path_matches(block_path, path) then
+        local old = block.oldText
+        if old == nil then
+          old = block.old_text
+        end
+        local new = block.newText
+        if new == nil then
+          new = block.new_text
+        end
+        if type(old) == "string" and type(new) == "string" then
+          table.insert(edits, { old_string = old, new_string = new })
+        end
+      end
+    end
+  end
+
+  if #edits == 0 then
+    return nil
+  end
+  return edits
+end
+
+---@param raw any
+---@return boolean
+local function raw_has_diff_fields(raw)
+  if type(raw) ~= "table" then
+    return false
+  end
+  if type(raw.content) == "string" then
+    return true
+  end
+  if (type(raw.old_string) == "string" or type(raw.oldString) == "string") and (type(raw.new_string) == "string" or type(raw.newString) == "string") then
+    return true
+  end
+  if type(raw.edits) == "table" and #raw.edits > 0 then
+    return true
+  end
+  if type(raw.changes) == "table" then
+    return true
+  end
+  if type(raw.diff) == "string" and raw.diff ~= "" then
+    return true
+  end
+  return false
+end
+
+---@param entry hyprpilot.chat.permission-row.Entry
+---@return boolean
+local function content_has_diff_blocks(entry)
+  return edits_from_content_blocks(entry.content, resolve_entry_path(entry)) ~= nil
 end
 
 ---Build the proposed-result line list for a given entry. Returns
@@ -119,9 +381,10 @@ end
 ---unchanged original — caller renders an "out of sync" pill.
 ---@param entry hyprpilot.chat.permission-row.Entry
 ---@param current_lines string[]   -- buffer's current content
----@return string[], string?
+---@return string[], string?, "unsupported"|"out_of_sync"?
 local function compute_new_lines(entry, current_lines)
   local raw = entry.raw_input or {}
+  local path = resolve_entry_path(entry)
 
   -- Plain `Write` (full-content replacement).
   if type(raw.content) == "string" then
@@ -129,8 +392,16 @@ local function compute_new_lines(entry, current_lines)
   end
 
   -- Single-edit `Edit`.
-  if type(raw.old_string) == "string" and type(raw.new_string) == "string" then
-    return apply_edits_sequentially(current_lines, { { old_string = raw.old_string, new_string = raw.new_string } })
+  local old = raw.old_string
+  if old == nil then
+    old = raw.oldString
+  end
+  local new = raw.new_string
+  if new == nil then
+    new = raw.newString
+  end
+  if type(old) == "string" and type(new) == "string" then
+    return apply_edits_sequentially(current_lines, { { old_string = old, new_string = new } })
   end
 
   -- `MultiEdit` (list of edits applied sequentially).
@@ -138,7 +409,29 @@ local function compute_new_lines(entry, current_lines)
     return apply_edits_sequentially(current_lines, raw.edits)
   end
 
-  return current_lines, "no diff-able fields on raw_input (need content / old_string+new_string / edits)"
+  -- Codex patch approvals expose a `changes` map keyed by file path.
+  local change = change_for_path(raw, path)
+  if type(change) == "table" then
+    local add = change.Add or change.add
+    if type(add) == "table" and type(add.content) == "string" then
+      return to_lines(add.content), nil
+    end
+    local delete = change.Delete or change.delete
+    if type(delete) == "table" and type(delete.content) == "string" then
+      return {}, nil
+    end
+    local update = change.Update or change.update
+    if type(update) == "table" and type(update.unified_diff) == "string" and update.unified_diff ~= "" then
+      return current_lines, "raw_input.changes carries unified_diff; falling back to daemon diff", "unsupported"
+    end
+  end
+
+  local content_edits = edits_from_content_blocks(entry.content, path)
+  if content_edits ~= nil then
+    return apply_edits_sequentially(current_lines, content_edits)
+  end
+
+  return current_lines, "no diff-able fields on raw_input (need content / old_string+new_string / edits)", "unsupported"
 end
 
 ---`vim.diff` is byte-string only — feed it joined lines, take the
@@ -185,6 +478,104 @@ local function compute_hunks(old_lines, new_lines)
     })
   end
   return out
+end
+
+---@param diff string
+---@param target_path string?
+---@return hyprpilot.diff_preview.Hunk[]
+local function parse_unified_hunks(diff, target_path)
+  local hunks = {}
+  local file_active = target_path == nil
+  local saw_file_header = false
+  local old_line = 1
+  local segment = nil
+
+  local function flush_segment()
+    if segment ~= nil and (segment.old_count > 0 or #segment.new_lines > 0) then
+      table.insert(hunks, segment)
+    end
+    segment = nil
+  end
+
+  local function start_segment()
+    if segment == nil then
+      segment = {
+        old_start = math.max(1, old_line),
+        old_count = 0,
+        new_lines = {},
+      }
+    end
+  end
+
+  for line in (diff .. "\n"):gmatch("(.-)\n") do
+    local git_path = line:match("^diff %-%-git%s+a/.-%s+b/(.+)$")
+    if git_path ~= nil then
+      flush_segment()
+      saw_file_header = true
+      file_active = target_path == nil or path_matches(git_path, target_path)
+    else
+      local new_path = line:match("^%+%+%+%s+(.+)$")
+      if new_path ~= nil and new_path ~= "/dev/null" then
+        saw_file_header = true
+        if target_path ~= nil then
+          file_active = path_matches(new_path, target_path)
+        end
+      end
+    end
+
+    local hunk_old_start = line:match("^@@ %-(%d+),?%d* %+%d+,?%d* @@")
+    if hunk_old_start ~= nil then
+      flush_segment()
+      if not saw_file_header and target_path ~= nil then
+        file_active = true
+      end
+      old_line = tonumber(hunk_old_start) or 1
+    elseif file_active and line:sub(1, 1) == "-" and not line:match("^%-%-%-") then
+      start_segment()
+      segment.old_count = segment.old_count + 1
+      old_line = old_line + 1
+    elseif file_active and line:sub(1, 1) == "+" and not line:match("^%+%+%+") then
+      start_segment()
+      table.insert(segment.new_lines, line:sub(2))
+    elseif file_active and line:sub(1, 1) == " " then
+      flush_segment()
+      old_line = old_line + 1
+    elseif line:match("^@@ ") == nil and (line:match("^diff %-%-git") or line:match("^%-%-%-") or line:match("^%+%+%+")) then
+      flush_segment()
+    end
+  end
+  flush_segment()
+
+  return hunks
+end
+
+---@param entry hyprpilot.chat.permission-row.Entry
+---@param path string?
+---@return hyprpilot.diff_preview.Hunk[]
+local function fallback_hunks(entry, path)
+  local raw = entry.raw_input
+  if type(raw) == "table" then
+    local change = change_for_path(raw, path)
+    local update = type(change) == "table" and (change.Update or change.update) or nil
+    if type(update) == "table" and type(update.unified_diff) == "string" and update.unified_diff ~= "" then
+      local hunks = parse_unified_hunks(update.unified_diff, path)
+      if #hunks > 0 then
+        return hunks
+      end
+    end
+    if type(raw.diff) == "string" and raw.diff ~= "" then
+      local hunks = parse_unified_hunks(raw.diff, path)
+      if #hunks > 0 then
+        return hunks
+      end
+    end
+  end
+
+  local diff = formatted_diff(entry.formatted)
+  if diff == nil then
+    return {}
+  end
+  return parse_unified_hunks(diff, path)
 end
 
 ---Pick a window to host the preview. Returns `(winid, owned)` where
@@ -305,11 +696,13 @@ end
 ---@param bufnr integer
 ---@param reason string
 local function paint_out_of_sync(bufnr, reason)
+  local row_key = require("hyprpilot.ui.keymaps").first_display_key(((config.options.permission_row or {}).keymaps or {}).show_diff)
+  local reopen = row_key ~= nil and ("; reopen " .. row_key .. " after editing") or ""
   pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, 0, 0, {
     virt_lines_above = true,
     virt_lines = {
       { { string.format("⚠ diff-preview: %s", reason), "WarningMsg" } },
-      { { "  accept / reject from the row; reopen <C-o> after editing", "Comment" } },
+      { { "  accept / reject from the row" .. reopen, "Comment" } },
     },
     priority = 200,
   })
@@ -340,15 +733,34 @@ local function install_keymaps(bufnr, state)
     end
   end
 
-  apply(keymaps.accept or "<C-g>", function()
-    local opt = nil
-    for _, candidate in ipairs(state and {} or {}) do
-      local _ = candidate
+  local function option_by_id(entry, target_id)
+    if type(target_id) ~= "string" or target_id == "" then
+      return nil
     end
-    -- Find the first "allow"-shaped option on the entry. The row's
-    -- own accept path uses the same patterns; mirroring keeps the
-    -- two surfaces in sync. We look the entry up fresh in case it
-    -- mutated under us (focus change etc.).
+    for _, candidate in ipairs(entry.options or {}) do
+      if tostring(candidate.optionId or "") == target_id then
+        return candidate
+      end
+    end
+    return nil
+  end
+
+  local function option_by_patterns(entry, patterns, fallback)
+    for _, candidate in ipairs(entry.options or {}) do
+      local id = tostring(candidate.optionId or ""):lower()
+      local name = tostring(candidate.name or ""):lower()
+      for _, pattern in ipairs(patterns) do
+        if id:match(pattern) or name:match(pattern) then
+          return candidate
+        end
+      end
+    end
+    return fallback
+  end
+
+  apply(keymaps.accept or "<C-g>", function()
+    -- Prefer daemon-picked exact ids, then fall back to the older
+    -- local shape matcher so older daemons remain usable.
     local row = require("hyprpilot.chat.permission-row")
     local entry = row._entry_by_request_id and row._entry_by_request_id(state.request_id)
     if entry == nil then
@@ -356,15 +768,7 @@ local function install_keymaps(bufnr, state)
       M.close()
       return
     end
-    for _, candidate in ipairs(entry.options) do
-      local id = tostring(candidate.optionId or ""):lower()
-      local name = tostring(candidate.name or ""):lower()
-      if id:match("^allow") or id:match("^accept") or id:match("^proceed") or name:match("^allow") or name:match("^accept") or name:match("^proceed") then
-        opt = candidate
-        break
-      end
-    end
-    opt = opt or entry.options[1]
+    local opt = option_by_id(entry, entry.allow_option_id) or option_by_patterns(entry, { "^allow", "^accept", "^proceed" }, entry.options and entry.options[1])
     if opt == nil then
       log.warn("diff_preview.accept: no allow-shaped option available")
       return
@@ -381,25 +785,8 @@ local function install_keymaps(bufnr, state)
       M.close()
       return
     end
-    local opt = nil
-    for _, candidate in ipairs(entry.options) do
-      local id = tostring(candidate.optionId or ""):lower()
-      local name = tostring(candidate.name or ""):lower()
-      if
-        id:match("^reject")
-        or id:match("^deny")
-        or id:match("^abort")
-        or id:match("^cancel")
-        or name:match("^reject")
-        or name:match("^deny")
-        or name:match("^abort")
-        or name:match("^cancel")
-      then
-        opt = candidate
-        break
-      end
-    end
-    opt = opt or entry.options[#entry.options]
+    local opt = option_by_id(entry, entry.reject_option_id)
+      or option_by_patterns(entry, { "^reject", "^deny", "^abort", "^cancel" }, entry.options and entry.options[#entry.options])
     if opt == nil then
       log.warn("diff_preview.reject: no reject-shaped option available")
       return
@@ -534,14 +921,14 @@ function M.open(entry)
 
   -- `notebook_path` short-circuits to no-preview — v1 doesn't try
   -- to render notebook cell diffs.
-  if entry.raw_input and entry.raw_input.notebook_path ~= nil then
+  if is_notebook(entry.raw_input) then
     log.info("diff_preview.open: notebook edits aren't previewable in v1; accept/reject from the row")
     return
   end
 
-  local path = resolve_path(entry.raw_input)
+  local path = resolve_entry_path(entry)
   if path == nil then
-    log.info("diff_preview.open: no path field on raw_input — accept/reject from the row")
+    log.info("diff_preview.open: no path field on raw_input/formatted.diff — accept/reject from the row")
     return
   end
 
@@ -559,7 +946,7 @@ function M.open(entry)
     current_lines = vim.api.nvim_buf_get_lines(target_bufnr, 0, -1, false)
   end
 
-  local new_lines, reason = compute_new_lines(entry, current_lines)
+  local new_lines, reason, reason_kind = compute_new_lines(entry, current_lines)
 
   -- For new-file Writes the captain expects to see the proposed
   -- content rather than an empty buffer + virt_lines below row 0.
@@ -577,6 +964,12 @@ function M.open(entry)
   local hunks = {}
   if reason == nil then
     hunks = compute_hunks(current_lines, new_lines)
+  elseif reason_kind == "unsupported" then
+    local parsed = fallback_hunks(entry, path)
+    if #parsed > 0 then
+      hunks = parsed
+      reason = nil
+    end
   end
 
   local host_win, host_owned = resolve_host_window()
@@ -686,25 +1079,33 @@ function M.toggle(entry)
 end
 
 ---True when the entry is an edit-shaped request the preview can
----render (tool_kind == "edit" AND raw_input carries a path-like
----field). Excludes notebook edits (no preview in v1).
+---render. The daemon's normalized signal is `formatted.diff`; raw
+---input/content shapes are kept as compatibility and better anchoring
+---sources. Excludes notebook edits (no preview in v1).
 ---@param entry hyprpilot.chat.permission-row.Entry?
 ---@return boolean
 function M.is_previewable(entry)
   if entry == nil then
     return false
   end
-  if tool_kind.classify(entry.tool_kind) ~= "edit" then
+  local kind = tool_kind.classify(entry.tool_kind)
+  if kind ~= "edit" and kind ~= "write" then
     return false
   end
   local raw = entry.raw_input
-  if type(raw) ~= "table" then
+  if is_notebook(raw) then
     return false
   end
-  if raw.notebook_path ~= nil then
+  if resolve_entry_path(entry) == nil then
     return false
   end
-  return resolve_path(raw) ~= nil
+  if formatted_diff(entry.formatted) ~= nil then
+    return true
+  end
+  if raw_has_diff_fields(raw) then
+    return true
+  end
+  return content_has_diff_blocks(entry)
 end
 
 ---Wire the cross-module autocmd subscriptions (close on permission
@@ -770,5 +1171,7 @@ end
 M._compute_hunks = compute_hunks
 M._compute_new_lines = compute_new_lines
 M._resolve_path = resolve_path
+M._parse_unified_hunks = parse_unified_hunks
+M._resolve_entry_path = resolve_entry_path
 
 return M

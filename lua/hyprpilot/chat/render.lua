@@ -2258,6 +2258,7 @@ local function render_permission_request(state, record)
     -- `.edits[]` off the entry — keep the wire shape verbatim so
     -- a per-agent normalisation lives in one place (diff_preview).
     raw_input = record.rawInput,
+    content = record.content,
   })
 end
 
@@ -2553,6 +2554,7 @@ function M.handle_permission_request(event)
       -- through so the diff-preview module can extract it from the
       -- row entry without a second daemon round-trip.
       rawInput = event.rawInput,
+      content = event.content,
       options = event.options,
       formatted = event.formatted,
       defaultOptionId = event.defaultOptionId,

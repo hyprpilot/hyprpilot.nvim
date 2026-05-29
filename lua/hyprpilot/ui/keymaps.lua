@@ -11,6 +11,41 @@
 
 local M = {}
 
+---@param keys string | string[] | false | nil
+---@return string[]
+local function as_list(keys)
+  if keys == false or keys == nil then
+    return {}
+  end
+  if type(keys) == "string" then
+    return { keys }
+  end
+  if type(keys) == "table" then
+    return keys
+  end
+  return {}
+end
+
+---@param key string
+---@return string
+function M.display_key(key)
+  local out = key
+  out = out:gsub("<[Ll]ocal[Ll]eader>", vim.g.maplocalleader or "\\")
+  out = out:gsub("<[Ll]eader>", vim.g.mapleader or "\\")
+  return out
+end
+
+---@param keys string | string[] | false | nil
+---@return string?
+function M.first_display_key(keys)
+  local list = as_list(keys)
+  local key = list[1]
+  if type(key) ~= "string" or key == "" then
+    return nil
+  end
+  return M.display_key(key)
+end
+
 ---Bind one action to its configured key(s) on `bufnr`. `keys` is
 ---`false` / `nil` (disabled), a single key string, or a list of
 ---key strings — each list entry binds the same handler.
@@ -23,13 +58,7 @@ local M = {}
 ---@param handler fun(): nil
 ---@param desc string                                   -- short verb-object phrase (e.g. "submit composer prompt")
 function M.apply_action(bufnr, keys, handler, desc)
-  if keys == false or keys == nil then
-    return
-  end
-  if type(keys) == "string" then
-    keys = { keys }
-  end
-  for _, key in ipairs(keys) do
+  for _, key in ipairs(as_list(keys)) do
     vim.keymap.set("n", key, handler, { buffer = bufnr, silent = true, desc = "hyprpilot: " .. desc })
   end
 end

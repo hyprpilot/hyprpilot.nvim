@@ -43,6 +43,14 @@ T["compute_new_lines: Edit single old/new replaces verbatim"] = function()
   MiniTest.expect.equality(new[3], "beta")
 end
 
+T["compute_new_lines: OpenCode camelCase edit replaces verbatim"] = function()
+  local current = { "alpha", "old line", "beta" }
+  local entry = mk_entry({ filePath = "/tmp/x.lua", oldString = "old line", newString = "new line" })
+  local new, reason = diff_preview._compute_new_lines(entry, current)
+  MiniTest.expect.equality(reason, nil)
+  MiniTest.expect.equality(new[2], "new line")
+end
+
 T["compute_new_lines: Write content becomes the full proposed buffer"] = function()
   local entry = mk_entry({ path = "/tmp/new.lua", content = "line a\nline b" })
   local new, reason = diff_preview._compute_new_lines(entry, { "stale" })
@@ -88,9 +96,21 @@ end
 T["resolve_path: picks path / file_path / notebook_path in order"] = function()
   MiniTest.expect.equality(diff_preview._resolve_path({ path = "/a" }), "/a")
   MiniTest.expect.equality(diff_preview._resolve_path({ file_path = "/b" }), "/b")
-  MiniTest.expect.equality(diff_preview._resolve_path({ notebook_path = "/c.ipynb" }), "/c.ipynb")
+  MiniTest.expect.equality(diff_preview._resolve_path({ filePath = "/c" }), "/c")
+  MiniTest.expect.equality(diff_preview._resolve_path({ filepath = "/d" }), "/d")
+  MiniTest.expect.equality(diff_preview._resolve_path({ changes = { ["src/main.lua"] = { Update = { unified_diff = "@@" } } } }), "src/main.lua")
+  MiniTest.expect.equality(diff_preview._resolve_path({ notebook_path = "/e.ipynb" }), "/e.ipynb")
   MiniTest.expect.equality(diff_preview._resolve_path({}), nil)
   MiniTest.expect.equality(diff_preview._resolve_path("not a table"), nil)
+end
+
+T["parse_unified_hunks: formatted diff becomes paintable hunks"] = function()
+  local hunks =
+    diff_preview._parse_unified_hunks("diff --git a/src/x.lua b/src/x.lua\n--- a/src/x.lua\n+++ b/src/x.lua\n@@ -10,2 +10,2 @@\n-old\n+new\n context\n", "/repo/src/x.lua")
+  MiniTest.expect.equality(#hunks, 1)
+  MiniTest.expect.equality(hunks[1].old_start, 10)
+  MiniTest.expect.equality(hunks[1].old_count, 1)
+  MiniTest.expect.equality(hunks[1].new_lines[1], "new")
 end
 
 T["is_previewable: tool_kind=edit + path field → true"] = function()
@@ -101,6 +121,24 @@ end
 T["is_previewable: structured edit tool_kind + path field → true"] = function()
   local entry = mk_entry({ path = "/tmp/x.lua", old_string = "a", new_string = "b" }, { tool_kind = { type = "edit" } })
   MiniTest.expect.equality(diff_preview.is_previewable(entry), true)
+end
+
+T["is_previewable: daemon formatted.diff with path header → true"] = function()
+  local entry = mk_entry({}, {
+    formatted = {
+      diff = "diff --git a/src/x.lua b/src/x.lua\n--- a/src/x.lua\n+++ b/src/x.lua\n@@ -1 +1 @@\n-old\n+new\n",
+    },
+  })
+  MiniTest.expect.equality(diff_preview.is_previewable(entry), true)
+  MiniTest.expect.equality(diff_preview._resolve_entry_path(entry), "src/x.lua")
+end
+
+T["is_previewable: live content diff block with path → true"] = function()
+  local entry = mk_entry(nil, {
+    content = { { type = "diff", path = "/tmp/x.lua", oldText = "a", newText = "b" } },
+  })
+  MiniTest.expect.equality(diff_preview.is_previewable(entry), true)
+  MiniTest.expect.equality(diff_preview._resolve_entry_path(entry), "/tmp/x.lua")
 end
 
 T["is_previewable: non-edit tool_kind → false even when raw_input has path"] = function()
@@ -115,6 +153,11 @@ end
 
 T["is_previewable: edit tool with no path field → false"] = function()
   local entry = mk_entry({ old_string = "a", new_string = "b" })
+  MiniTest.expect.equality(diff_preview.is_previewable(entry), false)
+end
+
+T["is_previewable: edit path without raw diff fields or formatted.diff → false"] = function()
+  local entry = mk_entry({ path = "/tmp/x.lua" })
   MiniTest.expect.equality(diff_preview.is_previewable(entry), false)
 end
 
@@ -153,6 +196,44 @@ T["open: edit-shape against a temp file paints hunks + cleans up on close"] = fu
   local marks_after = vim.api.nvim_buf_get_extmarks(target_bufnr, ns, 0, -1, {})
   MiniTest.expect.equality(#marks_after, 0)
 
+  pcall(vim.api.nvim_win_close, host_win, true)
+  pcall(os.remove, path)
+  pcall(vim.fn.delete, tmpdir, "rf")
+end
+
+T["open: daemon formatted.diff fallback paints hunks when raw input is sparse"] = function()
+  diff_preview._reset()
+
+  local tmpdir = vim.fn.tempname()
+  vim.fn.mkdir(tmpdir, "p")
+  local path = tmpdir .. "/formatted.lua"
+  local fh = assert(io.open(path, "w"))
+  fh:write("old\n")
+  fh:close()
+
+  vim.cmd("split")
+  local host_win = vim.api.nvim_get_current_win()
+  require("hyprpilot.ui.window")._prev_winid = host_win
+
+  local entry = mk_entry({ path = path }, {
+    formatted = {
+      diff = table.concat({
+        "diff --git a/formatted.lua b/formatted.lua",
+        "--- a/formatted.lua",
+        "+++ b/formatted.lua",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      }, "\n"),
+    },
+  })
+  diff_preview.open(entry)
+
+  MiniTest.expect.equality(diff_preview.is_open(), true)
+  MiniTest.expect.equality(#diff_preview._state.hunks, 1)
+  MiniTest.expect.equality(diff_preview._state.hunks[1].new_lines[1], "new")
+
+  diff_preview.close()
   pcall(vim.api.nvim_win_close, host_win, true)
   pcall(os.remove, path)
   pcall(vim.fn.delete, tmpdir, "rf")

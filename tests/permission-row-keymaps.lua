@@ -1,8 +1,9 @@
 --- Behavioural tests for `chat.permission_row::install_keymaps`.
 --- Covers F8 — the keymaps are configurable via
 --- `config.permission_row.keymaps` and the defaults are
---- `<localleader>a` (accept), `<localleader>d` (reject), `<CR>`
---- (submit), `<Tab>` / `<S-Tab>` (cycle).
+--- `<localleader>a` (accept), `<localleader>d` (reject),
+--- `<localleader>o` (show diff), `<CR>` (submit), `<Tab>` /
+--- `<S-Tab>` (cycle).
 
 local T = MiniTest.new_set()
 
@@ -71,7 +72,7 @@ local function install_keymaps(bufnr)
   end
 end
 
-T["permission_row default keymaps: <localleader>a / <localleader>d / <CR> / <Tab> / <S-Tab>"] = function()
+T["permission_row default keymaps: <localleader>a / <localleader>d / <localleader>o / <CR> / <Tab> / <S-Tab>"] = function()
   -- Reset config to defaults before the test.
   require("hyprpilot.config").setup({})
 
@@ -83,12 +84,14 @@ T["permission_row default keymaps: <localleader>a / <localleader>d / <CR> / <Tab
   -- localleader, so it expands to the default `\\` (backslash).
   local accept = bufmap_for(bufnr, "\\a")
   local reject = bufmap_for(bufnr, "\\d")
+  local show_diff = bufmap_for(bufnr, "\\o")
   local submit = bufmap_for(bufnr, "<CR>")
   local cycle_next = bufmap_for(bufnr, "<Tab>")
   local cycle_prev = bufmap_for(bufnr, "<S-Tab>")
 
   MiniTest.expect.equality(accept ~= nil, true)
   MiniTest.expect.equality(reject ~= nil, true)
+  MiniTest.expect.equality(show_diff ~= nil, true)
   MiniTest.expect.equality(submit ~= nil, true)
   MiniTest.expect.equality(cycle_next ~= nil, true)
   MiniTest.expect.equality(cycle_prev ~= nil, true)
