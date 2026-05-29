@@ -486,6 +486,60 @@ T["plan renders checklist with done count"] = function()
   helpers.cleanup_instance(id)
 end
 
+T["goal renders status and multiline objective from snapshot"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "goal", status = "active", objective = "Ship the goal update\nVerify the UI" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "### goal"), true)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "active"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "Ship the goal update"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "Verify the UI"), true)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "unhandled"), false)
+
+  helpers.cleanup_instance(id)
+end
+
+T["goal updates in the same turn overwrite the existing block"] = function()
+  local render = require("hyprpilot.chat.render")
+  local buffer = require("hyprpilot.chat.buffer")
+  local id = helpers.unique_id()
+  local bufnr = buffer.create(id)
+  local state = render.state(id, bufnr)
+
+  render.hydrate(state, {
+    items = {
+      { turnId = "t1", item = { kind = "goal", status = "active", objective = "Old objective" } },
+      { turnId = "t1", item = { kind = "goal", status = "blocked", objective = "Need captain input" } },
+    },
+  })
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local goal_header_count = 0
+  for _, l in ipairs(lines) do
+    if l:find("^### goal") ~= nil then
+      goal_header_count = goal_header_count + 1
+    end
+  end
+
+  MiniTest.expect.equality(goal_header_count, 1)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "Old objective"), false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "active"), false)
+  MiniTest.expect.equality(helpers.has_line_containing(lines, "blocked"), true)
+  MiniTest.expect.equality(helpers.has_line(lines, "Need captain input"), true)
+
+  helpers.cleanup_instance(id)
+end
+
 T["compaction renders as a dedicated section"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
@@ -664,7 +718,7 @@ T["permission_request never lands in the chat buffer (handled by permission_row)
   helpers.cleanup_instance(id)
 end
 
-T["pilot turn aggregates plan/thought/tool into ### sections in priority order with prose below"] = function()
+T["pilot turn aggregates goal/plan/thought/tool into ### sections in priority order with prose below"] = function()
   local render = require("hyprpilot.chat.render")
   local buffer = require("hyprpilot.chat.buffer")
   local id = helpers.unique_id()
@@ -672,10 +726,10 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   local state = render.state(id, bufnr)
 
   -- Drive the items in arrival-order opposite to canonical section
-  -- priority (tools first, then thought, then plan) — the canonical
-  -- order tasks → thoughts → tools should still emerge in the buffer.
-  -- Prose lands at the very end regardless of arrival order, even
-  -- though more sections show up after it.
+  -- priority (tools first, then thought, then plan, then goal) — the
+  -- canonical order goal → tasks → thoughts → tools should still
+  -- emerge in the buffer. Prose lands at the very end regardless of
+  -- arrival order, even though more sections show up after it.
   render.hydrate(state, {
     items = {
       { turnId = "t1", item = { kind = "agent_text", text = "early prose" } },
@@ -698,6 +752,7 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
           steps = { { content = "A", status = "completed" } },
         },
       },
+      { turnId = "t1", item = { kind = "goal", status = "active", objective = "finish the section" } },
       { turnId = "t1", item = { kind = "agent_text", text = " continued" } },
     },
   })
@@ -718,6 +773,9 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   end)
   -- Section headers carry a `[N <unit>]` chip after the first item
   -- lands, so match by prefix rather than exact string.
+  local goal = index_of(function(l)
+    return l:find("^### goal") ~= nil
+  end)
   local tasks = index_of(function(l)
     return l:find("^### tasks") ~= nil
   end)
@@ -735,13 +793,15 @@ T["pilot turn aggregates plan/thought/tool into ### sections in priority order w
   end)
 
   MiniTest.expect.equality(pilot ~= nil, true)
+  MiniTest.expect.equality(goal ~= nil, true)
   MiniTest.expect.equality(tasks ~= nil, true)
   MiniTest.expect.equality(thoughts ~= nil, true)
   MiniTest.expect.equality(tools ~= nil, true)
   MiniTest.expect.equality(prose ~= nil, true)
   MiniTest.expect.equality(prose_tail ~= nil, true)
-  -- Canonical order: pilot < tasks < thoughts < tools < prose < prose_tail.
-  MiniTest.expect.equality(pilot < tasks, true)
+  -- Canonical order: pilot < goal < tasks < thoughts < tools < prose < prose_tail.
+  MiniTest.expect.equality(pilot < goal, true)
+  MiniTest.expect.equality(goal < tasks, true)
   MiniTest.expect.equality(tasks < thoughts, true)
   MiniTest.expect.equality(thoughts < tools, true)
   MiniTest.expect.equality(tools < prose, true)
