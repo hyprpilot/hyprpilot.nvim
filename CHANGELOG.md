@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.14.1...hyprpilot.nvim-v1.15.0) (2026-05-31)
+
+
+### Features
+
+* **instances:** add session fork RPC ([#155](https://github.com/hyprpilot/hyprpilot.nvim/issues/155)) ([35fcd7d](https://github.com/hyprpilot/hyprpilot.nvim/commit/35fcd7d3ba413014ee2c862e0ead2fdfc0d531ec))
+
 ## [1.14.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.14.0...hyprpilot.nvim-v1.14.1) (2026-05-29)
 
 
