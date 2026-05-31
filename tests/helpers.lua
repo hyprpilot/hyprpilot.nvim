@@ -81,21 +81,28 @@ function M.stub_permissions_respond()
 end
 
 ---Stub `hyprpilot.client.request` with a method → reply table. Each
----reply is `{ err?, result? }`; an absent method returns a transport
----error so a stray RPC can't pass silently. Captures every call as
----`{ method, params }`. The more general successor of
+---reply is `{ err?, result? }`; use a list of reply tables when the
+---same method should return different payloads across repeated calls.
+---An absent method returns a transport error so a stray RPC can't pass
+---silently. Captures every call as `{ method, params, opts }`. The
+---more general successor of
 ---`stub_client_request` — pass `replies = {}` for "no-op every call".
----@param replies? table<string, { err?: table, result?: any }>
+---@param replies? table<string, { err?: table, result?: any } | { { err?: table, result?: any } }>
 ---@return fun(), table[]
 function M.stub_client_with(replies)
   replies = replies or {}
   local client = require("hyprpilot.client")
   local original = client.request
   local calls = {}
+  local positions = {}
 
-  client.request = function(method, params, _opts, callback)
-    table.insert(calls, { method = method, params = params })
+  client.request = function(method, params, opts, callback)
+    table.insert(calls, { method = method, params = params, opts = opts })
     local r = replies[method]
+    if type(r) == "table" and r[1] ~= nil and r.err == nil and r.result == nil then
+      positions[method] = (positions[method] or 0) + 1
+      r = r[positions[method]]
+    end
     if r == nil then
       if callback ~= nil then
         callback({ kind = "transport", message = "unstubbed RPC: " .. method }, nil)

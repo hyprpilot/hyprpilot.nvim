@@ -237,6 +237,42 @@ T["palettes.instances: picks a row → calls instances.attach with the chosen id
   restore_active()
 end
 
+T["palettes.instances: fork side action delegates to instances.fork"] = function()
+  local restore_client = stub_client_with({
+    ["instances/list"] = {
+      result = {
+        instances = {
+          { instanceId = "inst-a", sessionId = "sess-a" },
+          { instanceId = "inst-b", sessionId = "sess-b" },
+        },
+      },
+    },
+  })
+
+  local hp_instances = require("hyprpilot.rpc.instances")
+  local original_fork = hp_instances.fork
+  local forked_id, forked_opts
+  hp_instances.fork = function(id, opts)
+    forked_id = id
+    forked_opts = opts
+  end
+
+  local pickers = require("hyprpilot.palettes.pickers")
+  local original_open = pickers.open
+  pickers.open = function(opts)
+    opts.actions.fork.handler(opts.items[2])
+  end
+
+  require("hyprpilot.palettes.instances").open({ cwd = false, with_shutdown = false })
+
+  MiniTest.expect.equality(forked_id, "inst-b")
+  MiniTest.expect.equality(forked_opts.with_shutdown, false)
+
+  pickers.open = original_open
+  hp_instances.fork = original_fork
+  restore_client()
+end
+
 T["palettes.instances.format_item marks the active instance with a `*` prefix"] = function()
   local format = require("hyprpilot.palettes.instances").format_item
   local active = format({ id = "x", agent_id = "claude-code" }, "x")
