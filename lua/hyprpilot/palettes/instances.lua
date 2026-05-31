@@ -183,6 +183,15 @@ function M.open(opts)
         commit(choice.id)
       end,
       actions = {
+        -- `<C-f>` forks the highlighted live session into a new
+        -- daemon instance, then attaches the fork through the same
+        -- lifecycle path as `instances.spawn` / `sessions.load`.
+        fork = {
+          key = "<C-f>",
+          handler = function(item)
+            hp_instances.fork(item.id, { with_shutdown = opts.with_shutdown })
+          end,
+        },
         -- `<C-d>` shuts down the highlighted instance (daemon-side
         -- `instances/shutdown` + local close cascade via `hp.close`).
         -- Closes the picker; captain re-opens to delete another.
@@ -201,6 +210,7 @@ end
 ---@class hyprpilot.palettes.instances.AttachedOpts
 ---@field on_pick? fun(instance_id: string): nil  -- override commit (default: chat.window.switch)
 ---@field picker? "auto" | "snacks" | "vim.ui.select"
+---@field with_shutdown? boolean                  -- forwarded to `instances.fork` side action; default true
 
 ---Local-only variant of `M.open`: picker over instances the plugin
 ---has ALREADY attached to (chat buffer minted + state registered
@@ -268,6 +278,14 @@ function M.open_attached(opts)
       commit(choice.id)
     end,
     actions = {
+      -- Mirror the `<C-f>` fork action on `M.open` so the captain can
+      -- fork either daemon-listed or locally-attached rows.
+      fork = {
+        key = "<C-f>",
+        handler = function(item)
+          hp_instances.fork(item.id, { with_shutdown = opts.with_shutdown })
+        end,
+      },
       -- Mirror the `<C-d>` shutdown action on `M.open` so the
       -- captain has the same delete affordance regardless of
       -- which picker variant they opened.

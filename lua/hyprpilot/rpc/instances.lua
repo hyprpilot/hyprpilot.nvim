@@ -1,7 +1,8 @@
 --- Multi-instance Lua API.
 ---
 --- Thin wrapper over the daemon's `instances/*` RPCs (`list`, `spawn`,
---- `focus`, `restart`, `shutdown`, `rename`, `info`). Every call
+--- `focus`, `restart`, `shutdown`, `rename`, `info`) plus the
+--- session-backed `sessions/fork` RPC. Every call
 --- translates Lua-idiomatic snake_case option keys to the daemon's
 --- camelCase wire shape and back.
 ---
@@ -87,6 +88,22 @@ local SPAWN_TIMEOUT_MS = 30000
 --- resolves to a pre-existing live instance does NOT mark it
 --- owned (we didn't spawn it; not ours to clean up).
 
+---@class hyprpilot.ForkOpts
+---@field instance_id? string        -- source instance; defaults to active when omitted
+---@field target_instance_id? string -- optional daemon target `instanceId`
+---@field profile_id? string
+---@field agent_id? string
+---@field cwd? string
+---@field show? boolean             -- default true
+---@field with_config? hyprpilot.ConfigPatch[]
+--- Same shape as `SpawnOpts.with_config`; applied to the forked
+--- instance's resolved daemon config before ACP `session/fork`.
+---@field with_shutdown? boolean
+--- Same plugin-side ownership flag as `SpawnOpts.with_shutdown`.
+--- Forks are spawn-equivalent and default to auto-shutdown on nvim
+--- quit. Pass `with_shutdown = false` when the fork should outlive
+--- the current frontend.
+
 ---@class hyprpilot.InstanceMeta
 ---@field profile_id? string
 ---@field session_id? string
@@ -108,6 +125,7 @@ local SPAWN_TIMEOUT_MS = 30000
 ---@alias hyprpilot.InstanceCallback fun(err: hyprpilot.client.RpcError?, instance: hyprpilot.Instance?): nil
 ---@alias hyprpilot.InstancesCallback fun(err: hyprpilot.client.RpcError?, instances: hyprpilot.Instance[]?): nil
 ---@alias hyprpilot.InstanceMetaCallback fun(err: hyprpilot.client.RpcError?, meta: hyprpilot.InstanceMeta?): nil
+---@alias hyprpilot.ForkCallback fun(err: hyprpilot.client.RpcError?, instance: hyprpilot.Instance?): nil
 
 ---Translate the daemon's camelCase Instance wire shape into our
 ---snake_case `hyprpilot.Instance` shape. Used for `instances/list`
@@ -177,6 +195,22 @@ local function from_meta_wire(wire)
 end
 
 local with_config = require("hyprpilot.rpc.with-config")
+
+---@param value any
+---@return boolean
+local function has_text(value)
+  return type(value) == "string" and value ~= ""
+end
+
+---@param primary any
+---@param fallback any
+---@return any
+local function prefer_text(primary, fallback)
+  if has_text(primary) then
+    return primary
+  end
+  return fallback
+end
 
 ---Bring a freshly-spawned instance into the local registry + window.
 ---`activate = show_after`: a background spawn (`show = false`) leaves
@@ -446,6 +480,149 @@ function M.focus(instance_id, opts, callback)
     if callback ~= nil then
       callback(nil, instance)
     end
+  end)
+end
+
+---@param info hyprpilot.Instance?
+---@return boolean
+local function fork_needs_meta(info)
+  return type(info) ~= "table" or not has_text(info.session_id) or not has_text(info.profile_id) or not has_text(info.cwd)
+end
+
+---@param info hyprpilot.Instance?
+---@param meta hyprpilot.InstanceMeta?
+---@return hyprpilot.Instance
+local function fork_merge_meta(info, meta)
+  info = info or { id = "" }
+  meta = meta or {}
+
+  return {
+    id = info.id,
+    name = info.name,
+    agent_id = info.agent_id,
+    profile_id = prefer_text(info.profile_id, meta.profile_id),
+    session_id = prefer_text(info.session_id, meta.session_id),
+    mode = info.mode,
+    cwd = prefer_text(info.cwd, meta.cwd),
+  }
+end
+
+---@param id string
+---@param info hyprpilot.Instance?
+---@param callback fun(source: hyprpilot.Instance): nil
+local function fork_resolve_source(id, info, callback)
+  if not fork_needs_meta(info) then
+    callback(info)
+    return
+  end
+
+  M.meta(id, function(meta_err, meta)
+    if meta_err ~= nil then
+      log.debug("instances.fork: meta fallback failed for %s: %s", id, meta_err.message)
+    end
+    callback(fork_merge_meta(info, meta))
+  end)
+end
+
+---@param err hyprpilot.client.RpcError
+---@param callback hyprpilot.ForkCallback?
+local function fork_callback_error(err, callback)
+  if callback ~= nil then
+    callback(err, nil)
+  end
+end
+
+---Fork a live ACP session into a new daemon instance, then attach to it.
+---Defaults to the active instance when `instance_id` is omitted.
+---
+---Call shapes:
+---  - `fork()`
+---  - `fork(callback)`
+---  - `fork(opts, callback)`
+---  - `fork(instance_id, opts, callback)`
+---@param instance_id? string | hyprpilot.ForkOpts | hyprpilot.ForkCallback
+---@param opts? hyprpilot.ForkOpts | hyprpilot.ForkCallback
+---@param callback? hyprpilot.ForkCallback
+function M.fork(instance_id, opts, callback)
+  if type(instance_id) == "function" then
+    callback = instance_id
+    opts = {}
+    instance_id = nil
+  elseif type(instance_id) == "table" then
+    callback = type(opts) == "function" and opts or callback
+    opts = instance_id
+    instance_id = opts.instance_id
+  elseif type(opts) == "function" then
+    callback = opts
+    opts = {}
+  end
+
+  opts = opts or {}
+  if type(opts) ~= "table" then
+    log.warn("instances.fork: opts must be a table")
+    fork_callback_error({ kind = "transport", message = "opts must be a table" }, callback)
+    return
+  end
+
+  local source_id = instance_id or opts.instance_id or window.active_instance()
+  if source_id == nil then
+    log.warn("instances.fork: no active instance and none specified")
+    fork_callback_error({ kind = "transport", message = "no active instance" }, callback)
+    return
+  end
+
+  if not has_text(source_id) then
+    log.warn("instances.fork: instance_id must be a non-empty string")
+    fork_callback_error({ kind = "transport", message = "instance_id required" }, callback)
+    return
+  end
+
+  local show_after = opts.show ~= false
+  local with_shutdown = opts.with_shutdown ~= false
+
+  M.info(source_id, function(info_err, info)
+    if info_err ~= nil then
+      log.warn("instances.fork: info failed for %s: %s", source_id, info_err.message)
+      fork_callback_error(info_err, callback)
+      return
+    end
+
+    fork_resolve_source(source_id, info, function(source)
+      if not has_text(source.session_id) then
+        log.warn("instances.fork: no live session to fork")
+        fork_callback_error({ kind = "transport", message = "no live session to fork" }, callback)
+        return
+      end
+
+      local params = {
+        sessionId = source.session_id,
+        instanceId = opts.target_instance_id,
+        agentId = opts.agent_id or source.agent_id,
+        profileId = opts.profile_id or source.profile_id,
+        cwd = opts.cwd or source.cwd,
+      }
+      with_config.apply(params, opts.with_config)
+
+      client.request("sessions/fork", params, { timeout_ms = SPAWN_TIMEOUT_MS }, function(fork_err, result)
+        if fork_err ~= nil then
+          log.warn("instances.fork: %s", fork_err.message)
+          fork_callback_error(fork_err, callback)
+          return
+        end
+
+        if type(result) ~= "table" or not has_text(result.instanceId) then
+          log.warn("instances.fork: daemon returned no forked instance")
+          fork_callback_error({ kind = "transport", message = "daemon returned no forked instance" }, callback)
+          return
+        end
+
+        M.attach(result.instanceId, {
+          show = show_after,
+          with_shutdown = with_shutdown,
+          callback = callback,
+        })
+      end)
+    end)
   end)
 end
 

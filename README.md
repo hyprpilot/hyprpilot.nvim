@@ -186,6 +186,7 @@ instances.info(instance_id, function(err, info) ... end)         -- → { id, na
 instances.meta(instance_id, function(err, meta) ... end)         -- → { current_mode_id, current_model_id, available_modes, available_models, usage, mcps_count, ... }
 instances.spawn({ name = "main", cwd = vim.fn.getcwd(), restore = false }, callback?)
 instances.focus(instance_id, opts?, callback?)
+instances.fork(instance_id?, opts?, callback?)                  -- fork source session into a new instance
 instances.restart(instance_id, callback?)
 instances.shutdown(instance_id, callback?)
 instances.rename(instance_id, name, callback?)
@@ -199,7 +200,9 @@ instances.set_option(instance_id, config_id, value, callback?)
 
 `spawn` auto-shows the chat split and focuses the composer in insert
 mode. `spawn({ restore = true })` resumes the daemon's last matching
-session.
+session. `fork()` defaults to the active instance, calls the daemon's
+`sessions/fork` RPC, and attaches the returned forked instance through
+the same local lifecycle as spawn/load.
 
 ### Composer
 
@@ -538,6 +541,7 @@ local instances = require("hyprpilot.rpc.instances")
 
 set("n", "<leader>at", hp.toggle,                                       { desc = "hyprpilot: toggle chat" })
 set("n", "<leader>as", function() instances.spawn({ name = "main" }) end, { desc = "hyprpilot: spawn instance" })
+set("n", "<leader>af", function() instances.fork() end,                 { desc = "hyprpilot: fork current session" })
 set("n", "<leader>ar", function() instances.restart() end,              { desc = "hyprpilot: restart current" })
 set("n", "<leader>ax", function() instances.shutdown() end,             { desc = "hyprpilot: shutdown current" })
 
@@ -592,7 +596,13 @@ end, { desc = "hyprpilot: load older history" })
 > per entry, so the row format is `<cwd> · <short-id>`. The
 > `profile_id` / `agent_id` you pass via `palettes.sessions.open({
 > profile_id = "..." })` is forwarded to `sessions/load` so the
-> daemon resolves the right agent for the resume.
+> daemon resolves the right agent for the resume. `instances.fork`
+> uses the newer daemon `sessions/fork` RPC and requires an agent
+> that advertises `sessionCapabilities.fork`; agents without support
+> return a daemon error (Codex may do this until its ACP adapter
+> implements fork). With the snacks picker backend, the instances
+> palette also exposes `<C-f>` as a fork side action for the
+> highlighted row.
 
 ## Limitations
 
