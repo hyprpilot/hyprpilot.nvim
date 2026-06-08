@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.15.0...hyprpilot.nvim-v1.16.0) (2026-06-08)
+
+
+### Features
+
+* **permissions:** add global shortcut actions ([#157](https://github.com/hyprpilot/hyprpilot.nvim/issues/157)) ([143207e](https://github.com/hyprpilot/hyprpilot.nvim/commit/143207eb0174f283d7c12ad8af5e5c621e44e38b))
+
 ## [1.15.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.14.1...hyprpilot.nvim-v1.15.0) (2026-05-31)
 
 
