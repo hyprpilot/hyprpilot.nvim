@@ -33,6 +33,98 @@ T["respond skips invalid input without dispatching"] = function()
   restore()
 end
 
+T["accept resolves the active permission allow option from anywhere"] = function()
+  local restore_active = helpers.stub_active_instance("inst-active")
+  local restore_client, calls = helpers.stub_client_request()
+  local row = require("hyprpilot.chat.permission-row")
+  local permissions = require("hyprpilot.rpc.permissions")
+
+  row.reset()
+  row.enqueue("inst-bg", {
+    request_id = "req-bg",
+    tool = "Bash",
+    options = {
+      { optionId = "allow-bg", name = "Allow" },
+      { optionId = "reject-bg", name = "Reject" },
+    },
+    allow_option_id = "allow-bg",
+    reject_option_id = "reject-bg",
+  })
+  row.enqueue("inst-active", {
+    request_id = "req-active",
+    tool = "Bash",
+    options = {
+      { optionId = "allow-active", name = "Allow" },
+      { optionId = "reject-active", name = "Reject" },
+    },
+    allow_option_id = "allow-active",
+    reject_option_id = "reject-active",
+  })
+
+  MiniTest.expect.equality(permissions.accept(), true)
+  MiniTest.expect.equality(#calls, 1)
+  MiniTest.expect.equality(calls[1].method, "permissions/respond")
+  MiniTest.expect.equality(calls[1].params.requestId, "req-active")
+  MiniTest.expect.equality(calls[1].params.optionId, "allow-active")
+
+  row.reset()
+  restore_client()
+  restore_active()
+end
+
+T["reject resolves the active permission reject option from anywhere"] = function()
+  local restore_active = helpers.stub_active_instance("inst-active")
+  local restore_client, calls = helpers.stub_client_request()
+  local row = require("hyprpilot.chat.permission-row")
+  local permissions = require("hyprpilot.rpc.permissions")
+
+  row.reset()
+  row.enqueue("inst-active", {
+    request_id = "req-active",
+    tool = "Bash",
+    options = {
+      { optionId = "allow-active", name = "Allow" },
+      { optionId = "reject-active", name = "Reject" },
+    },
+    allow_option_id = "allow-active",
+    reject_option_id = "reject-active",
+  })
+
+  MiniTest.expect.equality(permissions.reject(), true)
+  MiniTest.expect.equality(#calls, 1)
+  MiniTest.expect.equality(calls[1].method, "permissions/respond")
+  MiniTest.expect.equality(calls[1].params.requestId, "req-active")
+  MiniTest.expect.equality(calls[1].params.optionId, "reject-active")
+
+  row.reset()
+  restore_client()
+  restore_active()
+end
+
+T["accept and reject skip when no active option id is available"] = function()
+  local restore_active = helpers.stub_active_instance("inst-active")
+  local restore_client, calls = helpers.stub_client_request()
+  local row = require("hyprpilot.chat.permission-row")
+  local permissions = require("hyprpilot.rpc.permissions")
+
+  row.reset()
+  row.enqueue("inst-active", {
+    request_id = "req-active",
+    tool = "Bash",
+    options = {
+      { optionId = "manual", name = "Manual" },
+    },
+  })
+
+  MiniTest.expect.equality(permissions.accept(), false)
+  MiniTest.expect.equality(permissions.reject(), false)
+  MiniTest.expect.equality(#calls, 0)
+
+  row.reset()
+  restore_client()
+  restore_active()
+end
+
 T["pending unwraps the daemon's { pending = [...] } envelope"] = function()
   local client = require("hyprpilot.client")
   local original = client.request
