@@ -456,10 +456,12 @@ end
 ---focused option is used. Returns silently when no head entry exists
 ---or the target id doesn't map to an offered option.
 ---@param target_id? string
-local function submit(target_id)
+---@param callback? fun(err: hyprpilot.client.RpcError?, result: any?)
+---@return boolean dispatched
+local function submit(target_id, callback)
   local entry = head()
   if entry == nil then
-    return
+    return false
   end
 
   local opt, idx
@@ -467,17 +469,17 @@ local function submit(target_id)
     opt, idx = option_by_id(entry.options, target_id)
     if opt == nil then
       log.debug("permission_row: no option with optionId=%q", tostring(target_id))
-      return
+      return false
     end
     entry.focused_idx = idx
   else
     opt = entry.options[entry.focused_idx]
     if opt == nil then
-      return
+      return false
     end
   end
 
-  require("hyprpilot.rpc.permissions").respond(entry.request_id, opt.optionId, function(err)
+  require("hyprpilot.rpc.permissions").respond(entry.request_id, opt.optionId, function(err, result)
     if err ~= nil then
       log.warn("permission_row.respond: %s (%s/%s)", err.message, entry.request_id, opt.optionId)
       -- Surface respond failures via vim.notify (which routes through
@@ -493,7 +495,13 @@ local function submit(target_id)
     else
       log.debug("permission_row.respond: ok %s/%s", entry.request_id, opt.optionId)
     end
+
+    if callback ~= nil then
+      callback(err, result)
+    end
   end)
+
+  return true
 end
 
 local function cycle_focus(delta)
@@ -508,6 +516,47 @@ local function cycle_focus(delta)
   local current = entry.focused_idx or 1
   entry.focused_idx = ((current - 1 + delta) % count) + 1
   M.refresh()
+end
+
+---@param field "allow_option_id" | "reject_option_id"
+---@param callback? fun(err: hyprpilot.client.RpcError?, result: any?)
+---@return boolean dispatched
+local function submit_daemon_pick(field, callback)
+  local entry = head()
+  if entry == nil then
+    log.debug("permission_row: no pending permission for active instance")
+    return false
+  end
+
+  local target_id = entry[field]
+  if type(target_id) ~= "string" or target_id == "" then
+    log.warn("permission_row: daemon shipped no %s for %s — pick explicitly with <Tab> + <CR>", field, entry.request_id)
+    return false
+  end
+
+  return submit(target_id, callback)
+end
+
+---Accept the head permission for the currently active chat instance.
+---
+---This is the row-owned primitive behind global permission keymaps:
+---callers do not need focus in the permission row, nor do they need
+---to know the request/option ids. The daemon-provided allow option id
+---stays the source of truth.
+---@param callback? fun(err: hyprpilot.client.RpcError?, result: any?)
+---@return boolean dispatched
+function M.accept(callback)
+  return submit_daemon_pick("allow_option_id", callback)
+end
+
+---Reject the head permission for the currently active chat instance.
+---
+---Like `accept`, this resolves the active row entry from anywhere in
+---Neovim and uses the daemon-provided reject option id.
+---@param callback? fun(err: hyprpilot.client.RpcError?, result: any?)
+---@return boolean dispatched
+function M.reject(callback)
+  return submit_daemon_pick("reject_option_id", callback)
 end
 
 local apply_action = require("hyprpilot.ui.keymaps").apply_action
@@ -527,27 +576,11 @@ local function install_keymaps(bufnr)
   end, "submit focused permission option")
 
   apply_action(bufnr, keymaps.accept, function()
-    local entry = head()
-    if entry == nil then
-      return
-    end
-    if type(entry.allow_option_id) ~= "string" or entry.allow_option_id == "" then
-      log.warn("permission_row: daemon shipped no allow_option_id for %s — pick explicitly with <Tab> + <CR>", entry.request_id)
-      return
-    end
-    submit(entry.allow_option_id)
+    M.accept()
   end, "allow pending permission")
 
   apply_action(bufnr, keymaps.reject, function()
-    local entry = head()
-    if entry == nil then
-      return
-    end
-    if type(entry.reject_option_id) ~= "string" or entry.reject_option_id == "" then
-      log.warn("permission_row: daemon shipped no reject_option_id for %s — pick explicitly with <Tab> + <CR>", entry.request_id)
-      return
-    end
-    submit(entry.reject_option_id)
+    M.reject()
   end, "deny pending permission")
 
   apply_action(bufnr, keymaps.cycle_next, function()

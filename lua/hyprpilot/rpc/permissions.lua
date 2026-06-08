@@ -62,6 +62,26 @@ function M.respond(request_id, option_id, opts_or_callback, callback)
   end)
 end
 
+---Accept the head permission request for the active chat instance.
+---
+---Designed for global keymaps outside the permission-row buffer:
+---the row owns the pending queue and daemon-provided allow option id,
+---so this delegates there instead of asking callers for ids.
+---@param callback? fun(err: hyprpilot.client.RpcError?, result: any?)
+---@return boolean dispatched
+function M.accept(callback)
+  return require("hyprpilot.chat.permission-row").accept(callback)
+end
+
+---Reject the head permission request for the active chat instance.
+---
+---Designed for global keymaps outside the permission-row buffer.
+---@param callback? fun(err: hyprpilot.client.RpcError?, result: any?)
+---@return boolean dispatched
+function M.reject(callback)
+  return require("hyprpilot.chat.permission-row").reject(callback)
+end
+
 ---Fetch the daemon's pending-permission queue. Filters by
 ---`instance_id` when provided.
 ---@param opts? { instance_id?: string }

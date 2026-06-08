@@ -248,15 +248,19 @@ indefinitely. The stack clears once the prompt sends successfully.
 ```lua
 local permissions = require("hyprpilot.rpc.permissions")
 
+permissions.accept(callback?)                         -- active chat prompt, allow option
+permissions.reject(callback?)                         -- active chat prompt, reject option
 permissions.respond(request_id, option_id, callback?)
 permissions.pending({ instance_id = "..." }, function(err, pending) ... end)
 ```
 
 In-buffer UX (installed automatically when a `permission_request`
 block renders): `<Tab>` / `<S-Tab>` cycle the focused button, `<CR>`
-commits, `g` smart-matches an `^allow|^accept|^proceed` option and
-commits, `d` smart-matches `^reject|^deny|^abort|^cancel`. Cursor
-outside the button row falls through normally.
+commits, `<localleader>a` accepts the daemon-provided allow option,
+and `<localleader>d` rejects with the daemon-provided reject option.
+`permissions.accept()` / `permissions.reject()` expose the same active
+chat prompt actions for global keymaps outside the permission row.
+Cursor outside the button row falls through normally.
 
 ### Status
 
