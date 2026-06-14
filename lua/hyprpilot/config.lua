@@ -106,6 +106,10 @@ local M = {}
 
 ---@class hyprpilot.ConfigChat
 ---@field keymaps? hyprpilot.ConfigChatKeymaps
+---@field trim? hyprpilot.ConfigChatTrim
+
+---@class hyprpilot.ConfigChatTrim
+---@field keep_lines? integer  -- local buffer trim tail size (default 500)
 
 --- Chat-buffer keymaps. Buffer-local, normal mode only. Each value
 --- is `string | string[] | false` — `false` disables, lists bind
@@ -242,6 +246,9 @@ local defaults = {
     },
   },
   chat = {
+    trim = {
+      keep_lines = 500,
+    },
     keymaps = {
       goto_file = "gf",
       -- `[`/`]` family follows vim's stock next-of-kind motions

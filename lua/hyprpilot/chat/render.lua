@@ -3300,6 +3300,191 @@ function M.apply_pending_folds(bufnr)
   end
 end
 
+---@param state hyprpilot.render.State
+---@param mark integer?
+---@return integer?
+local function row_for_mark(state, mark)
+  if mark == nil then
+    return nil
+  end
+
+  return vim.api.nvim_buf_get_extmark_by_id(state.bufnr, NS, mark, {})[1]
+end
+
+---@param state hyprpilot.render.State
+---@param turn_id string?
+---@return integer?
+local function earliest_turn_row(state, turn_id)
+  if turn_id == nil then
+    return nil
+  end
+
+  local earliest
+  local layout = state.turn_layouts[turn_id]
+  if layout ~= nil then
+    for _, row in ipairs({
+      row_for_mark(state, layout.pilot_header_mark),
+      row_for_mark(state, layout.section_anchor_mark),
+      row_for_mark(state, layout.prose_anchor_mark),
+    }) do
+      if row ~= nil and (earliest == nil or row < earliest) then
+        earliest = row
+      end
+    end
+  end
+
+  for _, block in pairs(state.blocks) do
+    if block.turn_id == turn_id then
+      local row = row_for_mark(state, block.head_mark)
+      if row ~= nil and (earliest == nil or row < earliest) then
+        earliest = row
+      end
+    end
+  end
+
+  if earliest ~= nil then
+    local lines = vim.api.nvim_buf_get_lines(state.bufnr, 0, earliest + 1, false)
+    for row = #lines, 1, -1 do
+      if lines[row]:match("^##%s+captain") then
+        earliest = row - 1
+        break
+      end
+    end
+  end
+
+  return earliest
+end
+
+---@param state hyprpilot.render.State
+---@param candidate integer
+---@return integer
+local function align_trim_start(state, candidate)
+  local lines = vim.api.nvim_buf_get_lines(state.bufnr, candidate, -1, false)
+  for idx, line in ipairs(lines) do
+    if line:match("^##%s+captain") or line:match("^##%s+pilot") then
+      return candidate + idx - 1
+    end
+  end
+
+  return candidate
+end
+
+---@param state hyprpilot.render.State
+---@param cut_to integer
+local function prune_after_trim(state, cut_to)
+  for block_id, block in pairs(state.blocks) do
+    if row_for_mark(state, block.head_mark) == nil or row_for_mark(state, block.tail_mark) == nil then
+      cancel_tool_call_timer(block)
+      state.blocks[block_id] = nil
+    end
+  end
+
+  for tool_call_id, block_id in pairs(state.tool_calls) do
+    if state.blocks[block_id] == nil then
+      state.tool_calls[tool_call_id] = nil
+    end
+  end
+
+  for terminal_id, terminal in pairs(state.terminals) do
+    if terminal._block ~= nil and state.blocks[terminal._block.id] == nil then
+      state.terminals[terminal_id] = nil
+    end
+  end
+
+  for turn_id, layout in pairs(state.turn_layouts) do
+    if row_for_mark(state, layout.pilot_header_mark) == nil or row_for_mark(state, layout.section_anchor_mark) == nil or row_for_mark(state, layout.prose_anchor_mark) == nil then
+      state.turn_layouts[turn_id] = nil
+      state.headers_emitted[turn_id] = nil
+    else
+      for kind, section in pairs(layout.sections) do
+        if row_for_mark(state, section.head_mark) == nil or row_for_mark(state, section.tail_mark) == nil then
+          layout.sections[kind] = nil
+        else
+          local kept = {}
+          for _, block_id in ipairs(section.block_ids or {}) do
+            if state.blocks[block_id] ~= nil then
+              table.insert(kept, block_id)
+            end
+          end
+          section.block_ids = kept
+        end
+      end
+    end
+  end
+
+  for _, slot in ipairs({ "active_text_block", "active_thought_block", "active_plan_block", "active_goal_block" }) do
+    local value = state[slot]
+    if type(value) == "table" then
+      if state.blocks[value.id] == nil then
+        state[slot] = nil
+      end
+    elseif type(value) == "string" and state.blocks[value] == nil then
+      state[slot] = nil
+    end
+  end
+
+  local rows = {}
+  for _, row in ipairs(state.pending_fold_rows or {}) do
+    if row >= cut_to then
+      table.insert(rows, row - cut_to)
+    end
+  end
+  state.pending_fold_rows = rows
+end
+
+---@param keep_lines? integer
+---@return integer?
+local function resolve_keep_lines(keep_lines)
+  if keep_lines ~= nil then
+    return tonumber(keep_lines)
+  end
+
+  return tonumber(((config.options.chat or {}).trim or {}).keep_lines)
+end
+
+---Trim old rendered chat lines from the local Neovim buffer. This does
+---not mutate daemon transcript history; the next snapshot hydrate can
+---restore the omitted context.
+---@param state hyprpilot.render.State
+---@param opts? { keep_lines?: integer }
+---@return { removed: integer, kept: integer }?
+function M.trim(state, opts)
+  local keep_lines = resolve_keep_lines((opts or {}).keep_lines)
+  if keep_lines == nil or keep_lines < 1 then
+    log.warn("render.trim: invalid keep_lines=%s", vim.inspect((opts or {}).keep_lines))
+    return nil
+  end
+
+  keep_lines = math.floor(keep_lines)
+
+  local line_count = vim.api.nvim_buf_line_count(state.bufnr)
+  if line_count <= keep_lines then
+    return { removed = 0, kept = line_count }
+  end
+
+  local cut_to = align_trim_start(state, line_count - keep_lines)
+  local protected_start = earliest_turn_row(state, state.current_turn)
+  if protected_start ~= nil and cut_to > protected_start then
+    cut_to = protected_start
+  end
+
+  if cut_to <= 0 then
+    return { removed = 0, kept = line_count }
+  end
+
+  chat_buffer.with_buffer(state.bufnr, function()
+    vim.api.nvim_buf_set_lines(state.bufnr, 0, cut_to, false, {})
+  end)
+
+  prune_after_trim(state, cut_to)
+  state.has_more = true
+
+  local kept = vim.api.nvim_buf_line_count(state.bufnr)
+  log.info("render.trim: instance=%s removed=%d kept=%d", state.instance_id, cut_to, kept)
+
+  return { removed = cut_to, kept = kept }
+end
+
 ---Lookup the block registered for `bufnr` whose head row matches the
 ---cursor row (or whose body covers it). Used by the permissions UI to
 ---route keymaps.
