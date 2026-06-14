@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.16.0...hyprpilot.nvim-v1.17.0) (2026-06-14)
+
+
+### Features
+
+* **chat:** add local buffer trimming ([#159](https://github.com/hyprpilot/hyprpilot.nvim/issues/159)) ([437d794](https://github.com/hyprpilot/hyprpilot.nvim/commit/437d79406a3eb4901ddb47fc342298ec509a8958))
+
 ## [1.16.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.15.0...hyprpilot.nvim-v1.16.0) (2026-06-08)
 
 
