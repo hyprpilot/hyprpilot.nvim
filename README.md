@@ -123,6 +123,12 @@ require("hyprpilot").setup({
     },
   },
 
+  chat = {
+    trim = {
+      keep_lines = 500,                         -- tail kept by chat.window.trim()
+    },
+  },
+
   palettes = {
     -- Backend for the palette pickers under `lua/hyprpilot/palettes/`.
     -- "auto" uses snacks.nvim's picker when installed (with previews)
@@ -174,6 +180,10 @@ require("hyprpilot").active_instance()                 -- → string?
 -- so older transcript items appear above the current view. No-op when
 -- the daemon already reported `hasMore == false`.
 require("hyprpilot.chat.window").load_older(instance_id?, opts?, callback?)
+
+-- Local-only buffer trim — drops old rendered lines while keeping the
+-- tail. Daemon transcript/session history is untouched.
+require("hyprpilot.chat.window").trim(instance_id?, { keep_lines = 500 })
 ```
 
 ### Multi-instance
@@ -592,6 +602,11 @@ set("n", "<leader>ap", function() composer.attach_clipboard_image() end,
 set("n", "<leader>au", function()
   require("hyprpilot.chat.window").load_older()
 end, { desc = "hyprpilot: load older history" })
+
+-- Trim local rendered chat history while keeping the latest 500 lines.
+set("n", "<leader>aL", function()
+  require("hyprpilot.chat.window").trim()
+end, { desc = "hyprpilot: trim chat buffer" })
 ```
 
 > **Sessions palette** rides on the daemon's `sessions/list` +
@@ -620,9 +635,9 @@ end, { desc = "hyprpilot: load older history" })
   permissions (live event) work fine.
 - **Initial chat snapshot is the latest 100 items.** Older history is
   pulled on demand via `require("hyprpilot.chat.window").load_older()`,
-  which bumps the snapshot page and re-hydrates. The transcript isn't
-  trimmed once loaded — sessions with thousands of items will keep
-  growing buffer-side memory.
+  which bumps the snapshot page and re-hydrates. Use
+  `require("hyprpilot.chat.window").trim()` to drop old rendered lines
+  from the local buffer while leaving daemon transcript history intact.
 - **Edit / diff tool calls render as plain folded blocks**, not
   side-by-side diffs. The agent's diff content shows verbatim inside
   the fold.

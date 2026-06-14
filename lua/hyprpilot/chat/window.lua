@@ -706,6 +706,33 @@ function M.load_older(instance_id, opts, callback)
   require("hyprpilot.chat.events").load_older(id, opts, callback)
 end
 
+---Trim old rendered lines from the local chat buffer. Defaults to the
+---active instance and `chat.trim.keep_lines`; does not mutate daemon
+---transcript history.
+---@param instance_id? string | { keep_lines?: integer }
+---@param opts? { keep_lines?: integer }
+---@return { removed: integer, kept: integer }?
+function M.trim(instance_id, opts)
+  if type(instance_id) == "table" then
+    opts = instance_id
+    instance_id = nil
+  end
+
+  local id = instance_id or M._last_active_id
+  if id == nil then
+    log.warn("window.trim: no active instance")
+    return nil
+  end
+
+  local state = require("hyprpilot.chat.render").state_for(id)
+  if state == nil then
+    log.warn("window.trim: no render state for instance=%s", id)
+    return nil
+  end
+
+  return require("hyprpilot.chat.render").trim(state, opts)
+end
+
 -- Re-assert the chat window's fold setup whenever a chat buffer
 -- becomes visible. A layout manager (edgy) that adopts the window
 -- after `open_split` ran will reset window-local options on
