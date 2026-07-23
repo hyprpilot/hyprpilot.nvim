@@ -2,14 +2,12 @@
 --- diagnostics is a sibling concern of LSP). Captain wires what
 --- they want from their config:
 ---
----     require("hyprpilot.mcp.lsp").register_all()
+---     require("hyprpilot.mcp.lsp").register()
 ---
----     -- or selective:
----     local mcp = require("hyprpilot.mcp")
----     local lsp = require("hyprpilot.mcp.lsp").tools
----     mcp.register(lsp.definition)
----     mcp.register(lsp.hover)
----     mcp.register(lsp.diagnostics_get)
+---     -- or a subset:
+---     require("hyprpilot.mcp.lsp").register({
+---       items = { "definition", "hover", "diagnostics_get" },
+---     })
 ---
 --- Why these tools live as registered tools and not Python-side
 --- bridge primitives: agent profiles need allow / deny / auto-allow
@@ -36,6 +34,15 @@ local log = require("hyprpilot.log")
 local mcp = require("hyprpilot.mcp")
 
 local M = {}
+
+-- Tool names this category currently has in the registry. `register`
+-- overrides against this so a re-register with a smaller `items` list
+-- drops the tools that fell out of the selection.
+local registered = {}
+
+-- LSP client names the tools skip when servicing a request, configured
+-- via `register({ disabled_lsps = ... })`. Empty by default.
+local disabled_lsps = {}
 
 local DEFAULT_TIMEOUT_MS = 2000
 
@@ -79,7 +86,14 @@ end
 ---@param method string
 ---@return vim.lsp.Client[]
 local function clients_for(bufnr, method)
-  return vim.lsp.get_clients({ bufnr = bufnr, method = method })
+  local clients = vim.lsp.get_clients({ bufnr = bufnr, method = method })
+  if #disabled_lsps == 0 then
+    return clients
+  end
+
+  return vim.tbl_filter(function(client)
+    return not vim.tbl_contains(disabled_lsps, client.name)
+  end, clients)
 end
 
 ---Build the `textDocument/<method>` position params for `bufnr` +
@@ -518,11 +532,54 @@ M.tools.diagnostics_get = {
   end,
 }
 
----Register every tool in `M.tools` against the central `mcp`
----registry. Idempotent — each name overwrites any prior entry.
-function M.register_all()
-  for _, tool in pairs(M.tools) do
+---Register the LSP tools against the central `mcp` registry.
+---Idempotent — each name overwrites any prior entry.
+---
+---     require("hyprpilot.mcp.lsp").register()
+---     require("hyprpilot.mcp.lsp").register({
+---       items = { "definition", "hover" },
+---       disabled_lsps = { "copilot", "null-ls" },
+---     })
+---
+---@class hyprpilot.mcp.lsp.RegisterOpts
+---@field items? string[]          -- `M.tools` keys to register; all when omitted
+---@field disabled_lsps? string[]  -- LSP client names the tools skip when servicing a request
+---@param opts? hyprpilot.mcp.lsp.RegisterOpts
+function M.register(opts)
+  opts = opts or {}
+
+  disabled_lsps = opts.disabled_lsps or {}
+
+  ---@type table<string, hyprpilot.mcp.Tool>
+  local desired = {}
+  if opts.items == nil then
+    for _, tool in pairs(M.tools) do
+      desired[tool.name] = tool
+    end
+  else
+    for _, name in ipairs(opts.items) do
+      local tool = M.tools[name]
+      if tool == nil then
+        log.warn("mcp.lsp.register: unknown tool %q", name)
+      else
+        desired[tool.name] = tool
+      end
+    end
+  end
+
+  -- Override: drop tools we registered before that fell out of the
+  -- selection, then (re)register the desired set (overwrite by name).
+  local live = mcp._registry()
+  for name in pairs(registered) do
+    if desired[name] == nil and live[name] ~= nil then
+      mcp.unregister(name)
+    end
+  end
+
+  registered = {}
+  for name, tool in pairs(desired) do
     mcp.register(tool)
+    registered[name] = true
   end
 end
 
