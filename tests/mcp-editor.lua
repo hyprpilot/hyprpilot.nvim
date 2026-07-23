@@ -5,12 +5,12 @@
 
 local T = MiniTest.new_set()
 
-T["register_all: every editor_* tool lands in the registry"] = function()
+T["register: every editor_* tool lands in the registry"] = function()
   local mcp = require("hyprpilot.mcp")
   local editor = require("hyprpilot.mcp.editor")
   mcp._reset()
 
-  editor.register_all()
+  editor.register()
 
   local listed = mcp.list()
   MiniTest.expect.equality(#listed, vim.tbl_count(editor.tools))
@@ -19,6 +19,52 @@ T["register_all: every editor_* tool lands in the registry"] = function()
   end
 
   mcp._reset()
+end
+
+T["register: items registers only the named subset, unknown names skipped"] = function()
+  local mcp = require("hyprpilot.mcp")
+  local editor = require("hyprpilot.mcp.editor")
+  mcp._reset()
+
+  editor.register({ items = { "cursor", "read", "nope" } })
+
+  local names = {}
+  for _, t in ipairs(mcp.list()) do
+    names[t.name] = true
+  end
+  MiniTest.expect.equality(names["editor_cursor"], true)
+  MiniTest.expect.equality(names["editor_read"], true)
+  MiniTest.expect.equality(names["editor_buffers"], nil)
+  MiniTest.expect.equality(vim.tbl_count(names), 2)
+
+  mcp._reset()
+end
+
+T["register: disabled_filetypes routes navigation away from matching windows"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+  editor.register({ disabled_filetypes = { "myaux" } })
+
+  vim.cmd("only")
+  vim.cmd("new") -- editor split, holds the file we expect to land on
+  local editor_bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(editor_bufnr, 0, -1, false, { "alpha", "beta", "gamma" })
+
+  -- Drop focus into a disabled-filetype window; the cursor tool must
+  -- walk to the editor split instead of reporting the aux buffer.
+  vim.cmd("new")
+  local aux_winid = vim.api.nvim_get_current_win()
+  local aux_bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[aux_bufnr].filetype = "myaux"
+  vim.bo[aux_bufnr].buftype = "nofile"
+
+  local result = editor.tools.cursor.handler({})
+  MiniTest.expect.equality(result.json.bufnr, editor_bufnr)
+
+  -- Reset module state so later cases don't inherit the exclusion list.
+  editor.register({ disabled_filetypes = {}, disabled_buffer_types = {} })
+  pcall(vim.api.nvim_win_close, aux_winid, true)
+  pcall(vim.api.nvim_buf_delete, aux_bufnr, { force = true })
+  pcall(vim.api.nvim_buf_delete, editor_bufnr, { force = true })
 end
 
 T["editor_cursor: returns cursor pos + buffer info for the active window"] = function()

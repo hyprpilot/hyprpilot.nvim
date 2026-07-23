@@ -46,14 +46,14 @@ class _DirectNvim(NvimWrapper):
         self._log = log.get("nvim-test")
 
 
-def test_register_all_categories_surface_through_discover(nvim: pynvim.Nvim) -> None:
-    """Captain calls `register_all()` for each built-in category;
+def test_register_categories_surface_through_discover(nvim: pynvim.Nvim) -> None:
+    """Captain calls `register()` for each built-in category;
     the Python-side `discover()` must surface every tool name with
     a non-empty description and an `object`-typed schema."""
     nvim.exec_lua(
         """
-        require("hyprpilot.mcp.lsp").register_all()
-        require("hyprpilot.mcp.editor").register_all()
+        require("hyprpilot.mcp.lsp").register()
+        require("hyprpilot.mcp.editor").register()
         """,
         [],
     )
@@ -91,7 +91,7 @@ def test_register_dynamic_creates_one_function_tool_per_lua_entry(
     """`register_dynamic` builds the FastMCP `FunctionTool` per Lua
     tool. The schema passes through verbatim (we don't synthesize it
     from Python type hints)."""
-    nvim.exec_lua("require('hyprpilot.mcp.editor').register_all()", [])
+    nvim.exec_lua("require('hyprpilot.mcp.editor').register()", [])
 
     mcp = FastMCP("test")
     tools = register_dynamic(mcp, _DirectNvim(nvim))
@@ -111,7 +111,7 @@ def test_dispatch_round_trip_returns_lua_result(nvim: pynvim.Nvim) -> None:
     """End-to-end: register an editor_cursor tool on the Lua side,
     call it via the Python dispatcher, verify the JSON payload
     survives the round-trip."""
-    nvim.exec_lua("require('hyprpilot.mcp.editor').register_all()", [])
+    nvim.exec_lua("require('hyprpilot.mcp.editor').register()", [])
 
     mcp = FastMCP("test")
     tools = register_dynamic(mcp, _DirectNvim(nvim))
@@ -158,7 +158,7 @@ def test_dispatch_round_trip_carries_arguments(nvim: pynvim.Nvim) -> None:
 def test_unregister_removes_tool_from_subsequent_discover(nvim: pynvim.Nvim) -> None:
     """The reload management surface relies on `discover()` reflecting
     captain-driven `unregister()` calls."""
-    nvim.exec_lua("require('hyprpilot.mcp.editor').register_all()", [])
+    nvim.exec_lua("require('hyprpilot.mcp.editor').register()", [])
     wrapper = _DirectNvim(nvim)
 
     names_before = {entry["name"] for entry in discover(wrapper)}
@@ -171,7 +171,7 @@ def test_unregister_removes_tool_from_subsequent_discover(nvim: pynvim.Nvim) -> 
 
 
 def test_discover_with_empty_registry_returns_empty_list(nvim: pynvim.Nvim) -> None:
-    """No `register_all()` call → no captain tools. The bridge surfaces
+    """No `register()` call → no captain tools. The bridge surfaces
     its built-in management tools separately; this list is just the
     Lua-side surface."""
     # Reset the registry (some other test in the same nvim might
@@ -215,14 +215,14 @@ def test_dispatch_propagates_lua_handler_error(nvim: pynvim.Nvim) -> None:
         "hyprpilot.mcp.editor",
     ],
 )
-def test_each_category_has_register_all_idempotent(nvim: pynvim.Nvim, category_module: str) -> None:
-    """Calling `register_all()` twice is a no-op (overwrite semantics
-    on the registry side). The captain's hot-reload workflow depends
-    on this."""
-    nvim.exec_lua(f"require('{category_module}').register_all()", [])
+def test_each_category_register_is_override(nvim: pynvim.Nvim, category_module: str) -> None:
+    """Calling `register()` twice overrides — the second call replaces
+    the category's registered set, so the tool names are identical, not
+    doubled. The captain's hot-reload workflow depends on this."""
+    nvim.exec_lua(f"require('{category_module}').register()", [])
     first = discover(_DirectNvim(nvim))
 
-    nvim.exec_lua(f"require('{category_module}').register_all()", [])
+    nvim.exec_lua(f"require('{category_module}').register()", [])
     second = discover(_DirectNvim(nvim))
 
     # Same set of names (some other category may also be registered;

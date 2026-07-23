@@ -21,8 +21,8 @@ Bridge your live Neovim's editor state — LSP, buffers, cursor, files — into 
     require("hyprpilot").setup({})
 
     -- Register the tool categories you want the agent to see.
-    require("hyprpilot.mcp.lsp").register_all()
-    require("hyprpilot.mcp.editor").register_all()
+    require("hyprpilot.mcp.lsp").register()
+    require("hyprpilot.mcp.editor").register()
   end,
 }
 ```
@@ -41,7 +41,7 @@ require("hyprpilot").setup({
 })
 ```
 
-Tool registration is deliberately not config-driven — you call `register_all()` (or register individual tools) yourself, so the daemon-side per-profile allow / deny lists stay the single source of policy.
+Tool registration is deliberately not config-driven — you call `register()` (or register individual tools) yourself, so the daemon-side per-profile allow / deny lists stay the single source of policy.
 
 ## Tools
 
@@ -50,19 +50,32 @@ Built-in categories, named `<category>_<verb>`:
 - `lsp_*` — `ensure_loaded`, `definition`, `references`, `hover`, `document_symbols`, `workspace_symbols`, `code_actions`, `rename`, `diagnostics_get`
 - `editor_*` — `cursor`, `buffers`, `read`, `grep`, `files`, `status`, `file_open`, `jump`, `select`, `format`
 
-Register everything, or pick individual tools:
+Each category's `register(opts?)` doubles as a setup call. Omit `opts` to register everything; pass `items` to register a subset. Calling it again overrides — the category's registered set is replaced, not added to.
 
 ```lua
 -- Everything in one shot:
-require("hyprpilot.mcp.lsp").register_all()
-require("hyprpilot.mcp.editor").register_all()
+require("hyprpilot.mcp.lsp").register()
+require("hyprpilot.mcp.editor").register()
 
--- Or selective:
-local mcp = require("hyprpilot.mcp")
-local lsp = require("hyprpilot.mcp.lsp").tools
-mcp.register(lsp.definition)
-mcp.register(lsp.hover)
-mcp.register(lsp.diagnostics_get)
+-- A subset:
+require("hyprpilot.mcp.lsp").register({ items = { "definition", "hover", "diagnostics_get" } })
+```
+
+`editor.register` also routes navigation (`file_open`, `jump`, `cursor`, …) away from windows whose filetype or buftype you exclude, so an open doesn't land in a file explorer, terminal, or quickfix window:
+
+```lua
+require("hyprpilot.mcp.editor").register({
+  disabled_filetypes = { "neo-tree", "qf", "help" },
+  disabled_buffer_types = { "terminal", "prompt" },
+})
+```
+
+`lsp.register` takes `disabled_lsps` to skip specific LSP clients (by name) when servicing a request:
+
+```lua
+require("hyprpilot.mcp.lsp").register({
+  disabled_lsps = { "copilot", "null-ls" },
+})
 ```
 
 ### Custom tools

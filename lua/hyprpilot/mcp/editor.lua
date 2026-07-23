@@ -2,18 +2,31 @@
 --- discovery, cursor context. Captain wires what they want from
 --- their config:
 ---
----     require("hyprpilot.mcp.editor").register_all()
+---     require("hyprpilot.mcp.editor").register()
 ---
----     -- or selective:
----     local mcp = require("hyprpilot.mcp")
----     local editor = require("hyprpilot.mcp.editor").tools
----     mcp.register(editor.cursor)
----     mcp.register(editor.read)
+---     -- a subset, plus windows navigation should route around:
+---     require("hyprpilot.mcp.editor").register({
+---       items = { "cursor", "read" },
+---       disabled_filetypes = { "neo-tree", "qf" },
+---       disabled_buffer_types = { "terminal" },
+---     })
 
 local log = require("hyprpilot.log")
 local mcp = require("hyprpilot.mcp")
 
 local M = {}
+
+-- Windows the agent's navigation should route around, configured via
+-- `register({ disabled_filetypes = ..., disabled_buffer_types = ... })`.
+-- Empty by default; the captain typically feeds their editor-wide
+-- exclusion lists (file explorers, terminals, quickfix, etc.).
+local disabled_filetypes = {}
+local disabled_buffer_types = {}
+
+-- Tool names this category currently has in the registry. `register`
+-- overrides against this so a re-register with a smaller `items` list
+-- drops the tools that fell out of the selection.
+local registered = {}
 
 ---@param winid integer
 ---@return boolean
@@ -22,17 +35,28 @@ local function is_floating(winid)
   return config.relative ~= nil and config.relative ~= ""
 end
 
----A window suitable for file navigation: the current one unless it's
----a floating popup (snacks picker, diff preview, telescope), in which
----case the first non-floating window. nil when only floats are visible.
+---True when `winid` shows a buffer whose filetype or buftype is on the
+---configured exclusion lists — a file op there would clobber a surface
+---the captain doesn't treat as an editor window.
+---@param winid integer
+---@return boolean
+local function is_disabled(winid)
+  local bufnr = vim.api.nvim_win_get_buf(winid)
+  return vim.tbl_contains(disabled_filetypes, vim.bo[bufnr].filetype) or vim.tbl_contains(disabled_buffer_types, vim.bo[bufnr].buftype)
+end
+
+---A window suitable for file navigation: the current one unless it's a
+---floating popup (snacks picker, diff preview, telescope) or on the
+---disabled lists, in which case the first window that is neither. nil
+---when no such window is visible.
 ---@return integer?
 local function editor_winid()
   local current = vim.api.nvim_get_current_win()
-  if not is_floating(current) then
+  if not is_floating(current) and not is_disabled(current) then
     return current
   end
   for _, winid in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_is_valid(winid) and not is_floating(winid) then
+    if vim.api.nvim_win_is_valid(winid) and not is_floating(winid) and not is_disabled(winid) then
       return winid
     end
   end
@@ -657,10 +681,60 @@ M.tools.format = {
   end,
 }
 
----Register every tool in `M.tools`. Idempotent.
-function M.register_all()
-  for _, tool in pairs(M.tools) do
+---Register the editor tools and configure window routing. Idempotent —
+---re-registering overwrites, so this doubles as a setup entry point.
+---
+---     -- everything:
+---     require("hyprpilot.mcp.editor").register()
+---
+---     -- a subset + route around the captain's non-editor surfaces:
+---     require("hyprpilot.mcp.editor").register({
+---       items = { "cursor", "read", "file_open" },
+---       disabled_filetypes = { "neo-tree", "qf", "help" },
+---       disabled_buffer_types = { "terminal", "prompt" },
+---     })
+---
+---@class hyprpilot.mcp.editor.RegisterOpts
+---@field items? string[]                    -- `M.tools` keys to register; all when omitted
+---@field disabled_filetypes? string[]       -- filetypes whose windows navigation skips
+---@field disabled_buffer_types? string[]    -- buftypes whose windows navigation skips
+---@param opts? hyprpilot.mcp.editor.RegisterOpts
+function M.register(opts)
+  opts = opts or {}
+
+  disabled_filetypes = opts.disabled_filetypes or {}
+  disabled_buffer_types = opts.disabled_buffer_types or {}
+
+  ---@type table<string, hyprpilot.mcp.Tool>
+  local desired = {}
+  if opts.items == nil then
+    for _, tool in pairs(M.tools) do
+      desired[tool.name] = tool
+    end
+  else
+    for _, name in ipairs(opts.items) do
+      local tool = M.tools[name]
+      if tool == nil then
+        log.warn("mcp.editor.register: unknown tool %q", name)
+      else
+        desired[tool.name] = tool
+      end
+    end
+  end
+
+  -- Override: drop tools we registered before that fell out of the
+  -- selection, then (re)register the desired set (overwrite by name).
+  local live = mcp._registry()
+  for name in pairs(registered) do
+    if desired[name] == nil and live[name] ~= nil then
+      mcp.unregister(name)
+    end
+  end
+
+  registered = {}
+  for name, tool in pairs(desired) do
     mcp.register(tool)
+    registered[name] = true
   end
 end
 

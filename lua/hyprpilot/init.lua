@@ -11,8 +11,8 @@
 --- want from your own config; there is no config flag for it (the
 --- daemon-side profile allow / deny lists own that policy):
 ---
----     require("hyprpilot.mcp.lsp").register_all()
----     require("hyprpilot.mcp.editor").register_all()
+---     require("hyprpilot.mcp.lsp").register()
+---     require("hyprpilot.mcp.editor").register()
 
 local M = {}
 

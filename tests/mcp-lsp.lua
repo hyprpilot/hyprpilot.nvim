@@ -1,5 +1,5 @@
 --- Behavioural tests for `hyprpilot.mcp.lsp`. These exercise the
---- tool-spec shape (name / schema / register_all wiring) and the
+--- tool-spec shape (name / schema / register wiring) and the
 --- non-LSP-dependent paths (diagnostics_get reads from
 --- `vim.diagnostic`, ensure_loaded uses `bufadd` + `bufload`).
 ---
@@ -11,12 +11,12 @@
 
 local T = MiniTest.new_set()
 
-T["register_all: every tool in M.tools lands in the registry"] = function()
+T["register: every tool in M.tools lands in the registry"] = function()
   local mcp = require("hyprpilot.mcp")
   local lsp = require("hyprpilot.mcp.lsp")
   mcp._reset()
 
-  lsp.register_all()
+  lsp.register()
 
   local listed = mcp.list()
   -- Every tool name is `lsp_*` or `diagnostics_*`. There must be at

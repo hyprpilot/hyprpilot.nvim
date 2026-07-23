@@ -12,8 +12,8 @@
 --- control over which tools the daemon-side profile allow / deny
 --- lists negotiate against. To enable everything in one shot:
 ---
----     require("hyprpilot.mcp.lsp").register_all()
----     require("hyprpilot.mcp.editor").register_all()
+---     require("hyprpilot.mcp.lsp").register()
+---     require("hyprpilot.mcp.editor").register()
 ---
 --- Or selective:
 ---
@@ -164,7 +164,7 @@ end
 
 ---Discovery shape — the Python MCP server consumes this verbatim.
 ---Returns an empty table when nothing's registered (the captain
----hasn't called any of the `register_all()` helpers, or has
+---hasn't called any of the `register()` helpers, or has
 ---`unregister`'d everything).
 ---@return hyprpilot.mcp.ToolSummary[]
 function M.list()
