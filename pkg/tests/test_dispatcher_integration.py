@@ -4,7 +4,7 @@ headless Neovim that has the `hyprpilot.mcp` Lua module loaded.
 These tests cover the wire that matters most: the Python bridge
 queries `require('hyprpilot.mcp').list()`, sees whatever the captain
 registered on the Lua side (including the built-in
-`mcp/{lsp,editor,open}.lua` categories), and round-trips
+`mcp/{lsp,editor}.lua` categories), and round-trips
 `require('hyprpilot.mcp').call(name, args)` for every invocation.
 The schemas, descriptions, and tool names should pass through
 verbatim — the FastMCP `FunctionTool` carries `parameters=schema`
@@ -54,7 +54,6 @@ def test_register_all_categories_surface_through_discover(nvim: pynvim.Nvim) -> 
         """
         require("hyprpilot.mcp.lsp").register_all()
         require("hyprpilot.mcp.editor").register_all()
-        require("hyprpilot.mcp.open").register_all()
         """,
         [],
     )
@@ -77,7 +76,6 @@ def test_register_all_categories_surface_through_discover(nvim: pynvim.Nvim) -> 
         "editor_cursor",
         "editor_buffers",
         "editor_read",
-        "open_url",
     ):
         assert required in names, f"missing tool {required} in discover() output"
 
@@ -160,16 +158,16 @@ def test_dispatch_round_trip_carries_arguments(nvim: pynvim.Nvim) -> None:
 def test_unregister_removes_tool_from_subsequent_discover(nvim: pynvim.Nvim) -> None:
     """The reload management surface relies on `discover()` reflecting
     captain-driven `unregister()` calls."""
-    nvim.exec_lua("require('hyprpilot.mcp.open').register_all()", [])
+    nvim.exec_lua("require('hyprpilot.mcp.editor').register_all()", [])
     wrapper = _DirectNvim(nvim)
 
     names_before = {entry["name"] for entry in discover(wrapper)}
-    assert "open_url" in names_before
+    assert "editor_cursor" in names_before
 
-    nvim.exec_lua("require('hyprpilot.mcp').unregister('open_url')", [])
+    nvim.exec_lua("require('hyprpilot.mcp').unregister('editor_cursor')", [])
 
     names_after = {entry["name"] for entry in discover(wrapper)}
-    assert "open_url" not in names_after
+    assert "editor_cursor" not in names_after
 
 
 def test_discover_with_empty_registry_returns_empty_list(nvim: pynvim.Nvim) -> None:
@@ -215,7 +213,6 @@ def test_dispatch_propagates_lua_handler_error(nvim: pynvim.Nvim) -> None:
     [
         "hyprpilot.mcp.lsp",
         "hyprpilot.mcp.editor",
-        "hyprpilot.mcp.open",
     ],
 )
 def test_each_category_has_register_all_idempotent(nvim: pynvim.Nvim, category_module: str) -> None:

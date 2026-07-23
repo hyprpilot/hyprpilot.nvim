@@ -25,7 +25,9 @@ def test_cli_help_advertises_options_and_envvars() -> None:
     assert "--log-level" in result.output
     assert "HYPRPILOT_NVIM_MCP_LOG_LEVEL" in result.output
     assert "--nvim-listen-address" in result.output
+    # Both socket env vars are advertised (NVIM_LISTEN_ADDRESS, then NVIM).
     assert "NVIM_LISTEN_ADDRESS" in result.output
+    assert "NVIM" in result.output
 
 
 def test_cli_lists_run_subcommand() -> None:
@@ -52,7 +54,9 @@ def test_cli_run_subcommand_calls_serve(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(Server, "serve", _spy)
 
-    result = CliRunner().invoke(
+    # Isolate the ambient NVIM / NVIM_LISTEN_ADDRESS so the suite passes
+    # when pytest itself runs inside a Neovim terminal (where $NVIM is set).
+    result = CliRunner(env={"NVIM": "", "NVIM_LISTEN_ADDRESS": ""}).invoke(
         Server.cli,
         ["--log-level", "DEBUG", "run"],
         catch_exceptions=False,
@@ -76,6 +80,8 @@ def test_cli_resolves_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """click resolves env vars natively; no Config.from_env() layer needed."""
     monkeypatch.setenv("HYPRPILOT_NVIM_MCP_LOG_LEVEL", "debug")
     monkeypatch.setenv("NVIM_LISTEN_ADDRESS", "/tmp/nvim.sock")
+    # Clear the ambient $NVIM so NVIM_LISTEN_ADDRESS resolves unambiguously.
+    monkeypatch.delenv("NVIM", raising=False)
 
     captured: dict[str, Any] = {}
 
@@ -96,12 +102,23 @@ def test_cli_resolves_options_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cli_run_without_nvim_address_surfaces_clean_error() -> None:
-    """Missing NVIM_LISTEN_ADDRESS should fail fast with a click error,
-    not a raw exception."""
-    result = CliRunner(env={"NVIM_LISTEN_ADDRESS": ""}).invoke(Server.cli, ["run"])
+    """No socket configured should fail fast with a click error, not a
+    raw exception."""
+    result = CliRunner(env={"NVIM_LISTEN_ADDRESS": "", "NVIM": ""}).invoke(Server.cli, ["run"])
 
     assert result.exit_code != 0
     assert "NVIM_LISTEN_ADDRESS" in (result.output or "")
+
+
+def test_cli_run_dies_when_socket_unreachable() -> None:
+    """A configured-but-unreachable socket must kill the server at
+    startup (eager connect) rather than running toolless."""
+    result = CliRunner(
+        env={"NVIM_LISTEN_ADDRESS": "/nonexistent/hyprpilot-test.sock", "NVIM": ""}
+    ).invoke(Server.cli, ["run"])
+
+    assert result.exit_code != 0
+    assert "/nonexistent/hyprpilot-test.sock" in (result.output or "")
 
 
 def test_nvim_wrapper_rejects_missing_address() -> None:

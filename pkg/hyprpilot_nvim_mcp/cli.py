@@ -52,6 +52,7 @@ class Server:
         self._log.debug("nvim_listen_address=%s", self.nvim_listen_address)
 
         nvim = NvimWrapper(self.nvim_listen_address)
+        nvim.connect()  # fail fast — die if the socket can't be reached
 
         registry: dict[str, Any] = register_dynamic(mcp, nvim)
         healthcheck_tool.register(mcp, nvim, lambda: len(registry))
@@ -77,11 +78,15 @@ class Server:
     )
     @click.option(
         "--nvim-listen-address",
+        "--nvim",
+        "-n",
         type=click.STRING,
         default=None,
-        envvar="NVIM_LISTEN_ADDRESS",
+        envvar=["NVIM_LISTEN_ADDRESS", "NVIM"],
         show_envvar=True,
-        help="Path to the running Neovim's listen socket.",
+        help="Path to the running Neovim's listen socket. Falls back to "
+        "$NVIM_LISTEN_ADDRESS, then $NVIM (set automatically by Neovim in "
+        "child processes).",
     )
     @click.pass_context
     def cli(

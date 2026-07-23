@@ -27,7 +27,8 @@ class NvimWrapper:
     def __init__(self, listen_address: str | None) -> None:
         if not listen_address:
             raise NvimUnavailableError(
-                "NVIM_LISTEN_ADDRESS is unset. Pass --nvim-listen-address or set the env var."
+                "no nvim socket configured. Set $NVIM_LISTEN_ADDRESS or $NVIM, "
+                "or pass --nvim-listen-address."
             )
 
         self._listen_address = listen_address
@@ -53,6 +54,24 @@ class NvimWrapper:
             ) from exc
 
         return self._nvim
+
+    def connect(self) -> None:
+        """Eagerly attach and verify round-trip comms.
+
+        Called once at startup: raises ``NvimUnavailableError`` if the
+        socket is missing or the handshake fails, so the server dies
+        instead of running toolless. ``_attach`` already raises on a
+        failed connect; the ``eval`` proves the channel actually talks.
+        """
+        with self._lock:
+            try:
+                self._attach().eval("1")
+            except (BrokenPipeError, EOFError, OSError) as exc:
+                self._reset_on_disconnect(exc)
+
+                raise NvimUnavailableError(
+                    f"could not reach nvim at {self._listen_address}: {exc}"
+                ) from exc
 
     def _reset_on_disconnect(self, exc: Exception) -> None:
         self._log.warning("nvim disconnected, will retry on next call: %s", exc)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable
 from typing import Any
 
@@ -10,10 +9,6 @@ from fastmcp import FastMCP
 
 from .. import __version__
 from ..nvim import NvimUnavailableError, NvimWrapper
-
-PLUGIN_VERSION_LUA = (
-    "local ok, m = pcall(require, 'hyprpilot'); return ok and (m.version or '0.0.0') or nil"
-)
 
 
 def register(mcp: FastMCP, nvim: NvimWrapper, registered_count_fn: Callable[[], int]) -> None:
@@ -25,7 +20,6 @@ def register(mcp: FastMCP, nvim: NvimWrapper, registered_count_fn: Callable[[], 
     def healthcheck() -> dict[str, Any]:
         """Return MCP server + nvim connection state."""
         nvim_version: str | None = None
-        plugin_version: str | None = None
         connected = nvim.is_connected()
 
         try:
@@ -34,15 +28,10 @@ def register(mcp: FastMCP, nvim: NvimWrapper, registered_count_fn: Callable[[], 
         except NvimUnavailableError:
             connected = False
 
-        if connected:
-            with contextlib.suppress(NvimUnavailableError):
-                plugin_version = nvim.exec_lua(PLUGIN_VERSION_LUA)
-
         return {
             "bridge_version": __version__,
             "socket": nvim.listen_address,
             "connected": connected,
             "nvim_version": nvim_version,
-            "plugin_version": plugin_version,
             "registered_tool_count": registered_count_fn(),
         }

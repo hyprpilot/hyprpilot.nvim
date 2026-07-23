@@ -7,15 +7,13 @@
 --- `require("hyprpilot").setup({})`.
 ---
 --- Built-in tool categories live as sibling modules under `mcp/`
---- (`mcp/lsp.lua`, `mcp/editor.lua`, `mcp/open.lua`). They do NOT
---- auto-register — the captain wires what they want from their own
---- config so they retain control over which tools the daemon-side
---- profile allow / deny lists negotiate against. To enable
---- everything in one shot:
+--- (`mcp/lsp.lua`, `mcp/editor.lua`). They do NOT auto-register — the
+--- captain wires what they want from their own config so they retain
+--- control over which tools the daemon-side profile allow / deny
+--- lists negotiate against. To enable everything in one shot:
 ---
 ---     require("hyprpilot.mcp.lsp").register_all()
 ---     require("hyprpilot.mcp.editor").register_all()
----     require("hyprpilot.mcp.open").register_all()
 ---
 --- Or selective:
 ---
