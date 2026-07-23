@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.17.0...hyprpilot.nvim-v2.0.0) (2026-07-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* reduce plugin to a pure Neovim MCP server ([#161](https://github.com/hyprpilot/hyprpilot.nvim/issues/161))
+
+### Features
+
+* reduce plugin to a pure Neovim MCP server ([#161](https://github.com/hyprpilot/hyprpilot.nvim/issues/161)) ([4d99fb3](https://github.com/hyprpilot/hyprpilot.nvim/commit/4d99fb3c0cbb570f818eac0779bb64b9ae3f46ce))
+
 ## [1.17.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.16.0...hyprpilot.nvim-v1.17.0) (2026-06-14)
 
 
