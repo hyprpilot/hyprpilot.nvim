@@ -1,87 +1,33 @@
+--- hyprpilot.nvim — the Neovim side of the hyprpilot MCP bridge.
+---
+--- This plugin is the Lua-side tool registry that the
+--- `hyprpilot-nvim-mcp` server dispatches to. `setup()` is OPTIONAL:
+--- without it the logger defaults to INFO and everything works. Call
+--- it only to set the Lua log level up front:
+---
+---     require("hyprpilot").setup({ log_level = vim.log.levels.DEBUG })
+---
+--- Tool registration stays captain-opt-in — wire the categories you
+--- want from your own config; there is no config flag for it (the
+--- daemon-side profile allow / deny lists own that policy):
+---
+---     require("hyprpilot.mcp.lsp").register_all()
+---     require("hyprpilot.mcp.editor").register_all()
+
 local M = {}
 
---- Configures the hyprpilot.nvim plugin.
----@param config hyprpilot.Config
-function M.setup(config)
-  local c = require("hyprpilot.config").setup(config)
+---@class hyprpilot.Config
+---@field log_level? integer  -- one of `vim.log.levels.*`; defaults to INFO
 
-  require("hyprpilot.log").setup({ level = c.log_level })
+--- Optional plugin-wide configuration. Currently the Lua log level is
+--- the only knob; skip the call entirely to keep the INFO default.
+---@param opts? hyprpilot.Config
+function M.setup(opts)
+  opts = opts or {}
 
-  -- Wire daemon→plugin notification handlers (window focus / toggle
-  -- / show / hide today, more as the surface grows). Listeners
-  -- accumulate in `client.on_notification`, so this is a one-shot
-  -- registration per setup() call.
-  require("hyprpilot.rpc").register()
-
-  -- Attention list — subscribes to permission / turn-ended User
-  -- autocmds and exposes `is_attention_needed()` plus an `on_change`
-  -- subscription for the bell + palette + future status pills.
-  require("hyprpilot.notification.attention").ensure_listeners()
-
-  -- Terminal bell — opt-in via `notification.bell.enabled`; rings
-  -- on every attention-list growth event.
-  require("hyprpilot.notification.bell").ensure_listeners()
-
-  -- Diff preview — subscribes to permission resolution + instance
-  -- terminal-state events so an open preview auto-closes the moment
-  -- it stops being meaningful. The preview itself is captain-opened
-  -- via `permission_row.keymaps.show_diff` on the permission row;
-  -- this is just the cleanup side of the lifecycle.
-  require("hyprpilot.ui.diff-preview").ensure_listeners()
-
-  -- Graceful teardown on Neovim exit. `clear = true` on the group
-  -- so a captain who re-calls `setup()` (hot reload, config swap)
-  -- doesn't accumulate duplicate `VimLeavePre` listeners.
-  vim.api.nvim_create_autocmd("VimLeavePre", {
-    group = vim.api.nvim_create_augroup("HyprpilotShutdown", { clear = true }),
-    callback = function()
-      require("hyprpilot.rpc.shutdown").shutdown()
-    end,
-  })
-end
-
---- Tear down the plugin's runtime state — close windows, drop the
---- event subscription, disconnect the client. Called automatically
---- on `VimLeavePre`; also exposed for manual hot-reload / a
---- captain-bound "stop everything" keymap.
-function M.shutdown()
-  require("hyprpilot.rpc.shutdown").shutdown()
-end
-
--- ── Window ─────────────────────────────────────────────────────────
-
---- Toggle the chat side split: hide if visible, show otherwise.
-function M.toggle()
-  require("hyprpilot.chat.window").toggle()
-end
-
---- Show the chat side split, optionally switching to `instance_id`.
----@param instance_id string?
-function M.show(instance_id)
-  require("hyprpilot.chat.window").show(instance_id)
-end
-
---- Hide the chat side split. Buffers persist for resume.
-function M.hide()
-  require("hyprpilot.chat.window").hide()
-end
-
---- Wipe a per-instance buffer (defaults to the active instance).
----@param instance_id string?
-function M.close(instance_id)
-  require("hyprpilot.chat.window").close(instance_id)
-end
-
---- Switch the chat window to a different instance's buffer.
----@param instance_id string
-function M.switch(instance_id)
-  require("hyprpilot.chat.window").switch(instance_id)
-end
-
---- Currently-active instance id, or `nil` when none.
----@return string?
-function M.active_instance()
-  return require("hyprpilot.chat.window").active_instance()
+  if opts.log_level ~= nil then
+    require("hyprpilot.log").setup({ level = opts.log_level })
+  end
 end
 
 return M

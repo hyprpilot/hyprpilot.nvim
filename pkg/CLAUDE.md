@@ -9,8 +9,9 @@
 
 `hyprpilot-nvim-mcp` is a `uvx`-runnable MCP server that bridges Neovim
 editor state into the [`hyprpilot`](https://github.com/hyprpilot/hyprpilot)
-agent's tool surface. It attaches to a running Neovim via the
-`$NVIM_LISTEN_ADDRESS` socket using `pynvim` and acts as a **pure
+agent's tool surface. It attaches to a running Neovim over its listen
+socket (resolved from `--nvim-listen-address`, then `$NVIM_LISTEN_ADDRESS`,
+then `$NVIM`) using `pynvim` and acts as a **pure
 dispatcher**: at boot it queries the Lua side
 (`require("hyprpilot.mcp").list()`) for the captain-registered tool
 catalogue and re-exposes each tool to the agent via FastMCP. The Python
@@ -84,8 +85,11 @@ need on the Lua side. Two management tools (`reload_dynamic_tools`,
 - **Errors are values** — wrap every `nvim.*` call to translate pynvim
   exceptions into typed `MCPToolError`. The daemon never sees a Python
   traceback; the captain reads clean messages in the chat surface.
-- **Reconnect, don't crash** — nvim quitting/restarting is normal;
-  the bridge survives it. Exponential back-off (1s → 30s cap).
+- **Die on startup, reconnect at runtime** — `NvimWrapper.connect()`
+  runs once in `serve()` and the server exits non-zero if the socket
+  can't be reached (no toolless start). Once running, a mid-session
+  broken pipe clears the cached handle and the next tool call
+  re-attaches transparently.
 - **`pyproject.toml` is the single source of truth** for deps, scripts,
   ruff config, mypy config. No `setup.py`, no `setup.cfg`, no
   `requirements.txt`.
@@ -325,9 +329,12 @@ strictly worse).
 
 ## Gotchas
 
-- **`NVIM_LISTEN_ADDRESS` must be a Unix socket path** that the running
-  Neovim was started with (`nvim --listen /tmp/nvim.sock`). The bridge
-  fails fast with a typed error if the socket is missing.
+- **The socket must be a Unix socket path** the running Neovim was
+  started with (`nvim --listen /tmp/nvim.sock`). It's resolved from
+  `--nvim-listen-address`, then `$NVIM_LISTEN_ADDRESS`, then `$NVIM`
+  (which Neovim sets in its child processes). The bridge fails fast
+  with a typed error — and the server exits non-zero — when no socket
+  is configured or the eager `connect()` can't reach it.
 - **Logging to stdout corrupts the MCP wire** — see Conventions above.
   All logs go to stderr; the `log` module's helpers enforce this.
 - **`pynvim` is thread-unsafe** — the bridge wraps every `nvim.*` access

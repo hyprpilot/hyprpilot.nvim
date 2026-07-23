@@ -10,11 +10,34 @@
 ---     mcp.register(editor.cursor)
 ---     mcp.register(editor.read)
 
-local chat_buffer = require("hyprpilot.chat.buffer")
 local log = require("hyprpilot.log")
 local mcp = require("hyprpilot.mcp")
 
 local M = {}
+
+---@param winid integer
+---@return boolean
+local function is_floating(winid)
+  local config = vim.api.nvim_win_get_config(winid)
+  return config.relative ~= nil and config.relative ~= ""
+end
+
+---A window suitable for file navigation: the current one unless it's
+---a floating popup (snacks picker, diff preview, telescope), in which
+---case the first non-floating window. nil when only floats are visible.
+---@return integer?
+local function editor_winid()
+  local current = vim.api.nvim_get_current_win()
+  if not is_floating(current) then
+    return current
+  end
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_is_valid(winid) and not is_floating(winid) then
+      return winid
+    end
+  end
+  return nil
+end
 
 ---@param msg string
 ---@return hyprpilot.mcp.RichResult
@@ -41,28 +64,14 @@ end
 
 M.tools = {}
 
----Resolve the editor window without ever spawning a new split —
----read-only tools (`cursor` / `status`) need the editor's view but
----shouldn't churn the captain's window layout just to answer a
----question. Returns nil when every visible window is plugin-owned
----(caller emits an explanatory empty/null payload).
----@return integer?
-local function readonly_editor_winid()
-  local current = vim.api.nvim_get_current_win()
-  if not chat_buffer.is_plugin_window(current) then
-    return current
-  end
-  return chat_buffer.find_editor_winid()
-end
-
 M.tools.cursor = {
   name = "editor_cursor",
-  description = "Return what the captain is currently looking at: cursor position, buffer path / filetype, visible line range, window dimensions. When the captain has focus in a hyprpilot surface (chat / composer), reports the editor window the captain came from instead, so navigation tools can pick up where the captain was.",
+  description = "Return what the captain is currently looking at: cursor position, buffer path / filetype, visible line range, window dimensions.",
   schema = { type = "object", additionalProperties = false },
   handler = function()
-    local winid = readonly_editor_winid()
+    local winid = editor_winid()
     if winid == nil then
-      return { json = { available = false, reason = "no editor window visible — every window is a hyprpilot surface" } }
+      return { json = { available = false, reason = "no editor window visible — only floating windows open" } }
     end
     local bufnr = vim.api.nvim_win_get_buf(winid)
     local cursor = vim.api.nvim_win_get_cursor(winid)
@@ -301,12 +310,8 @@ M.tools.files = {
 ---Resolve the buffer the action should target. Search order:
 ---  1. `bufnr` (if provided + valid)
 ---  2. `path` (open / adopt by absolute path)
----  3. The editor window's buffer (skipping plugin surfaces — so a
----     default-target call while the captain has the composer focused
----     resolves to whatever file they were last looking at, not the
----     composer itself).
----  4. Current buffer (last-resort fallback when every visible window
----     is plugin-owned).
+---  3. The editor window's buffer (skipping floating popups)
+---  4. Current buffer (last-resort fallback when only floats are open)
 ---Returns `(bufnr, err)`.
 ---@param args { bufnr?: integer, path?: string }
 ---@return integer?, string?
@@ -332,13 +337,9 @@ local function resolve_target_bufnr(args)
     end
     return bufnr, nil
   end
-  local current = vim.api.nvim_get_current_win()
-  if not chat_buffer.is_plugin_window(current) then
-    return vim.api.nvim_win_get_buf(current), nil
-  end
-  local editor_winid = chat_buffer.find_editor_winid()
-  if editor_winid ~= nil then
-    return vim.api.nvim_win_get_buf(editor_winid), nil
+  local winid = editor_winid()
+  if winid ~= nil then
+    return vim.api.nvim_win_get_buf(winid), nil
   end
   return vim.api.nvim_get_current_buf(), nil
 end
@@ -358,7 +359,7 @@ M.tools.status = {
   },
   handler = function(args)
     local include_unlisted = args.include_unlisted == true
-    local winid = readonly_editor_winid()
+    local winid = editor_winid()
     local focused
     if winid ~= nil then
       local bufnr = vim.api.nvim_win_get_buf(winid)
@@ -412,30 +413,24 @@ local function center_cursor(winid)
 end
 
 ---Resolve the window the agent's navigation should land in. Routes
----away from plugin-owned surfaces (chat / composer / header / queue
----strip / permission row) so an `editor_file_open` while the captain
----is typing in the composer doesn't replace the composer's buffer
----with the requested file. Search order:
----  1. Current window, if not plugin-owned.
----  2. First non-plugin, non-floating window in the tab.
----  3. New `:topleft new` split (last resort — captain's only visible
----     surfaces were plugin-owned).
+---away from floating popups so an `editor_file_open` fired while a
+---picker or completion float is focused doesn't hijack the popup.
+---Search order:
+---  1. Current window, if not floating.
+---  2. First non-floating window in the tab.
+---  3. New `:topleft new` split (last resort — only floats were open).
 ---Caller is responsible for `nvim_win_set_buf` afterward; we return
 ---the winid only.
 ---@return integer
 local function resolve_editor_winid()
-  local current = vim.api.nvim_get_current_win()
-  if not chat_buffer.is_plugin_window(current) then
-    return current
-  end
-  local found = chat_buffer.find_editor_winid()
+  local found = editor_winid()
   if found ~= nil then
     return found
   end
-  -- No editor window visible — open one. `topleft new` keeps the
-  -- chat sidebar where it is and lands the new split at the top of
-  -- the editor area; the agent's `nvim_win_set_buf` then swaps the
-  -- empty unnamed buffer for the requested file.
+  -- Only floating windows visible — open a real one. `topleft new`
+  -- lands the new split at the top of the editor area; the agent's
+  -- `nvim_win_set_buf` then swaps the empty unnamed buffer for the
+  -- requested file.
   vim.cmd("topleft new")
   return vim.api.nvim_get_current_win()
 end
