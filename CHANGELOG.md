@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.0.0...hyprpilot.nvim-v2.1.0) (2026-07-23)
+
+
+### Features
+
+* **mcp:** register(opts) with tool subsetting and window/lsp exclusions ([#163](https://github.com/hyprpilot/hyprpilot.nvim/issues/163)) ([754897b](https://github.com/hyprpilot/hyprpilot.nvim/commit/754897b2e1b7f70e224ad48be5dfdb273bd7c433))
+
+
+### Bug Fixes
+
+* update deps ([#165](https://github.com/hyprpilot/hyprpilot.nvim/issues/165)) ([d3e4f6d](https://github.com/hyprpilot/hyprpilot.nvim/commit/d3e4f6d3d0d3a07f900ed23c2a2fcbce0086167c))
+
 ## [2.0.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v1.17.0...hyprpilot.nvim-v2.0.0) (2026-07-23)
 
 
