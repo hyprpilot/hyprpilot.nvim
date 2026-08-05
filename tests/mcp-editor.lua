@@ -375,6 +375,43 @@ T["editor_select: selects for real when the captain is focused elsewhere"] = fun
   pcall(vim.api.nvim_buf_delete, target, { force = true })
 end
 
+T["editor_select: selects for real from terminal mode"] = function()
+  vim.cmd("only")
+  vim.cmd("new")
+  local target = vim.api.nvim_get_current_buf()
+  local target_winid = vim.api.nvim_get_current_win()
+  vim.api.nvim_buf_set_lines(target, 0, -1, false, { "a", "b", "c", "d" })
+
+  -- The captain talks to the agent from a terminal split, so this is the
+  -- common case, not an edge one. Terminal-insert pins focus: the window
+  -- switch is undone on return to the main loop unless the handler
+  -- leaves terminal mode first.
+  --
+  -- Headless can't reach terminal-INSERT (`startinsert` lands in `nt`,
+  -- terminal-normal), so this asserts the weaker half — selecting out of
+  -- a focused terminal window. The pinned `t` case is only reproducible
+  -- against a live session.
+  vim.cmd("vsplit")
+  vim.cmd("terminal")
+  local term = vim.api.nvim_get_current_buf()
+  vim.cmd("startinsert")
+  MiniTest.expect.equality(vim.bo[vim.api.nvim_get_current_buf()].buftype, "terminal")
+
+  local result = require("hyprpilot.mcp.editor").tools.select.handler({
+    bufnr = target,
+    start_line = 2,
+    end_line = 3,
+  })
+
+  MiniTest.expect.equality(result.is_error, nil)
+  MiniTest.expect.equality(result.json.mode, "V")
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), target_winid)
+
+  pcall(vim.cmd, "normal! \027")
+  pcall(vim.api.nvim_buf_delete, term, { force = true })
+  pcall(vim.api.nvim_buf_delete, target, { force = true })
+end
+
 T["editor_file_open: the opened file becomes a listed buffer"] = function()
   local path = vim.fn.tempname() .. ".lua"
   vim.fn.writefile({ "one", "two" }, path)
