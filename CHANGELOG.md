@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.2.0...hyprpilot.nvim-v2.2.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **mcp:** repair buffer listing, visual select, and LSP client lookup ([#168](https://github.com/hyprpilot/hyprpilot.nvim/issues/168)) ([da66e50](https://github.com/hyprpilot/hyprpilot.nvim/commit/da66e50ff774096963ae4a9fa3b9e2014a76bd52))
+
 ## [2.2.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.1.0...hyprpilot.nvim-v2.2.0) (2026-08-05)
 
 
