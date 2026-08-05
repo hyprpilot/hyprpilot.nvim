@@ -70,6 +70,12 @@ lives on the Lua side.
     categories. Each exposes a `register_all()` helper plus a `M.tools`
     table for selective registration. Tool names follow
     `<category>_<verb>`.
+  - `lua/hyprpilot/mcp/plugin/` — third-party plugin integrations, one
+    module per plugin, tools named `plugin_<plugin>_<verb>`.
+    `plugin/init.lua` owns the shared plumbing: `optional()` for a
+    non-throwing `require`, and `registrar(tools, requires)` which
+    builds a category's `register` and skips it when the plugin isn't
+    installed. A category never hard-depends on its plugin.
 
 ## Conventions
 
