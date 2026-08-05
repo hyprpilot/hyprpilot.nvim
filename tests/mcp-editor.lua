@@ -406,6 +406,52 @@ T["editor_file_open: missing file returns is_error"] = function()
   MiniTest.expect.equality(result.is_error, true)
 end
 
+T["editor_quickfix_set: populates the list, converting 0-indexed positions"] = function()
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "alpha", "beta", "gamma" }, path)
+
+  local result = require("hyprpilot.mcp.editor").tools.quickfix_set.handler({
+    items = {
+      { path = path, line = 1, character = 2, text = "second line" },
+      { path = path, line = 2, text = "third line" },
+    },
+    title = "agent findings",
+  })
+
+  MiniTest.expect.equality(result.json.count, 2)
+  MiniTest.expect.equality(result.json.skipped, 0)
+
+  local list = vim.fn.getqflist()
+  MiniTest.expect.equality(#list, 2)
+  -- 0-indexed in, 1-indexed out — quickfix counts from one.
+  MiniTest.expect.equality(list[1].lnum, 2)
+  MiniTest.expect.equality(list[1].col, 3)
+  MiniTest.expect.equality(list[1].text, "second line")
+  MiniTest.expect.equality(list[2].lnum, 3)
+  MiniTest.expect.equality(vim.fn.getqflist({ title = 0 }).title, "agent findings")
+
+  vim.fn.setqflist({}, "r")
+  vim.fn.delete(path)
+end
+
+T["editor_quickfix_set: entries without a path are skipped, all-bad is an error"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "alpha" }, path)
+
+  local mixed = editor.tools.quickfix_set.handler({
+    items = { { path = path, line = 0 }, { text = "no path here" } },
+  })
+  MiniTest.expect.equality(mixed.json.count, 1)
+  MiniTest.expect.equality(mixed.json.skipped, 1)
+
+  MiniTest.expect.equality(editor.tools.quickfix_set.handler({ items = { { text = "nope" } } }).is_error, true)
+  MiniTest.expect.equality(editor.tools.quickfix_set.handler({ items = "not a list" }).is_error, true)
+
+  vim.fn.setqflist({}, "r")
+  vim.fn.delete(path)
+end
+
 T["editor_format: no-LSP buffer returns ok (no-op)"] = function()
   vim.cmd("new")
   local bufnr = vim.api.nvim_get_current_buf()

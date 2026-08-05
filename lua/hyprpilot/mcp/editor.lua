@@ -709,6 +709,69 @@ M.tools.select = {
   end,
 }
 
+M.tools.quickfix_set = {
+  name = "editor_quickfix_set",
+  description = "Replace the quickfix list with `items` so the captain can walk an agent's findings with their own `:cnext` / picker bindings instead of reading them out of a response. Positions are 0-indexed, matching what `editor_grep` and the `lsp_*` tools return.",
+  schema = {
+    type = "object",
+    properties = {
+      items = {
+        type = "array",
+        description = "Entries to populate the list with.",
+        items = {
+          type = "object",
+          properties = {
+            path = { type = "string", description = "File path (absolute or cwd-relative)." },
+            line = { type = "integer", description = "0-indexed line. Defaults to 0." },
+            character = { type = "integer", description = "0-indexed column. Defaults to 0." },
+            text = { type = "string", description = "Entry description shown in the list." },
+          },
+          required = { "path" },
+        },
+      },
+      title = {
+        type = "string",
+        description = 'List title shown in the quickfix window. Defaults to "hyprpilot".',
+      },
+      open = {
+        type = "boolean",
+        description = "Open the quickfix window afterwards. Defaults to false — populating a list the captain hasn't asked to see shouldn't rearrange their windows.",
+      },
+    },
+    required = { "items" },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    if type(args.items) ~= "table" then
+      return err("items must be an array")
+    end
+
+    local entries = {}
+    for _, item in ipairs(args.items) do
+      if type(item) == "table" and type(item.path) == "string" and item.path ~= "" then
+        table.insert(entries, {
+          filename = abs_path(item.path),
+          lnum = (item.line or 0) + 1,
+          col = (item.character or 0) + 1,
+          text = item.text or "",
+        })
+      end
+    end
+    if #entries == 0 then
+      return err("no usable items — each entry needs a non-empty `path`")
+    end
+
+    -- ` ` (space) as the action replaces the list rather than appending
+    -- to or amending the current one.
+    vim.fn.setqflist({}, " ", { title = args.title or "hyprpilot", items = entries })
+    if args.open == true then
+      vim.cmd("botright copen")
+    end
+
+    return { json = { count = #entries, skipped = #args.items - #entries, title = args.title or "hyprpilot" } }
+  end,
+}
+
 M.tools.format = {
   name = "editor_format",
   description = "Format a buffer via attached LSP (`vim.lsp.buf.format`, synchronous). Defaults to the current buffer; `path` or `bufnr` overrides. No-op when no LSP client supports formatting on the buffer.",

@@ -266,29 +266,61 @@ local POSITION_SCHEMA = {
   },
 }
 
-M.tools.definition = {
-  name = "lsp_definition",
-  description = "Return the definition site(s) for the symbol at `path:line:character`. Aggregates results across every attached LSP client.",
-  schema = {
-    type = "object",
-    properties = POSITION_SCHEMA,
-    required = { "path", "line", "character" },
-    additionalProperties = false,
-  },
-  handler = function(args)
-    local bufnr, load_err = ensure_loaded(args.path)
-    if bufnr == nil then
-      return err(load_err)
-    end
-    local hits, client_count = request_all_sync(bufnr, "textDocument/definition", function(client)
-      return position_params(client, bufnr, args.line, args.character)
-    end)
-    if client_count == 0 then
-      return err("no LSP client attached to buffer with textDocument/definition support")
-    end
-    return { json = { definitions = locations_to_items(hits) } }
-  end,
-}
+---Build a location-returning position tool. Definition, type definition,
+---and implementation differ only in the wire method and the key their
+---hits land under.
+---@param tool_name string
+---@param method string
+---@param result_key string
+---@param description string
+---@return hyprpilot.mcp.Tool
+local function location_tool(tool_name, method, result_key, description)
+  return {
+    name = tool_name,
+    description = description,
+    schema = {
+      type = "object",
+      properties = POSITION_SCHEMA,
+      required = { "path", "line", "character" },
+      additionalProperties = false,
+    },
+    handler = function(args)
+      local bufnr, load_err = ensure_loaded(args.path)
+      if bufnr == nil then
+        return err(load_err)
+      end
+      local hits, client_count = request_all_sync(bufnr, method, function(client)
+        return position_params(client, bufnr, args.line, args.character)
+      end)
+      if client_count == 0 then
+        return err("no LSP client attached to buffer with " .. method .. " support")
+      end
+
+      return { json = { [result_key] = locations_to_items(hits) } }
+    end,
+  }
+end
+
+M.tools.definition = location_tool(
+  "lsp_definition",
+  "textDocument/definition",
+  "definitions",
+  "Return the definition site(s) for the symbol at `path:line:character`. Aggregates results across every attached LSP client."
+)
+
+M.tools.type_definition = location_tool(
+  "lsp_type_definition",
+  "textDocument/typeDefinition",
+  "definitions",
+  "Return where the *type* of the symbol at `path:line:character` is defined — the class / struct / interface behind a variable, not the variable itself."
+)
+
+M.tools.implementation = location_tool(
+  "lsp_implementation",
+  "textDocument/implementation",
+  "implementations",
+  "Return the concrete implementations of the interface / abstract symbol at `path:line:character`."
+)
 
 M.tools.references = {
   name = "lsp_references",
@@ -312,9 +344,95 @@ M.tools.references = {
     if client_count == 0 then
       return err("no LSP client attached to buffer with textDocument/references support")
     end
+
     return { json = { references = locations_to_items(hits) } }
   end,
 }
+
+---Shape one `CallHierarchyItem` into the quickfix-friendly item shape
+---the location tools return, plus the symbol name and kind the agent
+---needs to read a call tree. Routed through `locations_to_items` so the
+---client's offset encoding decides the column.
+---@param item table  -- CallHierarchyItem
+---@param client vim.lsp.Client
+---@return table
+local function hierarchy_item(item, client)
+  local location = vim.lsp.util.locations_to_items({ { uri = item.uri, range = item.selectionRange or item.range } }, client.offset_encoding)[1] or {}
+  location.name = item.name
+  location.kind = vim.lsp.protocol.SymbolKind[item.kind] or "Unknown"
+  location.detail = item.detail
+
+  return location
+end
+
+---Build a call-hierarchy tool. Both directions run the same two-step
+---dance — `prepareCallHierarchy` resolves the symbol under the cursor
+---into an item, then the direction method walks from it — and differ
+---only in which side of each call they report.
+---@param tool_name string
+---@param method string   -- `callHierarchy/incomingCalls` | `.../outgoingCalls`
+---@param edge_key string -- the CallHierarchyCall field naming the far end
+---@param description string
+---@return hyprpilot.mcp.Tool
+local function call_hierarchy_tool(tool_name, method, edge_key, description)
+  return {
+    name = tool_name,
+    description = description,
+    schema = {
+      type = "object",
+      properties = POSITION_SCHEMA,
+      required = { "path", "line", "character" },
+      additionalProperties = false,
+    },
+    handler = function(args)
+      local bufnr, load_err = ensure_loaded(args.path)
+      if bufnr == nil then
+        return err(load_err)
+      end
+      local prepared, client_count = request_all_sync(bufnr, "textDocument/prepareCallHierarchy", function(client)
+        return position_params(client, bufnr, args.line, args.character)
+      end)
+      if client_count == 0 then
+        return err("no LSP client attached to buffer with textDocument/prepareCallHierarchy support")
+      end
+
+      local calls = {}
+      for _, hit in ipairs(prepared) do
+        for _, item in ipairs(hit.result or {}) do
+          -- Each direction request must go back to the client that
+          -- prepared the item — hierarchy items are server-scoped
+          -- handles, not portable across clients.
+          local response, request_err = hit.client:request_sync(method, { item = item }, DEFAULT_TIMEOUT_MS, bufnr)
+          if request_err ~= nil then
+            log.debug("mcp.lsp: %s on %s failed: %s", method, hit.client.name, request_err)
+          elseif response ~= nil and response.result ~= nil then
+            for _, call in ipairs(response.result) do
+              if call[edge_key] ~= nil then
+                table.insert(calls, hierarchy_item(call[edge_key], hit.client))
+              end
+            end
+          end
+        end
+      end
+
+      return { json = { calls = calls, count = #calls } }
+    end,
+  }
+end
+
+M.tools.incoming_calls = call_hierarchy_tool(
+  "lsp_incoming_calls",
+  "callHierarchy/incomingCalls",
+  "from",
+  "Return the callers of the function at `path:line:character` — who reaches this code. Each entry carries the caller's name, kind, and location."
+)
+
+M.tools.outgoing_calls = call_hierarchy_tool(
+  "lsp_outgoing_calls",
+  "callHierarchy/outgoingCalls",
+  "to",
+  "Return the functions called by the function at `path:line:character` — what this code reaches. Each entry carries the callee's name, kind, and location."
+)
 
 M.tools.hover = {
   name = "lsp_hover",

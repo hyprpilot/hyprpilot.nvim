@@ -105,4 +105,33 @@ T["lsp_rename: bad new_name (empty) → is_error result"] = function()
   MiniTest.expect.equality(result.is_error, true)
 end
 
+T["the position tools name their own wire method when no client supports it"] = function()
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "local x = 1", "return x" }, path)
+
+  -- Each tool built from the shared factories must report the method it
+  -- actually asked for; a copy-paste error there sends the agent looking
+  -- at the wrong capability.
+  local lsp = require("hyprpilot.mcp.lsp")
+  for key, method in pairs({
+    type_definition = "typeDefinition",
+    implementation = "implementation",
+    incoming_calls = "prepareCallHierarchy",
+    outgoing_calls = "prepareCallHierarchy",
+  }) do
+    local result = lsp.tools[key].handler({ path = path, line = 0, character = 6 })
+    MiniTest.expect.equality(result.is_error, true, key .. ": expected a no-client error")
+    MiniTest.expect.equality(result.text:find(method, 1, true) ~= nil, true, key .. ": error should name " .. method)
+  end
+
+  vim.fn.delete(path)
+end
+
+T["lsp_document_symbols / lsp_workspace_symbols advertise max_results"] = function()
+  local lsp = require("hyprpilot.mcp.lsp")
+  MiniTest.expect.equality(lsp.tools.document_symbols.schema.properties.max_results.type, "integer")
+  MiniTest.expect.equality(lsp.tools.document_symbols.schema.properties.kinds.type, "array")
+  MiniTest.expect.equality(lsp.tools.workspace_symbols.schema.properties.max_results.type, "integer")
+end
+
 return T

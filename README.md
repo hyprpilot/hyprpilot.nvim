@@ -47,8 +47,8 @@ Tool registration is deliberately not config-driven — you call `register()` (o
 
 Built-in categories, named `<category>_<verb>`:
 
-- `lsp_*` — `ensure_loaded`, `definition`, `references`, `hover`, `document_symbols`, `workspace_symbols`, `code_actions`, `rename`, `diagnostics_get`
-- `editor_*` — `cursor`, `buffers`, `read`, `grep`, `files`, `status`, `file_open`, `jump`, `select`, `format`
+- `lsp_*` — `ensure_loaded`, `definition`, `type_definition`, `implementation`, `references`, `incoming_calls`, `outgoing_calls`, `hover`, `document_symbols`, `workspace_symbols`, `code_actions`, `rename`, `diagnostics_get`
+- `editor_*` — `cursor`, `buffers`, `read`, `grep`, `files`, `status`, `file_open`, `jump`, `select`, `quickfix_set`, `format`
 
 Each category's `register(opts?)` doubles as a setup call. Omit `opts` to register everything; pass `items` to register a subset. Calling it again overrides — the category's registered set is replaced, not added to.
 
