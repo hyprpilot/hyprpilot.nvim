@@ -335,6 +335,7 @@ T["editor_select: enters line-wise visual over the requested range"] = function(
 
   MiniTest.expect.equality(result.json.start_line, 1) -- 0-indexed
   MiniTest.expect.equality(result.json.end_line, 2)
+  MiniTest.expect.equality(result.json.mode, "V")
   local cursor = vim.api.nvim_win_get_cursor(0)
   MiniTest.expect.equality(cursor[1], 3)
 
@@ -344,11 +345,111 @@ T["editor_select: enters line-wise visual over the requested range"] = function(
   pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
 end
 
+T["editor_select: selects for real when the captain is focused elsewhere"] = function()
+  vim.cmd("only")
+  vim.cmd("new")
+  local target = vim.api.nvim_get_current_buf()
+  local target_winid = vim.api.nvim_get_current_win()
+  vim.api.nvim_buf_set_lines(target, 0, -1, false, { "a", "b", "c", "d" })
+
+  -- Focus a different window, the way a captain sitting in a terminal
+  -- split does. Visual mode driven through `nvim_win_call` used to be
+  -- discarded here, leaving a success result and no selection.
+  vim.cmd("vnew")
+  local elsewhere = vim.api.nvim_get_current_buf()
+
+  local result = require("hyprpilot.mcp.editor").tools.select.handler({
+    bufnr = target,
+    start_line = 2,
+    end_line = 3,
+  })
+
+  MiniTest.expect.equality(result.json.mode, "V")
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), target_winid)
+
+  pcall(vim.cmd, "normal! \027")
+  MiniTest.expect.equality(vim.api.nvim_buf_get_mark(target, "<")[1], 2)
+  MiniTest.expect.equality(vim.api.nvim_buf_get_mark(target, ">")[1], 3)
+
+  pcall(vim.api.nvim_buf_delete, elsewhere, { force = true })
+  pcall(vim.api.nvim_buf_delete, target, { force = true })
+end
+
+T["editor_file_open: the opened file becomes a listed buffer"] = function()
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "one", "two" }, path)
+  vim.cmd("only")
+
+  local editor = require("hyprpilot.mcp.editor")
+  local result = editor.tools.file_open.handler({ path = path, line = 2 })
+
+  -- `bufadd` adopts unlisted, so without the explicit flip the captain's
+  -- tabline and `:bnext` never see a file the agent opened for them.
+  MiniTest.expect.equality(vim.bo[result.json.bufnr].buflisted, true)
+
+  local seen = false
+  for _, b in ipairs(editor.tools.buffers.handler({}).json.buffers) do
+    if b.bufnr == result.json.bufnr then
+      seen = true
+    end
+  end
+  MiniTest.expect.equality(seen, true)
+
+  pcall(vim.api.nvim_buf_delete, result.json.bufnr, { force = true })
+  vim.fn.delete(path)
+end
+
 T["editor_file_open: missing file returns is_error"] = function()
   local result = require("hyprpilot.mcp.editor").tools.file_open.handler({
     path = "/tmp/hyprpilot-mcp-editor-does-not-exist-" .. tostring(vim.uv.hrtime()),
   })
   MiniTest.expect.equality(result.is_error, true)
+end
+
+T["editor_quickfix_set: populates the list, converting 0-indexed positions"] = function()
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "alpha", "beta", "gamma" }, path)
+
+  local result = require("hyprpilot.mcp.editor").tools.quickfix_set.handler({
+    items = {
+      { path = path, line = 1, character = 2, text = "second line" },
+      { path = path, line = 2, text = "third line" },
+    },
+    title = "agent findings",
+  })
+
+  MiniTest.expect.equality(result.json.count, 2)
+  MiniTest.expect.equality(result.json.skipped, 0)
+
+  local list = vim.fn.getqflist()
+  MiniTest.expect.equality(#list, 2)
+  -- 0-indexed in, 1-indexed out — quickfix counts from one.
+  MiniTest.expect.equality(list[1].lnum, 2)
+  MiniTest.expect.equality(list[1].col, 3)
+  MiniTest.expect.equality(list[1].text, "second line")
+  MiniTest.expect.equality(list[2].lnum, 3)
+  MiniTest.expect.equality(vim.fn.getqflist({ title = 0 }).title, "agent findings")
+
+  vim.fn.setqflist({}, "r")
+  vim.fn.delete(path)
+end
+
+T["editor_quickfix_set: entries without a path are skipped, all-bad is an error"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "alpha" }, path)
+
+  local mixed = editor.tools.quickfix_set.handler({
+    items = { { path = path, line = 0 }, { text = "no path here" } },
+  })
+  MiniTest.expect.equality(mixed.json.count, 1)
+  MiniTest.expect.equality(mixed.json.skipped, 1)
+
+  MiniTest.expect.equality(editor.tools.quickfix_set.handler({ items = { { text = "nope" } } }).is_error, true)
+  MiniTest.expect.equality(editor.tools.quickfix_set.handler({ items = "not a list" }).is_error, true)
+
+  vim.fn.setqflist({}, "r")
+  vim.fn.delete(path)
 end
 
 T["editor_format: no-LSP buffer returns ok (no-op)"] = function()

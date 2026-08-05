@@ -539,7 +539,15 @@ M.tools.file_open = {
     end
 
     local winid = resolve_editor_winid(target)
-    pcall(vim.api.nvim_win_set_buf, winid, target)
+    local shown = pcall(vim.api.nvim_win_set_buf, winid, target)
+    -- `bufadd` adopts a file unlisted. A buffer the captain is now
+    -- looking at belongs in `:ls`, `:bnext`, and their bufferline —
+    -- same as if they'd opened it with `:edit`. Ordinary file buffers
+    -- only: `resolve_target_bufnr` matches by pattern, so a stray hit on
+    -- a help or plugin buffer must not be forced into the buffer list.
+    if shown and vim.bo[target].buftype == "" then
+      vim.bo[target].buflisted = true
+    end
 
     local jumped_line, jumped_col
     if type(args.line) == "number" then
@@ -656,20 +664,38 @@ M.tools.select = {
     local start_line = math.max(1, math.min(args.start_line, max_lines))
     local end_line = math.max(start_line, math.min(args.end_line, max_lines))
 
-    -- Drive line-wise visual selection from the start row, then
-    -- extend down to the end row INSIDE the same normal-mode
-    -- command — `V<end_line>Gzv` enters visual mode and jumps to
-    -- `end_line` as the selection's other anchor in one keystroke.
-    -- The previous shape (`V` followed by `nvim_win_set_cursor`)
-    -- exited visual mode the moment the cursor moved, leaving the
-    -- captain with the wrong (single-line) selection.
-    vim.api.nvim_win_call(winid, function()
-      pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
-      local ok, cmd_err = pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
-      if not ok then
-        log.warn("editor_select: visual extend failed (bufnr=%s, range=%d-%d): %s", target, start_line, end_line, tostring(cmd_err))
-      end
-    end)
+    -- Visual mode entered inside `nvim_win_call` is discarded when the
+    -- call returns, so selecting for a captain whose focus is elsewhere
+    -- (a terminal, another split) used to report success and leave no
+    -- selection at all. Taking the window for real is the only way the
+    -- mode survives — unlike the other navigation tools, this one has
+    -- no meaning without focus.
+    -- Focusing can legitimately fail — the command-line window, textlock,
+    -- or a window the `nvim_win_set_buf` autocmds just invalidated. Left
+    -- unchecked, the `normal!` below would select in whatever window the
+    -- captain is actually in and still report the target as selected.
+    local focused, focus_err = pcall(vim.api.nvim_set_current_win, winid)
+    if not focused then
+      log.warn("editor_select: could not focus window %s: %s", winid, tostring(focus_err))
+      return err("could not focus the target window: " .. tostring(focus_err))
+    end
+    pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
+    -- `V<end_line>Gzv` enters visual mode and jumps to `end_line` as the
+    -- selection's other anchor in one keystroke; moving the cursor as a
+    -- separate step would drop straight back out of visual mode.
+    local ok, cmd_err = pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
+    if not ok then
+      log.warn("editor_select: visual extend failed (bufnr=%s, range=%d-%d): %s", target, start_line, end_line, tostring(cmd_err))
+      return err("could not enter visual mode: " .. tostring(cmd_err))
+    end
+
+    -- Report the outcome, not the intent: a `normal!` that ran without
+    -- landing in visual mode on the requested buffer is a failure the
+    -- agent has to see.
+    local mode = vim.api.nvim_get_mode().mode
+    if mode ~= "V" or vim.api.nvim_get_current_buf() ~= target then
+      return err(string.format("selection did not take: mode %q, buffer %d", mode, vim.api.nvim_get_current_buf()))
+    end
 
     return {
       json = {
@@ -677,8 +703,72 @@ M.tools.select = {
         path = vim.api.nvim_buf_get_name(target),
         start_line = start_line - 1,
         end_line = end_line - 1,
+        mode = mode,
       },
     }
+  end,
+}
+
+M.tools.quickfix_set = {
+  name = "editor_quickfix_set",
+  description = "Replace the quickfix list with `items` so the captain can walk an agent's findings with their own `:cnext` / picker bindings instead of reading them out of a response. Positions are 0-indexed, matching what `editor_grep` and the `lsp_*` tools return.",
+  schema = {
+    type = "object",
+    properties = {
+      items = {
+        type = "array",
+        description = "Entries to populate the list with.",
+        items = {
+          type = "object",
+          properties = {
+            path = { type = "string", description = "File path (absolute or cwd-relative)." },
+            line = { type = "integer", description = "0-indexed line. Defaults to 0." },
+            character = { type = "integer", description = "0-indexed column. Defaults to 0." },
+            text = { type = "string", description = "Entry description shown in the list." },
+          },
+          required = { "path" },
+        },
+      },
+      title = {
+        type = "string",
+        description = 'List title shown in the quickfix window. Defaults to "hyprpilot".',
+      },
+      open = {
+        type = "boolean",
+        description = "Open the quickfix window afterwards. Defaults to false — populating a list the captain hasn't asked to see shouldn't rearrange their windows.",
+      },
+    },
+    required = { "items" },
+    additionalProperties = false,
+  },
+  handler = function(args)
+    if type(args.items) ~= "table" then
+      return err("items must be an array")
+    end
+
+    local entries = {}
+    for _, item in ipairs(args.items) do
+      if type(item) == "table" and type(item.path) == "string" and item.path ~= "" then
+        table.insert(entries, {
+          filename = abs_path(item.path),
+          lnum = (item.line or 0) + 1,
+          col = (item.character or 0) + 1,
+          text = item.text or "",
+        })
+      end
+    end
+    if #entries == 0 then
+      return err("no usable items — each entry needs a non-empty `path`")
+    end
+
+    -- ` ` (space) as the action replaces the list rather than appending
+    -- to or amending the current one.
+    vim.fn.setqflist({}, " ", { title = args.title or "hyprpilot", items = entries })
+    if args.open == true then
+      vim.cmd("botright copen")
+    end
+
+    return { json = { count = #entries, skipped = #args.items - #entries, title = args.title or "hyprpilot" } }
   end,
 }
 

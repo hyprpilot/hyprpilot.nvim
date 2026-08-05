@@ -46,6 +46,15 @@ local disabled_lsps = {}
 
 local DEFAULT_TIMEOUT_MS = 2000
 
+-- How long the first request against a freshly loaded buffer waits for
+-- a client to finish attaching before giving up on it.
+local ATTACH_TIMEOUT_MS = 2000
+
+-- Buffers this module loaded whose LSP attach may still be in flight.
+-- Cleared the first time a request looks them up, so the wait is paid
+-- at most once per buffer.
+local pending_attach = {}
+
 ---@param msg string
 ---@return hyprpilot.mcp.RichResult
 local function err(msg)
@@ -75,14 +84,18 @@ local function ensure_loaded(path)
   local bufnr = vim.fn.bufadd(resolved)
   if not vim.api.nvim_buf_is_loaded(bufnr) then
     vim.fn.bufload(bufnr)
+    -- The attach this fires is asynchronous; mark the buffer so the
+    -- first request against it is willing to wait for a client.
+    pending_attach[bufnr] = true
   end
   return bufnr, nil
 end
 
----Get LSP clients attached to `bufnr` that support `method`. Empty
----list when no client advertises the capability — caller surfaces
----a clean error instead of silently round-tripping nothing.
----@param bufnr integer
+---Get LSP clients supporting `method`, scoped to `bufnr` when one is
+---given and session-wide when it isn't. Empty list when no client
+---advertises the capability — caller surfaces a clean error instead
+---of silently round-tripping nothing.
+---@param bufnr integer? nil for workspace-wide methods
 ---@param method string
 ---@return vim.lsp.Client[]
 local function clients_for(bufnr, method)
@@ -94,6 +107,33 @@ local function clients_for(bufnr, method)
   return vim.tbl_filter(function(client)
     return not vim.tbl_contains(disabled_lsps, client.name)
   end, clients)
+end
+
+---Wait for a client supporting `method` to attach to `bufnr`. Loading
+---a file fires the attach but doesn't finish it, so the first request
+---against a freshly adopted buffer used to report "no LSP client
+---attached" while the second — issued moments later — worked.
+---
+---Only a buffer this module just loaded is worth waiting on, and only
+---once: `vim.wait` runs the main loop, so an unconditional wait would
+---freeze the captain's editor on every request against a filetype that
+---has no configured server at all.
+---@param bufnr integer
+---@param method string
+---@return vim.lsp.Client[]
+local function await_clients(bufnr, method)
+  local clients = clients_for(bufnr, method)
+  if #clients > 0 or not pending_attach[bufnr] then
+    pending_attach[bufnr] = nil
+    return clients
+  end
+  vim.wait(ATTACH_TIMEOUT_MS, function()
+    clients = clients_for(bufnr, method)
+    return #clients > 0
+  end, 50)
+  pending_attach[bufnr] = nil
+
+  return clients
 end
 
 ---Build the `textDocument/<method>` position params for `bufnr` +
@@ -117,14 +157,20 @@ end
 ---Concatenates list-shaped results (definition, references,
 ---documentSymbol, codeAction). Per-client errors are logged at
 ---`debug` and skipped — the agent gets the union of what worked.
----@param bufnr integer
+---@param bufnr integer? nil for workspace-wide methods, which look up
+---clients session-wide instead of per buffer
 ---@param method string
 ---@param build_params fun(client: vim.lsp.Client): table
 ---@param timeout_ms? integer
 ---@return table[] results, integer client_count
 local function request_all_sync(bufnr, method, build_params, timeout_ms)
   local results = {}
-  local clients = clients_for(bufnr, method)
+  local clients
+  if bufnr == nil then
+    clients = clients_for(nil, method)
+  else
+    clients = await_clients(bufnr, method)
+  end
   for _, client in ipairs(clients) do
     local response, request_err = client:request_sync(method, build_params(client), timeout_ms or DEFAULT_TIMEOUT_MS, bufnr)
     if request_err ~= nil then
@@ -138,6 +184,19 @@ local function request_all_sync(bufnr, method, build_params, timeout_ms)
     end
   end
   return results, #clients
+end
+
+---Clip a symbol list to the caller's cap. A malformed `max_results`
+---degrades to the default rather than throwing out of the handler —
+---`mcp.call` doesn't wrap handlers, so a raw comparison error would
+---reach the agent as a Lua traceback.
+---@param symbols table[]
+---@param max_results any
+---@return table
+local function capped(symbols, max_results)
+  local cap = (type(max_results) == "number" and max_results >= 1) and math.floor(max_results) or 200
+
+  return { symbols = vim.list_slice(symbols, 1, cap), count = math.min(#symbols, cap), truncated = #symbols > cap }
 end
 
 ---Flatten a list of `{ client, result }` LSP location hits to the
@@ -207,29 +266,61 @@ local POSITION_SCHEMA = {
   },
 }
 
-M.tools.definition = {
-  name = "lsp_definition",
-  description = "Return the definition site(s) for the symbol at `path:line:character`. Aggregates results across every attached LSP client.",
-  schema = {
-    type = "object",
-    properties = POSITION_SCHEMA,
-    required = { "path", "line", "character" },
-    additionalProperties = false,
-  },
-  handler = function(args)
-    local bufnr, load_err = ensure_loaded(args.path)
-    if bufnr == nil then
-      return err(load_err)
-    end
-    local hits, client_count = request_all_sync(bufnr, "textDocument/definition", function(client)
-      return position_params(client, bufnr, args.line, args.character)
-    end)
-    if client_count == 0 then
-      return err("no LSP client attached to buffer with textDocument/definition support")
-    end
-    return { json = { definitions = locations_to_items(hits) } }
-  end,
-}
+---Build a location-returning position tool. Definition, type definition,
+---and implementation differ only in the wire method and the key their
+---hits land under.
+---@param tool_name string
+---@param method string
+---@param result_key string
+---@param description string
+---@return hyprpilot.mcp.Tool
+local function location_tool(tool_name, method, result_key, description)
+  return {
+    name = tool_name,
+    description = description,
+    schema = {
+      type = "object",
+      properties = POSITION_SCHEMA,
+      required = { "path", "line", "character" },
+      additionalProperties = false,
+    },
+    handler = function(args)
+      local bufnr, load_err = ensure_loaded(args.path)
+      if bufnr == nil then
+        return err(load_err)
+      end
+      local hits, client_count = request_all_sync(bufnr, method, function(client)
+        return position_params(client, bufnr, args.line, args.character)
+      end)
+      if client_count == 0 then
+        return err("no LSP client attached to buffer with " .. method .. " support")
+      end
+
+      return { json = { [result_key] = locations_to_items(hits) } }
+    end,
+  }
+end
+
+M.tools.definition = location_tool(
+  "lsp_definition",
+  "textDocument/definition",
+  "definitions",
+  "Return the definition site(s) for the symbol at `path:line:character`. Aggregates results across every attached LSP client."
+)
+
+M.tools.type_definition = location_tool(
+  "lsp_type_definition",
+  "textDocument/typeDefinition",
+  "definitions",
+  "Return where the *type* of the symbol at `path:line:character` is defined — the class / struct / interface behind a variable, not the variable itself."
+)
+
+M.tools.implementation = location_tool(
+  "lsp_implementation",
+  "textDocument/implementation",
+  "implementations",
+  "Return the concrete implementations of the interface / abstract symbol at `path:line:character`."
+)
 
 M.tools.references = {
   name = "lsp_references",
@@ -253,9 +344,95 @@ M.tools.references = {
     if client_count == 0 then
       return err("no LSP client attached to buffer with textDocument/references support")
     end
+
     return { json = { references = locations_to_items(hits) } }
   end,
 }
+
+---Shape one `CallHierarchyItem` into the quickfix-friendly item shape
+---the location tools return, plus the symbol name and kind the agent
+---needs to read a call tree. Routed through `locations_to_items` so the
+---client's offset encoding decides the column.
+---@param item table  -- CallHierarchyItem
+---@param client vim.lsp.Client
+---@return table
+local function hierarchy_item(item, client)
+  local location = vim.lsp.util.locations_to_items({ { uri = item.uri, range = item.selectionRange or item.range } }, client.offset_encoding)[1] or {}
+  location.name = item.name
+  location.kind = vim.lsp.protocol.SymbolKind[item.kind] or "Unknown"
+  location.detail = item.detail
+
+  return location
+end
+
+---Build a call-hierarchy tool. Both directions run the same two-step
+---dance — `prepareCallHierarchy` resolves the symbol under the cursor
+---into an item, then the direction method walks from it — and differ
+---only in which side of each call they report.
+---@param tool_name string
+---@param method string   -- `callHierarchy/incomingCalls` | `.../outgoingCalls`
+---@param edge_key string -- the CallHierarchyCall field naming the far end
+---@param description string
+---@return hyprpilot.mcp.Tool
+local function call_hierarchy_tool(tool_name, method, edge_key, description)
+  return {
+    name = tool_name,
+    description = description,
+    schema = {
+      type = "object",
+      properties = POSITION_SCHEMA,
+      required = { "path", "line", "character" },
+      additionalProperties = false,
+    },
+    handler = function(args)
+      local bufnr, load_err = ensure_loaded(args.path)
+      if bufnr == nil then
+        return err(load_err)
+      end
+      local prepared, client_count = request_all_sync(bufnr, "textDocument/prepareCallHierarchy", function(client)
+        return position_params(client, bufnr, args.line, args.character)
+      end)
+      if client_count == 0 then
+        return err("no LSP client attached to buffer with textDocument/prepareCallHierarchy support")
+      end
+
+      local calls = {}
+      for _, hit in ipairs(prepared) do
+        for _, item in ipairs(hit.result or {}) do
+          -- Each direction request must go back to the client that
+          -- prepared the item — hierarchy items are server-scoped
+          -- handles, not portable across clients.
+          local response, request_err = hit.client:request_sync(method, { item = item }, DEFAULT_TIMEOUT_MS, bufnr)
+          if request_err ~= nil then
+            log.debug("mcp.lsp: %s on %s failed: %s", method, hit.client.name, request_err)
+          elseif response ~= nil and response.result ~= nil then
+            for _, call in ipairs(response.result) do
+              if call[edge_key] ~= nil then
+                table.insert(calls, hierarchy_item(call[edge_key], hit.client))
+              end
+            end
+          end
+        end
+      end
+
+      return { json = { calls = calls, count = #calls } }
+    end,
+  }
+end
+
+M.tools.incoming_calls = call_hierarchy_tool(
+  "lsp_incoming_calls",
+  "callHierarchy/incomingCalls",
+  "from",
+  "Return the callers of the function at `path:line:character` — who reaches this code. Each entry carries the caller's name, kind, and location."
+)
+
+M.tools.outgoing_calls = call_hierarchy_tool(
+  "lsp_outgoing_calls",
+  "callHierarchy/outgoingCalls",
+  "to",
+  "Return the functions called by the function at `path:line:character` — what this code reaches. Each entry carries the callee's name, kind, and location."
+)
 
 M.tools.hover = {
   name = "lsp_hover",
@@ -305,6 +482,15 @@ M.tools.document_symbols = {
     type = "object",
     properties = {
       path = POSITION_SCHEMA.path,
+      kinds = {
+        type = "array",
+        items = { type = "string" },
+        description = "Symbol kinds to keep (`Function`, `Method`, `Class`, …). Empty = every kind.",
+      },
+      max_results = {
+        type = "integer",
+        description = "Cap on symbols returned. Default 200.",
+      },
     },
     required = { "path" },
     additionalProperties = false,
@@ -327,7 +513,12 @@ M.tools.document_symbols = {
     for _, hit in ipairs(hits) do
       vim.list_extend(symbols, vim.lsp.util.symbols_to_items(hit.result or {}, bufnr, hit.client.offset_encoding))
     end
-    return { json = { symbols = symbols } }
+    if type(args.kinds) == "table" and #args.kinds > 0 then
+      symbols = vim.tbl_filter(function(symbol)
+        return vim.tbl_contains(args.kinds, symbol.kind)
+      end, symbols)
+    end
+    return { json = capped(symbols, args.max_results) }
   end,
 }
 
@@ -341,6 +532,10 @@ M.tools.workspace_symbols = {
         type = "string",
         description = "Symbol name fragment to search for. Empty string returns everything the server's willing to report.",
       },
+      max_results = {
+        type = "integer",
+        description = "Cap on symbols returned. Default 200.",
+      },
     },
     required = { "query" },
     additionalProperties = false,
@@ -349,8 +544,11 @@ M.tools.workspace_symbols = {
     if type(args.query) ~= "string" then
       return err("query must be a string")
     end
-    local bufnr = vim.api.nvim_get_current_buf()
-    local hits, client_count = request_all_sync(bufnr, "workspace/symbol", function()
+    -- Session-wide, not current-buffer: the captain's focus is usually
+    -- a terminal or picker with no client attached, and scoping the
+    -- lookup there reported "no client" while their language server sat
+    -- attached to every source buffer in the workspace.
+    local hits, client_count = request_all_sync(nil, "workspace/symbol", function()
       return { query = args.query }
     end)
     if client_count == 0 then
@@ -360,7 +558,7 @@ M.tools.workspace_symbols = {
     for _, hit in ipairs(hits) do
       vim.list_extend(symbols, vim.lsp.util.symbols_to_items(hit.result or {}, nil, hit.client.offset_encoding))
     end
-    return { json = { symbols = symbols } }
+    return { json = capped(symbols, args.max_results) }
   end,
 }
 
