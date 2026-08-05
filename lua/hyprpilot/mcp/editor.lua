@@ -670,6 +670,16 @@ M.tools.select = {
     -- selection at all. Taking the window for real is the only way the
     -- mode survives — unlike the other navigation tools, this one has
     -- no meaning without focus.
+    -- A captain sitting in terminal-insert keeps focus pinned there: the
+    -- window switch below appears to work for the rest of this call and
+    -- is undone the moment control returns to the main loop, so the
+    -- selection lands nowhere. Leaving terminal mode first is what makes
+    -- it stick — and the captain asked to be shown a range, which they
+    -- can't look at from inside a terminal anyway.
+    if vim.api.nvim_get_mode().mode:sub(1, 1) == "t" then
+      pcall(vim.cmd, "stopinsert")
+    end
+
     -- Focusing can legitimately fail — the command-line window, textlock,
     -- or a window the `nvim_win_set_buf` autocmds just invalidated. Left
     -- unchecked, the `normal!` below would select in whatever window the
@@ -735,7 +745,7 @@ M.tools.quickfix_set = {
       },
       open = {
         type = "boolean",
-        description = "Open the quickfix window afterwards. Defaults to false — populating a list the captain hasn't asked to see shouldn't rearrange their windows.",
+        description = "Open the quickfix window afterwards. Defaults to true — a list the captain never sees is worse than the paths it replaced. Pass false when populating the list as a side effect of other work.",
       },
     },
     required = { "items" },
@@ -764,11 +774,12 @@ M.tools.quickfix_set = {
     -- ` ` (space) as the action replaces the list rather than appending
     -- to or amending the current one.
     vim.fn.setqflist({}, " ", { title = args.title or "hyprpilot", items = entries })
-    if args.open == true then
+    local opened = args.open ~= false
+    if opened then
       vim.cmd("botright copen")
     end
 
-    return { json = { count = #entries, skipped = #args.items - #entries, title = args.title or "hyprpilot" } }
+    return { json = { count = #entries, skipped = #args.items - #entries, title = args.title or "hyprpilot", opened = opened } }
   end,
 }
 
