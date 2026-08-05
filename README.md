@@ -70,6 +70,20 @@ require("hyprpilot.mcp.editor").register({
 })
 ```
 
+Without further config the landing window is picked for you: a usable window on the current tabpage already showing the file, else the current window, else the first usable one — where usable means not a float and not on those exclusion lists. Pass `pick_window` to decide yourself instead. It gets the same exclusion lists as `{ filetype = ..., buftype = ... }`, so an interactive picker can forward them as its own filter rules, and anything unusable coming back (`nil` from a cancelled pick, a stale winid, `0`, a throw) falls back to the built-in choice:
+
+```lua
+require("hyprpilot.mcp.editor").register({
+  disabled_filetypes = { "neo-tree", "qf", "help" },
+  disabled_buffer_types = { "terminal", "prompt" },
+  pick_window = function(filter)
+    return require("window-picker").pick_window({ filter_rules = { bo = filter } })
+  end,
+})
+```
+
+Only `file_open`, `jump`, and `select` consult it, and only when the target isn't already in a usable window — read-only tools like `editor_cursor` never prompt you. Two things worth knowing about an interactive picker: `filter_rules.bo` is replaced wholesale by what you pass, and the picker blocks the entire bridge (not just the one tool call) until you press a key, since every request serializes through one connection. Enable `autoselect_one` so the common single-window case never prompts.
+
 `lsp.register` takes `disabled_lsps` to skip specific LSP clients (by name) when servicing a request:
 
 ```lua

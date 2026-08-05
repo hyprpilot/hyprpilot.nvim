@@ -10,6 +10,14 @@
 ---       disabled_filetypes = { "neo-tree", "qf" },
 ---       disabled_buffer_types = { "terminal" },
 ---     })
+---
+---     -- hand window choice to an interactive picker:
+---     require("hyprpilot.mcp.editor").register({
+---       disabled_filetypes = { "neo-tree", "qf" },
+---       pick_window = function(filter)
+---         return require("window-picker").pick_window({ filter_rules = { bo = filter } })
+---       end,
+---     })
 
 local log = require("hyprpilot.log")
 local mcp = require("hyprpilot.mcp")
@@ -22,6 +30,13 @@ local M = {}
 -- exclusion lists (file explorers, terminals, quickfix, etc.).
 local disabled_filetypes = {}
 local disabled_buffer_types = {}
+
+-- Optional captain hook that picks the window navigation lands in,
+-- configured via `register({ pick_window = ... })`. nil by default —
+-- the built-in heuristic (`editor_winid`) picks instead, folding the
+-- exclusion lists in on its own.
+---@type (fun(filter: hyprpilot.mcp.editor.PickFilter): integer?)?
+local pick_window = nil
 
 -- Tool names this category currently has in the registry. `register`
 -- overrides against this so a re-register with a smaller `items` list
@@ -440,13 +455,49 @@ end
 ---away from floating popups so an `editor_file_open` fired while a
 ---picker or completion float is focused doesn't hijack the popup.
 ---Search order:
----  1. Current window, if not floating.
----  2. First non-floating window in the tab.
----  3. New `:topleft new` split (last resort — only floats were open).
+---  1. A usable window on the current tabpage already showing
+---     `target` — never prompt for a window the file is already in.
+---     Other tabpages are off-limits: landing there moves a buffer
+---     the captain can't see.
+---  2. The captain's `pick_window` hook, when one is configured.
+---  3. Current window if usable, else the first usable one in the tab.
+---  4. New `:topleft new` split (last resort — only floats were open).
 ---Caller is responsible for `nvim_win_set_buf` afterward; we return
 ---the winid only.
+---@param target integer? -- bufnr about to be shown, when known
 ---@return integer
-local function resolve_editor_winid()
+local function resolve_editor_winid(target)
+  if target ~= nil then
+    local tabpage = vim.api.nvim_get_current_tabpage()
+    for _, winid in ipairs(vim.fn.win_findbuf(target)) do
+      if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_tabpage(winid) == tabpage and not is_floating(winid) and not is_disabled(winid) then
+        return winid
+      end
+    end
+  end
+
+  if pick_window ~= nil then
+    -- The hook owns window policy from here — we only guard against a
+    -- pick we can't act on: a cancelled one (nvim-window-picker returns
+    -- nil on <Esc>), a stale winid, or 0, which nvim reads as "current
+    -- window" and would quietly defeat the captain's choice.
+    local ok, picked = pcall(function()
+      local winid = pick_window({
+        filetype = vim.deepcopy(disabled_filetypes),
+        buftype = vim.deepcopy(disabled_buffer_types),
+      })
+      if type(winid) == "number" and winid > 0 and vim.api.nvim_win_is_valid(winid) then
+        return winid
+      end
+      return nil
+    end)
+    if not ok then
+      log.warn("mcp.editor: pick_window hook failed: %s", tostring(picked))
+    elseif picked ~= nil then
+      return picked
+    end
+  end
+
   local found = editor_winid()
   if found ~= nil then
     return found
@@ -487,7 +538,7 @@ M.tools.file_open = {
       return err(why or "could not resolve target buffer")
     end
 
-    local winid = resolve_editor_winid()
+    local winid = resolve_editor_winid(target)
     pcall(vim.api.nvim_win_set_buf, winid, target)
 
     local jumped_line, jumped_col
@@ -542,7 +593,7 @@ M.tools.jump = {
       return err(why or "could not resolve target buffer")
     end
 
-    local winid = resolve_editor_winid()
+    local winid = resolve_editor_winid(target)
     if vim.api.nvim_win_get_buf(winid) ~= target then
       pcall(vim.api.nvim_win_set_buf, winid, target)
     end
@@ -596,7 +647,7 @@ M.tools.select = {
       return err(why or "could not resolve target buffer")
     end
 
-    local winid = resolve_editor_winid()
+    local winid = resolve_editor_winid(target)
     if vim.api.nvim_win_get_buf(winid) ~= target then
       pcall(vim.api.nvim_win_set_buf, winid, target)
     end
@@ -694,16 +745,33 @@ M.tools.format = {
 ---       disabled_buffer_types = { "terminal", "prompt" },
 ---     })
 ---
+---`pick_window` hands the landing-window choice to the captain. It
+---receives the configured exclusion lists so an interactive picker can
+---forward them as its own filter rules, and may return nil (cancelled)
+---to fall back to the built-in heuristic.
+---
+---@class hyprpilot.mcp.editor.PickFilter
+---@field filetype string[]                  -- `disabled_filetypes`, verbatim
+---@field buftype string[]                   -- `disabled_buffer_types`, verbatim
+---
 ---@class hyprpilot.mcp.editor.RegisterOpts
 ---@field items? string[]                    -- `M.tools` keys to register; all when omitted
 ---@field disabled_filetypes? string[]       -- filetypes whose windows navigation skips
 ---@field disabled_buffer_types? string[]    -- buftypes whose windows navigation skips
+---@field pick_window? fun(filter: hyprpilot.mcp.editor.PickFilter): integer? -- window chooser for `file_open` / `jump` / `select`; built-in heuristic when omitted
 ---@param opts? hyprpilot.mcp.editor.RegisterOpts
 function M.register(opts)
   opts = opts or {}
 
   disabled_filetypes = opts.disabled_filetypes or {}
   disabled_buffer_types = opts.disabled_buffer_types or {}
+
+  if opts.pick_window ~= nil and type(opts.pick_window) ~= "function" then
+    log.error("mcp.editor.register: pick_window must be a function, got %s", type(opts.pick_window))
+    pick_window = nil
+  else
+    pick_window = opts.pick_window
+  end
 
   ---@type table<string, hyprpilot.mcp.Tool>
   local desired = {}

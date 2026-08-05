@@ -105,6 +105,11 @@ lives on the Lua side.
   `editor_winid()` targets the current window unless it's a floating
   popup, in which case the first non-floating window; navigation tools
   spawn a `topleft new` split only when nothing else is available.
+  `register({ pick_window = ... })` hands that choice to the captain
+  instead — consulted by `file_open` / `jump` / `select` only, only
+  when the target isn't already in a usable window on the current
+  tabpage, and only after the built-in reuse check; read-only tools
+  never call it, and an unusable return degrades to the heuristic.
 
 ## Tools & MCP Usage
 
