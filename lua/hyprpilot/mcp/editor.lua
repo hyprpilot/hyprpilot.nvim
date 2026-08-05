@@ -539,7 +539,15 @@ M.tools.file_open = {
     end
 
     local winid = resolve_editor_winid(target)
-    pcall(vim.api.nvim_win_set_buf, winid, target)
+    local shown = pcall(vim.api.nvim_win_set_buf, winid, target)
+    -- `bufadd` adopts a file unlisted. A buffer the captain is now
+    -- looking at belongs in `:ls`, `:bnext`, and their bufferline —
+    -- same as if they'd opened it with `:edit`. Ordinary file buffers
+    -- only: `resolve_target_bufnr` matches by pattern, so a stray hit on
+    -- a help or plugin buffer must not be forced into the buffer list.
+    if shown and vim.bo[target].buftype == "" then
+      vim.bo[target].buflisted = true
+    end
 
     local jumped_line, jumped_col
     if type(args.line) == "number" then
@@ -656,20 +664,38 @@ M.tools.select = {
     local start_line = math.max(1, math.min(args.start_line, max_lines))
     local end_line = math.max(start_line, math.min(args.end_line, max_lines))
 
-    -- Drive line-wise visual selection from the start row, then
-    -- extend down to the end row INSIDE the same normal-mode
-    -- command — `V<end_line>Gzv` enters visual mode and jumps to
-    -- `end_line` as the selection's other anchor in one keystroke.
-    -- The previous shape (`V` followed by `nvim_win_set_cursor`)
-    -- exited visual mode the moment the cursor moved, leaving the
-    -- captain with the wrong (single-line) selection.
-    vim.api.nvim_win_call(winid, function()
-      pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
-      local ok, cmd_err = pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
-      if not ok then
-        log.warn("editor_select: visual extend failed (bufnr=%s, range=%d-%d): %s", target, start_line, end_line, tostring(cmd_err))
-      end
-    end)
+    -- Visual mode entered inside `nvim_win_call` is discarded when the
+    -- call returns, so selecting for a captain whose focus is elsewhere
+    -- (a terminal, another split) used to report success and leave no
+    -- selection at all. Taking the window for real is the only way the
+    -- mode survives — unlike the other navigation tools, this one has
+    -- no meaning without focus.
+    -- Focusing can legitimately fail — the command-line window, textlock,
+    -- or a window the `nvim_win_set_buf` autocmds just invalidated. Left
+    -- unchecked, the `normal!` below would select in whatever window the
+    -- captain is actually in and still report the target as selected.
+    local focused, focus_err = pcall(vim.api.nvim_set_current_win, winid)
+    if not focused then
+      log.warn("editor_select: could not focus window %s: %s", winid, tostring(focus_err))
+      return err("could not focus the target window: " .. tostring(focus_err))
+    end
+    pcall(vim.api.nvim_win_set_cursor, winid, { start_line, 0 })
+    -- `V<end_line>Gzv` enters visual mode and jumps to `end_line` as the
+    -- selection's other anchor in one keystroke; moving the cursor as a
+    -- separate step would drop straight back out of visual mode.
+    local ok, cmd_err = pcall(vim.cmd, string.format("normal! V%dGzv", end_line))
+    if not ok then
+      log.warn("editor_select: visual extend failed (bufnr=%s, range=%d-%d): %s", target, start_line, end_line, tostring(cmd_err))
+      return err("could not enter visual mode: " .. tostring(cmd_err))
+    end
+
+    -- Report the outcome, not the intent: a `normal!` that ran without
+    -- landing in visual mode on the requested buffer is a failure the
+    -- agent has to see.
+    local mode = vim.api.nvim_get_mode().mode
+    if mode ~= "V" or vim.api.nvim_get_current_buf() ~= target then
+      return err(string.format("selection did not take: mode %q, buffer %d", mode, vim.api.nvim_get_current_buf()))
+    end
 
     return {
       json = {
@@ -677,6 +703,7 @@ M.tools.select = {
         path = vim.api.nvim_buf_get_name(target),
         start_line = start_line - 1,
         end_line = end_line - 1,
+        mode = mode,
       },
     }
   end,

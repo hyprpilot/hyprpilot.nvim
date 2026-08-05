@@ -335,6 +335,7 @@ T["editor_select: enters line-wise visual over the requested range"] = function(
 
   MiniTest.expect.equality(result.json.start_line, 1) -- 0-indexed
   MiniTest.expect.equality(result.json.end_line, 2)
+  MiniTest.expect.equality(result.json.mode, "V")
   local cursor = vim.api.nvim_win_get_cursor(0)
   MiniTest.expect.equality(cursor[1], 3)
 
@@ -342,6 +343,60 @@ T["editor_select: enters line-wise visual over the requested range"] = function(
   pcall(vim.cmd, "stopinsert")
   pcall(vim.cmd, "normal! \027")
   pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
+T["editor_select: selects for real when the captain is focused elsewhere"] = function()
+  vim.cmd("only")
+  vim.cmd("new")
+  local target = vim.api.nvim_get_current_buf()
+  local target_winid = vim.api.nvim_get_current_win()
+  vim.api.nvim_buf_set_lines(target, 0, -1, false, { "a", "b", "c", "d" })
+
+  -- Focus a different window, the way a captain sitting in a terminal
+  -- split does. Visual mode driven through `nvim_win_call` used to be
+  -- discarded here, leaving a success result and no selection.
+  vim.cmd("vnew")
+  local elsewhere = vim.api.nvim_get_current_buf()
+
+  local result = require("hyprpilot.mcp.editor").tools.select.handler({
+    bufnr = target,
+    start_line = 2,
+    end_line = 3,
+  })
+
+  MiniTest.expect.equality(result.json.mode, "V")
+  MiniTest.expect.equality(vim.api.nvim_get_current_win(), target_winid)
+
+  pcall(vim.cmd, "normal! \027")
+  MiniTest.expect.equality(vim.api.nvim_buf_get_mark(target, "<")[1], 2)
+  MiniTest.expect.equality(vim.api.nvim_buf_get_mark(target, ">")[1], 3)
+
+  pcall(vim.api.nvim_buf_delete, elsewhere, { force = true })
+  pcall(vim.api.nvim_buf_delete, target, { force = true })
+end
+
+T["editor_file_open: the opened file becomes a listed buffer"] = function()
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "one", "two" }, path)
+  vim.cmd("only")
+
+  local editor = require("hyprpilot.mcp.editor")
+  local result = editor.tools.file_open.handler({ path = path, line = 2 })
+
+  -- `bufadd` adopts unlisted, so without the explicit flip the captain's
+  -- tabline and `:bnext` never see a file the agent opened for them.
+  MiniTest.expect.equality(vim.bo[result.json.bufnr].buflisted, true)
+
+  local seen = false
+  for _, b in ipairs(editor.tools.buffers.handler({}).json.buffers) do
+    if b.bufnr == result.json.bufnr then
+      seen = true
+    end
+  end
+  MiniTest.expect.equality(seen, true)
+
+  pcall(vim.api.nvim_buf_delete, result.json.bufnr, { force = true })
+  vim.fn.delete(path)
 end
 
 T["editor_file_open: missing file returns is_error"] = function()
