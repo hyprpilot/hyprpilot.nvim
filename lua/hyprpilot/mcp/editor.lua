@@ -676,8 +676,13 @@ M.tools.select = {
     -- selection lands nowhere. Leaving terminal mode first is what makes
     -- it stick — and the captain asked to be shown a range, which they
     -- can't look at from inside a terminal anyway.
+    --
+    -- `stopinsert` does NOT do it from an RPC handler; the mode is still
+    -- `t` on the next line. Feeding `<C-\><C-N>` with the `x` flag runs
+    -- the typeahead right here instead of queueing it, which is the only
+    -- form that lands before the rest of this handler executes.
     if vim.api.nvim_get_mode().mode:sub(1, 1) == "t" then
-      pcall(vim.cmd, "stopinsert")
+      pcall(vim.api.nvim_feedkeys, vim.api.nvim_replace_termcodes("<C-\\><C-N>", true, false, true), "x", false)
     end
 
     -- Focusing can legitimately fail — the command-line window, textlock,
