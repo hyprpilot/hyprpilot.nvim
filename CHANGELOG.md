@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.2.1...hyprpilot.nvim-v2.2.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* **mcp:** open the quickfix list by default and land selections from terminal mode ([#170](https://github.com/hyprpilot/hyprpilot.nvim/issues/170)) ([7cc8770](https://github.com/hyprpilot/hyprpilot.nvim/commit/7cc87702fe81a1506b6cbd2fb7ac51181eb4d208))
+
 ## [2.2.1](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.2.0...hyprpilot.nvim-v2.2.1) (2026-08-05)
 
 
