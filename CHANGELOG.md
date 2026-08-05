@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.3.0...hyprpilot.nvim-v3.0.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** name plugin modules and tools after their git repos ([#175](https://github.com/hyprpilot/hyprpilot.nvim/issues/175))
+
+### Refactor
+
+* **mcp:** name plugin modules and tools after their git repos ([#175](https://github.com/hyprpilot/hyprpilot.nvim/issues/175)) ([1ce384b](https://github.com/hyprpilot/hyprpilot.nvim/commit/1ce384be7ee9ca9ac2b05b595c7acc9989bf3c2f))
+
 ## [2.3.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.2.2...hyprpilot.nvim-v2.3.0) (2026-08-05)
 
 
