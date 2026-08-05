@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.2.2...hyprpilot.nvim-v2.3.0) (2026-08-05)
+
+
+### Features
+
+* **mcp:** expose diffview, neotest, dap, coverage, and todo-comments ([#174](https://github.com/hyprpilot/hyprpilot.nvim/issues/174)) ([ee5e4f9](https://github.com/hyprpilot/hyprpilot.nvim/commit/ee5e4f9363153b3c4a02d74ab343eadb03010047))
+
+
+### Bug Fixes
+
+* **mcp:** leave terminal mode with feedkeys so selections actually land ([#172](https://github.com/hyprpilot/hyprpilot.nvim/issues/172)) ([6fde6b9](https://github.com/hyprpilot/hyprpilot.nvim/commit/6fde6b90af036d0f528d83dbdc7f13b26f218bac))
+
 ## [2.2.2](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.2.1...hyprpilot.nvim-v2.2.2) (2026-08-05)
 
 
