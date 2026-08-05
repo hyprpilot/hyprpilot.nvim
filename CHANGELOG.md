@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.1.0...hyprpilot.nvim-v2.2.0) (2026-08-05)
+
+
+### Features
+
+* **mcp:** let the captain pick the editor window for navigation ([#166](https://github.com/hyprpilot/hyprpilot.nvim/issues/166)) ([d5453b9](https://github.com/hyprpilot/hyprpilot.nvim/commit/d5453b9bc2a2fdc7f19021c49ae9de5c6b8d3832))
+
 ## [2.1.0](https://github.com/hyprpilot/hyprpilot.nvim/compare/hyprpilot.nvim-v2.0.0...hyprpilot.nvim-v2.1.0) (2026-07-23)
 
 
