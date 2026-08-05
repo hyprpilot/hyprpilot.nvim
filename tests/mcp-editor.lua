@@ -67,6 +67,136 @@ T["register: disabled_filetypes routes navigation away from matching windows"] =
   pcall(vim.api.nvim_buf_delete, editor_bufnr, { force = true })
 end
 
+T["register: pick_window picks the landing window and gets the exclusion lists"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+
+  vim.cmd("only")
+  local home_winid = vim.api.nvim_get_current_win()
+  vim.cmd("vnew")
+  local picked_winid = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_win(home_winid)
+
+  -- Target buffer isn't on screen anywhere, so the hook decides.
+  local hidden = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_lines(hidden, 0, -1, false, { "one", "two", "three" })
+
+  local seen
+  editor.register({
+    disabled_filetypes = { "myaux" },
+    disabled_buffer_types = { "terminal" },
+    pick_window = function(filter)
+      seen = filter
+      return picked_winid
+    end,
+  })
+
+  local result = editor.tools.jump.handler({ bufnr = hidden, line = 2 })
+
+  MiniTest.expect.equality(result.json.bufnr, hidden)
+  MiniTest.expect.equality(vim.api.nvim_win_get_buf(picked_winid), hidden)
+  MiniTest.expect.equality(seen.filetype, { "myaux" })
+  MiniTest.expect.equality(seen.buftype, { "terminal" })
+
+  editor.register({})
+  pcall(vim.api.nvim_win_close, picked_winid, true)
+  pcall(vim.api.nvim_buf_delete, hidden, { force = true })
+end
+
+T["register: pick_window returning nil falls back to the built-in heuristic"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+
+  vim.cmd("only")
+  local winid = vim.api.nvim_get_current_win()
+  local hidden = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_lines(hidden, 0, -1, false, { "a", "b" })
+
+  editor.register({
+    pick_window = function()
+      return nil -- picker cancelled
+    end,
+  })
+
+  editor.tools.jump.handler({ bufnr = hidden, line = 1 })
+  MiniTest.expect.equality(vim.api.nvim_win_get_buf(winid), hidden)
+
+  editor.register({})
+  pcall(vim.api.nvim_buf_delete, hidden, { force = true })
+end
+
+T["register: a throwing or unusable pick_window degrades to the heuristic"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+
+  for _, hook in ipairs({
+    function()
+      error("picker blew up")
+    end,
+    function()
+      return 999999 -- stale winid
+    end,
+    function()
+      return 0 -- nvim reads 0 as "current window"; not a real pick
+    end,
+    function()
+      return "not a winid"
+    end,
+  }) do
+    vim.cmd("only")
+    local winid = vim.api.nvim_get_current_win()
+    local hidden = vim.api.nvim_create_buf(true, false)
+    vim.api.nvim_buf_set_lines(hidden, 0, -1, false, { "a", "b" })
+
+    editor.register({ pick_window = hook })
+    editor.tools.jump.handler({ bufnr = hidden, line = 1 })
+    MiniTest.expect.equality(vim.api.nvim_win_get_buf(winid), hidden)
+
+    pcall(vim.api.nvim_buf_delete, hidden, { force = true })
+  end
+
+  editor.register({})
+end
+
+T["register: non-function pick_window is rejected, navigation still works"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+
+  vim.cmd("only")
+  local winid = vim.api.nvim_get_current_win()
+  local hidden = vim.api.nvim_create_buf(true, false)
+  vim.api.nvim_buf_set_lines(hidden, 0, -1, false, { "a", "b" })
+
+  editor.register({ pick_window = "nope" })
+  editor.tools.jump.handler({ bufnr = hidden, line = 1 })
+  MiniTest.expect.equality(vim.api.nvim_win_get_buf(winid), hidden)
+
+  editor.register({})
+  pcall(vim.api.nvim_buf_delete, hidden, { force = true })
+end
+
+T["register: pick_window is skipped for on-screen targets and read-only tools"] = function()
+  local editor = require("hyprpilot.mcp.editor")
+
+  vim.cmd("only")
+  vim.cmd("new")
+  local bufnr = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "a", "b", "c" })
+
+  local calls = 0
+  editor.register({
+    pick_window = function()
+      calls = calls + 1
+      return nil
+    end,
+  })
+
+  editor.tools.cursor.handler({})
+  editor.tools.status.handler({})
+  editor.tools.jump.handler({ bufnr = bufnr, line = 2 })
+
+  MiniTest.expect.equality(calls, 0)
+
+  editor.register({})
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
 T["editor_cursor: returns cursor pos + buffer info for the active window"] = function()
   vim.cmd("new")
   local bufnr = vim.api.nvim_get_current_buf()
