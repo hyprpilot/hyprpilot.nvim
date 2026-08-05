@@ -1,7 +1,7 @@
---- `plugin_dap_*` MCP tools — the debugger's live state. Wire from
+--- `plugin_nvim_dap_*` MCP tools — the debugger's live state. Wire from
 --- your config:
 ---
----     require("hyprpilot.mcp.plugin.dap").register()
+---     require("hyprpilot.mcp.plugin.nvim-dap").register()
 ---
 --- Reads only what the session already holds. `nvim-dap` is
 --- callback-driven throughout, and an MCP handler is synchronous, so
@@ -32,7 +32,7 @@ end
 M.tools = {}
 
 M.tools.status = {
-  name = "plugin_dap_status",
+  name = "plugin_nvim_dap_status",
   description = "Report whether a debug session is live, what it is debugging, and whether it is stopped at a breakpoint. Cheap orientation call before asking for a stack.",
   schema = { type = "object", additionalProperties = false },
   handler = function()
@@ -60,7 +60,7 @@ M.tools.status = {
 }
 
 M.tools.stack = {
-  name = "plugin_dap_stack",
+  name = "plugin_nvim_dap_stack",
   description = "Return the threads of the live debug session and the stack frames the debugger has already reported, each with a 0-indexed file position. Empty frames mean the thread is running, not that it has none.",
   schema = {
     type = "object",

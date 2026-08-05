@@ -1,7 +1,7 @@
---- `plugin_todo_*` MCP tools — the captain's TODO / FIXME index. Wire
+--- `plugin_todo_comments_*` MCP tools — the captain's TODO / FIXME index. Wire
 --- from your config:
 ---
----     require("hyprpilot.mcp.plugin.todo_comments").register()
+---     require("hyprpilot.mcp.plugin.todo-comments").register()
 ---
 --- `editor_grep` could find these too, but only if the agent guessed
 --- the captain's keyword set and comment pattern correctly. This drives
@@ -15,7 +15,7 @@ local M = {}
 M.tools = {}
 
 M.tools.search = {
-  name = "plugin_todo_search",
+  name = "plugin_todo_comments_search",
   description = "Search the workspace for TODO / FIXME / HACK style comments using todo-comments' own configured keywords and pattern. Returns each hit with path, 0-indexed line, keyword, and text.",
   schema = {
     type = "object",
