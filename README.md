@@ -49,7 +49,7 @@ Built-in categories, named `<category>_<verb>`:
 
 - `lsp_*` — `ensure_loaded`, `definition`, `type_definition`, `implementation`, `references`, `incoming_calls`, `outgoing_calls`, `hover`, `document_symbols`, `workspace_symbols`, `code_actions`, `rename`, `diagnostics_get`
 - `editor_*` — `cursor`, `buffers`, `read`, `grep`, `files`, `status`, `file_open`, `jump`, `select`, `quickfix_set`, `format`
-- `plugin_*` — integrations with third-party plugins you already run: `diffview`, `neotest`, `dap`, `coverage`, `todo_comments`
+- `plugin_*` — integrations with third-party plugins you already run: `diffview`, `neotest`, `nvim-dap`, `nvim-coverage`, `todo-comments`
 
 Each category's `register(opts?)` doubles as a setup call. Omit `opts` to register everything; pass `items` to register a subset. Calling it again overrides — the category's registered set is replaced, not added to.
 
@@ -92,18 +92,18 @@ Only `file_open`, `jump`, and `select` consult it, and only when the target isn'
 ```lua
 require("hyprpilot.mcp.plugin.diffview").register()
 require("hyprpilot.mcp.plugin.neotest").register()
-require("hyprpilot.mcp.plugin.dap").register()
-require("hyprpilot.mcp.plugin.coverage").register()
-require("hyprpilot.mcp.plugin.todo_comments").register()
+require("hyprpilot.mcp.plugin.nvim-dap").register()
+require("hyprpilot.mcp.plugin.nvim-coverage").register()
+require("hyprpilot.mcp.plugin.todo-comments").register()
 ```
 
 | Category | Tools | What the agent gets |
 |---|---|---|
 | `diffview` | `files`, `current`, `open`, `close`, `selection_get`, `selection_set` | The diff you have open and the files you marked in it. `open` takes `paths`, so an agent can put an exact set of changes on your screen |
 | `neotest` | `status`, `positions`, `run` | Pass / fail counts from the run you already triggered, and tests mapped to `file:line` — no re-running a suite to learn what the adapter already parsed |
-| `dap` | `status`, `stack` | Whether a session is live and where it stopped, with frames as 0-indexed positions you can feed to `editor_jump` |
-| `coverage` | `report` | The parsed coverage report, whatever format the project emits |
-| `todo_comments` | `search` | TODO / FIXME hits using your configured keywords and pattern, not a guessed regex |
+| `nvim-dap` | `status`, `stack` | Whether a session is live and where it stopped, with frames as 0-indexed positions you can feed to `editor_jump` |
+| `nvim-coverage` | `report` | The parsed coverage report, whatever format the project emits |
+| `todo-comments` | `search` | TODO / FIXME hits using your configured keywords and pattern, not a guessed regex |
 
 They take the same `items` option as the built-in categories. `diffview`'s `selection_get` / `selection_set` additionally need the [diffview+](https://github.com/dlyongemallo/diffview-plus.nvim) fork's `diffview.api` module and return a clean error on upstream diffview.
 

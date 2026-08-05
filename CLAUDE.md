@@ -71,7 +71,11 @@ lives on the Lua side.
     table for selective registration. Tool names follow
     `<category>_<verb>`.
   - `lua/hyprpilot/mcp/plugin/` — third-party plugin integrations, one
-    module per plugin, tools named `plugin_<plugin>_<verb>`.
+    module per plugin. Both the module and its tool prefix carry the
+    plugin's **git repo name** minus a trailing `.nvim` — kebab-case for
+    the file, `-` swapped for `_` in tool names, so
+    `mfussenegger/nvim-dap` becomes `plugin/nvim-dap.lua` exposing
+    `plugin_nvim_dap_<verb>`.
     `plugin/init.lua` owns the shared plumbing: `optional()` for a
     non-throwing `require`, and `registrar(tools, requires)` which
     builds a category's `register` and skips it when the plugin isn't

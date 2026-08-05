@@ -499,7 +499,7 @@ wheels = [
 
 [[package]]
 name = "hyprpilot-nvim-mcp"
-version = "2.2.0"
+version = "2.3.0"
 source = { editable = "pkg" }
 dependencies = [
     { name = "click" },

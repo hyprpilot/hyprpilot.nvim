@@ -7,7 +7,9 @@
 
 local T = MiniTest.new_set()
 
-local CATEGORIES = { "diffview", "neotest", "dap", "coverage", "todo_comments" }
+-- Module names mirror each plugin's git repo name, minus a trailing
+-- `.nvim`; tool prefixes are the same with `-` as `_`.
+local CATEGORIES = { "diffview", "neotest", "nvim-dap", "nvim-coverage", "todo-comments" }
 
 T["register: a category whose plugin is absent registers nothing and doesn't throw"] = function()
   local mcp = require("hyprpilot.mcp")

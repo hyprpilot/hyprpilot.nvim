@@ -151,12 +151,27 @@ M.tools.close = {
     additionalProperties = false,
   },
   handler = function(args)
-    local ok, closed = pcall(require("diffview").close, nil, { force = args.force == true })
-    if not ok then
-      return plugin.err("diffview close failed: " .. tostring(closed))
+    if current_view() == nil then
+      return { json = { closed = false, reason = "no diffview open on the current tabpage" } }
     end
 
-    return { json = { closed = closed ~= false } }
+    local ok, aborted = pcall(require("diffview").close, nil, { force = args.force == true })
+    if not ok then
+      return plugin.err("diffview close failed: " .. tostring(aborted))
+    end
+    if aborted == false then
+      return plugin.err("diffview refused to close — a stage buffer has unsaved changes; pass force to discard them")
+    end
+
+    -- `diffview.close` returns true for "nothing went wrong", including
+    -- the case where it closed nothing at all, so the view registry is
+    -- what actually says whether the captain's screen changed.
+    local remaining = current_view()
+    if remaining ~= nil then
+      return plugin.err("diffview is still open after closing it — the view may be on another tabpage")
+    end
+
+    return { json = { closed = true } }
   end,
 }
 
