@@ -420,6 +420,7 @@ T["editor_quickfix_set: populates the list, converting 0-indexed positions"] = f
 
   MiniTest.expect.equality(result.json.count, 2)
   MiniTest.expect.equality(result.json.skipped, 0)
+  MiniTest.expect.equality(result.json.opened, true)
 
   local list = vim.fn.getqflist()
   MiniTest.expect.equality(#list, 2)
@@ -429,6 +430,35 @@ T["editor_quickfix_set: populates the list, converting 0-indexed positions"] = f
   MiniTest.expect.equality(list[1].text, "second line")
   MiniTest.expect.equality(list[2].lnum, 3)
   MiniTest.expect.equality(vim.fn.getqflist({ title = 0 }).title, "agent findings")
+
+  -- Opening is the default: a list the captain never sees is worse than
+  -- the paths it replaced.
+  local qf_open = false
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    if vim.bo[vim.api.nvim_win_get_buf(winid)].buftype == "quickfix" then
+      qf_open = true
+    end
+  end
+  MiniTest.expect.equality(qf_open, true)
+
+  vim.cmd("cclose")
+  vim.fn.setqflist({}, "r")
+  vim.fn.delete(path)
+end
+
+T["editor_quickfix_set: open = false populates without touching the captain's windows"] = function()
+  local path = vim.fn.tempname() .. ".lua"
+  vim.fn.writefile({ "alpha", "beta" }, path)
+  vim.cmd("only")
+
+  local result = require("hyprpilot.mcp.editor").tools.quickfix_set.handler({
+    items = { { path = path, line = 0, text = "quiet entry" } },
+    open = false,
+  })
+
+  MiniTest.expect.equality(result.json.opened, false)
+  MiniTest.expect.equality(#vim.fn.getqflist(), 1)
+  MiniTest.expect.equality(#vim.api.nvim_list_wins(), 1)
 
   vim.fn.setqflist({}, "r")
   vim.fn.delete(path)
